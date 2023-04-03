@@ -475,6 +475,8 @@ int main() {
       msg->msg_id |= 0x80;
       
       if (vfs_write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len) >= 0)  {
+
+	 emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: done");
 	      
 	msg->_errno = 0;
       }

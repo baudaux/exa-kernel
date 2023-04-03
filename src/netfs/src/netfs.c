@@ -163,13 +163,16 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
       fetch("/netfs" + sep + path, myInit).then(function (response) {
 	  
 	  //console.log(response.headers.get('Accept-Ranges'));
-	  console.log(response.headers.get('Content-Length'));
+	  //console.log(response.headers.get('Content-Length'));
 
 	  if (response.ok) {
 
 	    let contentLength = 0;
 
-	    if (typeof response.headers.get('Content-Length') == 'string') {
+	    if (typeof response.headers.get('Content-Size') == 'string') {
+	      contentLength = parseInt(response.headers.get('Content-Size'));
+	    }
+	    else if (typeof response.headers.get('Content-Length') == 'string') {
 	      contentLength = parseInt(response.headers.get('Content-Length'));
 	    }
 
