@@ -36,7 +36,6 @@ struct fd_entry {
   char pathname[1024];
   int flags;
   unsigned short mode;
-  unsigned int size;
   unsigned int offset;
   struct vnode * vnode;
 };
@@ -459,7 +458,6 @@ int add_fd_entry(int fd, pid_t pid, unsigned short minor, const char * pathname,
   strcpy(fds[fd].pathname, pathname);
   fds[fd].flags = flags;
   fds[fd].mode = mode;
-  fds[fd].size = size;
   fds[fd].offset = 0;
   fds[fd].vnode = vnode;
   
@@ -529,20 +527,44 @@ int vfs_close(int fd) {
   return 0;
 }
 
-int vfs_read() {
+ssize_t vfs_read(int fd, void * buf, size_t len) {
 
+  emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d", fd, len);
+
+  struct vnode * vnode = vfs_get_vnode(fd);
+
+  if (vnode && (vnode->type == VFILE)) {
+
+    if (fds[fd].offset >= vnode->_u.file.file_size)
+      return 0;
+
+    ssize_t bytes_read = ((fds[fd].offset+len) <= vnode->_u.file.file_size)?len:vnode->_u.file.file_size-fds[fd].offset;
+
+    memcpy(buf, vnode->_u.file.buffer+fds[fd].offset, bytes_read);
+
+    fds[fd].offset += bytes_read;
+
+    for (int i=0; i < bytes_read; ++i) {
+
+      emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
+    }
+
+    return bytes_read;
+  }
+
+  return -1;
 }
 
 ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d", fd, len);
 
-  struct vnode * vnode = vfs_get_vnode(fd);
+  for (int i=0; i < len; ++i) {
 
-  if (!vnode) {
-    
-    emscripten_log(EM_LOG_CONSOLE, "vfs_write: fd not found");
+    emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
   }
+
+  struct vnode * vnode = vfs_get_vnode(fd);
 
   if (vnode && (vnode->type == VFILE)) {
 
@@ -559,6 +581,11 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
       vnode->_u.file.buffer_size = ((min_size+1024)/1024)*1024;
 
       vnode->_u.file.buffer = (unsigned char *)realloc(vnode->_u.file.buffer, vnode->_u.file.buffer_size);
+
+      if (fds[fd].offset > vnode->_u.file.file_size) {
+
+	memset(vnode->_u.file.buffer+vnode->_u.file.file_size, 0, fds[fd].offset - vnode->_u.file.file_size);
+      }
     }
 
     if (vnode->_u.file.buffer) {
@@ -583,6 +610,10 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 ssize_t vfs_getdents(int fd, void * buf, size_t len) {
 
   struct vnode * vnode = vfs_get_vnode(fd);
+
+  if (!vnode)
+    return -1;
+  
   struct vnode * child = vnode->_u.link.vnode;
 
   struct __dirent {
@@ -783,6 +814,45 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       
       return 0;
     }
+  }
+  
+  return -1;
+}
+
+int vfs_seek(int fd, int offset, int whence) {
+
+  struct vnode * vnode = vfs_get_vnode(fd);
+
+  if (vnode && (vnode->type == VFILE)) {
+
+    switch(whence) {
+
+    case SEEK_SET:
+
+      fds[fd].offset = offset;
+
+      break;
+
+    case SEEK_CUR:
+
+      fds[fd].offset += offset;
+
+      break;
+
+    case SEEK_END:
+
+      fds[fd].offset = vnode->_u.file.file_size + offset;
+      
+      break;
+
+    default:
+
+      break;
+    }
+
+    emscripten_log(EM_LOG_CONSOLE, "vfs_seek: offset=%d", fds[fd].offset);
+
+    return fds[fd].offset;
   }
   
   return -1;

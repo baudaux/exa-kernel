@@ -465,6 +465,30 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
+      struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
+
+      reply->msg_id = READ|0x80;
+      reply->pid = msg->pid;
+      reply->_u.io_msg.fd = msg->_u.io_msg.fd;
+
+      int len = vfs_read(reply->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
+
+      if (len >= 0) {
+	
+	emscripten_log(EM_LOG_CONSOLE, "READ done : %d bytes", len);
+
+	reply->_u.io_msg.len = len;
+	      
+	reply->_errno = 0;
+      }
+      else {
+
+	reply->_errno = EBADF;
+      }
+      
+      sendto(sock, reply, sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      free(reply);
     }
     else if (msg->msg_id == WRITE) {
 
@@ -1041,6 +1065,25 @@ int main() {
 	 sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
 	}
 
+    }
+    else if (msg->msg_id == SEEK) {
+
+      emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: fd=%d", msg->pid, msg->_u.seek_msg.fd);
+
+      msg->msg_id |= 0x80;
+      
+      if (vfs_seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence) >= 0)  {
+
+	 emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: done");
+	      
+	msg->_errno = 0;
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+      
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
   }
   

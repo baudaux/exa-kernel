@@ -57,7 +57,8 @@ enum message_id {
   CHDIR = 35,
   GETDENTS,
   WAIT,
-  EXIT
+  EXIT,
+  SEEK,
 };
 
 enum dev_type {
@@ -259,6 +260,13 @@ struct exit_message {
   int status;
 };
 
+struct seek_message {
+
+  int fd;
+  int offset;
+  int whence;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -297,6 +305,7 @@ struct message {
     struct getdents_message getdents_msg;
     struct wait_message wait_msg;
     struct exit_message exit_msg;
+    struct seek_message seek_msg;
     
   } _u;
 };

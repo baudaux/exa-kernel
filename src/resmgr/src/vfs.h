@@ -86,6 +86,7 @@ const char * vfs_get_pathname(int fd);
 
 int vfs_close(int fd);
 ssize_t vfs_write(int fd, const void * buf, size_t len);
+ssize_t vfs_read(int fd, void * buf, size_t len);
 
 ssize_t vfs_getdents(int fd, void * buf, size_t len);
 
@@ -93,6 +94,8 @@ int vfs_ioctl(int fd, int op);
 
 int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** vnode, char ** trail);
 int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** vnode, char ** trail);
+
+int vfs_seek(int fd, int offset, int whence);
 
 void vfs_dump();
 

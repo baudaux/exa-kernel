@@ -632,6 +632,8 @@ int main() {
       }
       
       sendto(sock, reply, sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      free(reply);
     }
     else if (msg->msg_id == WRITE) {
       
