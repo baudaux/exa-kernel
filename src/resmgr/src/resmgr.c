@@ -1068,14 +1068,16 @@ int main() {
     }
     else if (msg->msg_id == SEEK) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: fd=%d", msg->pid, msg->_u.seek_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: fd=%d off=%d whence=%d", msg->pid, msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 
       msg->msg_id |= 0x80;
       
-      if (vfs_seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence) >= 0)  {
+      msg->_u.seek_msg.offset = vfs_seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 
-	 emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: done");
-	      
+      if (msg->_u.seek_msg.offset >= 0)  {
+
+	emscripten_log(EM_LOG_CONSOLE, "SEEK: done");
+	
 	msg->_errno = 0;
       }
       else {
@@ -1083,7 +1085,7 @@ int main() {
 	msg->_errno = EBADF;
       }
       
-      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
   }
   

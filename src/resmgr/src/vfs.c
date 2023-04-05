@@ -529,7 +529,7 @@ int vfs_close(int fd) {
 
 ssize_t vfs_read(int fd, void * buf, size_t len) {
 
-  emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d", fd, len);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d off=%d", fd, len, fds[fd].offset);
 
   struct vnode * vnode = vfs_get_vnode(fd);
 
@@ -557,7 +557,7 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
 
 ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
-  emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d", fd, len);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[fd].offset);
 
   for (int i=0; i < len; ++i) {
 

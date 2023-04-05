@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/sysmacros.h>
+#include <sys/ttydefaults.h>
 
 #include <sys/ioctl.h>
 #include <termios.h>
@@ -129,10 +130,10 @@ static int add_client(int fd, pid_t pid, unsigned short minor, int flags, unsign
 
 static void init_ctrl(struct termios * ctrl) {
 
-  ctrl->c_iflag = ICRNL;
-  ctrl->c_oflag = ONLCR;
-  ctrl->c_cflag = 0;
-  ctrl->c_lflag = TOSTOP | ECHOE | ECHO | ICANON | ISIG;
+  ctrl->c_iflag = TTYDEF_IFLAG;
+  ctrl->c_oflag = TTYDEF_OFLAG;
+  ctrl->c_cflag = TTYDEF_CFLAG;
+  ctrl->c_lflag = TTYDEF_LFLAG;
 
   ctrl->c_line = 0;
 
@@ -513,7 +514,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
   unsigned char * data = (unsigned char *)buf;
 
-  //emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
 
   for (int i = 0; i < count; ++i) {
 
@@ -635,21 +636,28 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
   unsigned char echo_buf[1024];
 
-  //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
   int j = 0;
 
   for (int i = 0; i < count; ++i) {
 
     if ( (data[i] == '\r') && (dev->ctrl.c_iflag & IGNCR) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: IGNCR");
+      
       // do nothing
     }
-    if ( (data[i] == '\r') && (dev->ctrl.c_iflag & ICRNL) ) {
+    else if ( (data[i] == '\r') && (dev->ctrl.c_iflag & ICRNL) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: ICRNL");
 
       data[j] = '\n';
       ++j;
     }
     else if ( (data[i] == '\n') && (dev->ctrl.c_iflag & INLCR) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: INLCR");
 
       data[j] = '\r';
       ++j;
@@ -725,12 +733,32 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
     }
     else {
 
-      enqueue_circular_buffer(&dev->rx_buf, data[i]);
-
       if (dev->ctrl.c_lflag & ECHO) {
 
-	local_tty_write(fd, data+i, 1);
+	if ( (dev->ctrl.c_lflag & ECHOCTL) &&
+	     ( (data[i] == 0x7) || (data[i] == 0x8) ||
+	       (data[i] == 0xB) || (data[i] == 0xC) ||
+	       (data[i] == 0xE) || (data[i] == 0xF) ||
+	       (data[i] == 0x18) || (data[i] == 0x1A) || (data[i] == 0x1B) ) ) {
+
+	  char c = data[i] + 0x40;
+	  
+	  local_tty_write(fd, "^", 1);
+	  enqueue_circular_buffer(&dev->rx_buf, '^');
+	  local_tty_write(fd, &c, 1);
+	  enqueue_circular_buffer(&dev->rx_buf, c);
+	}
+	else {
+
+	  local_tty_write(fd, data+i, 1);
+	  enqueue_circular_buffer(&dev->rx_buf, data[i]);
+	}
       }
+      else {
+
+	enqueue_circular_buffer(&dev->rx_buf, data[i]);
+      }
+      
     }
   }
 
@@ -740,7 +768,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
     if ( (dev->read_pending.fd >= 0) && (dev->read_pending.len > 0) ) { // Pending read
 
-      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read %d", dev->read_pending.len);
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read %d", dev->read_pending.len);
 
       size_t len = 0;
 
@@ -759,7 +787,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 	len = count_circular_buffer(&dev->rx_buf);
       }
 
-      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read len=%d", len);
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read len=%d", len);
 
       if (len > 0) {
 
@@ -781,7 +809,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
     }
     else if (dev->read_select_pending.fd >= 0) {
 
-      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read select");
+      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read select");
 
       int i;
 
