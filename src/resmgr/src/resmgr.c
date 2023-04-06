@@ -420,7 +420,7 @@ int main() {
 
 	    if (vfs_close(remote_fd) >= 0) {
 	      
-	      msg->_errno = 0;  
+	      msg->_errno = 0;
 	    }
 	    else {
 

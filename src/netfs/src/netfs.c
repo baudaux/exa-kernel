@@ -45,6 +45,7 @@ struct device_ops {
   int (*close)(int fd);
   int (*stat)(const char *pathname, struct stat * stat);
   ssize_t (*getdents)(int fd, char * buf, ssize_t count);
+  int (*seek)(int fd, int offset, int whence);
 };
 
 struct fd_entry {
@@ -425,6 +426,41 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
   return _errno;
 }
 
+static int netfs_seek(int fd, int offset, int whence) {
+
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+
+  switch(whence) {
+
+    case SEEK_SET:
+
+      fds[fd].offset = offset;
+
+      break;
+
+    case SEEK_CUR:
+
+      fds[fd].offset += offset;
+
+      break;
+
+    case SEEK_END:
+
+      fds[fd].offset = fds[fd].size + offset;
+      
+      break;
+
+    default:
+
+      break;
+    }
+
+  return fds[fd].offset;
+}
+
 static struct device_ops netfs_ops = {
 
   .open = netfs_open,
@@ -434,6 +470,7 @@ static struct device_ops netfs_ops = {
   .close = netfs_close,
   .stat = netfs_stat,
   .getdents = netfs_getdents,
+  .seek = netfs_seek,
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -744,6 +781,36 @@ int main() {
       msg->msg_id |= 0x80;
 
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == SEEK) {
+
+      struct device_ops * dev = NULL;
+      
+      int i = find_fd_entry(msg->_u.seek_msg.fd);
+      
+      if (i >= 0) {
+        
+	dev = get_device(fds[i].minor);
+      }
+      
+      if (dev) {
+
+	msg->_u.seek_msg.offset = dev->seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
+
+	if (msg->_u.seek_msg.offset < 0)
+	  msg->_errno = EBADF;
+	else
+	  msg->_errno = 0;
+
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+
+      msg->msg_id |= 0x80;
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     
   }

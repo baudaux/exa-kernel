@@ -609,6 +609,8 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
 ssize_t vfs_getdents(int fd, void * buf, size_t len) {
 
+  emscripten_log(EM_LOG_CONSOLE, "vfs_getdents: sizeof off_t=%d", sizeof(off_t));
+  
   struct vnode * vnode = vfs_get_vnode(fd);
 
   if (!vnode)
