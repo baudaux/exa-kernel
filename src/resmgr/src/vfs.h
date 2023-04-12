@@ -68,6 +68,7 @@ struct vnode * vfs_add_symlink(struct vnode * parent, const char * name, const c
 struct vnode * vfs_add_dev(struct vnode * parent, const char * name, unsigned char type, unsigned short major, unsigned short minor);
 
 int vfs_del_node(struct vnode * node);
+int vfs_del_tree(struct vnode * node);
 
 int vfs_set_mount(struct vnode * node, unsigned char type, unsigned short major, unsigned short minor);
 

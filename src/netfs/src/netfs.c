@@ -58,6 +58,8 @@ struct fd_entry {
   unsigned short mode;
   unsigned int size;
   unsigned int offset;
+  char * data;
+  unsigned int data_size;
 };
 
 static unsigned short major;
@@ -251,6 +253,12 @@ static int netfs_close(int fd) {
     return -1;
 
   fds[i].fd = -1;
+
+  if (fds[i].data) {
+
+    free(fds[i].data);
+    fds[i].data = NULL;
+  }
   
   return 0;
 }
@@ -338,48 +346,59 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
   if (i < 0)
     return -1;
 
-  sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
+  if (!fds[i].data) {
 
-  int size = do_fetch(buf2, 0, buf2, 2256);
+    fds[i].data_size = 4096;
+    fds[i].data = (char *)malloc(fds[i].data_size);
+    
+    sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
   
-  int _errno = -1;
+    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, 4096);
+
+    fds[i].offset = 0;
+  }
+
+  if (fds[i].data_size < 0)
+    return -1;
+
+  if (fds[i].data_size == 0)
+    return 0;
   
-  if (size > 0) {
+  emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d\n", fd, fds[i].offset);
 
-    //emscripten_log(EM_LOG_CONSOLE, "netfs_getdents result\n%s", buf2);
+  char delim[] = "\n";
 
-    char delim[] = "\n";
+  int len = 0;
 
-    int len = 0;
-    int offset = 0;
+  char * ptr = strtok(fds[i].data+fds[i].offset, delim);
 
-    char * ptr = strtok(buf2, delim);
+  while (ptr != NULL) {
 
-    while (ptr != NULL) {
+    //emscripten_log(EM_LOG_CONSOLE, "**** ptr: %s", ptr);
 
-      //emscripten_log(EM_LOG_CONSOLE, "**** ptr: %s", ptr);
+    char * ptr2 = strchr(ptr, '=');
 
-      char * ptr2 = strchr(ptr, '=');
+    if (ptr2) {
+      
+      if (strncmp(ptr, "errno", 5) == 0) {
+
+	int _errno = atoi(ptr2+1);
+
+	if (_errno)
+	  return _errno;
+      }
+    }
+    else {
+
+      struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
+
+      ptr2 = strchr(ptr, ';');
 
       if (ptr2) {
-      
-	if (strncmp(ptr, "errno", 5) == 0) {
 
-	  _errno = atoi(ptr2+1);
+	strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
 
-	  if (_errno)
-	    return _errno;
-	}
-      }
-      else {
-
-	if (offset >= fds[i].offset) {
-
-	  struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
-
-	  ptr2 = strchr(ptr, ';');
-
-	  strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
+	if ((len+sizeof(struct __dirent)+strlen(dirent_ptr->d_name)) < count) {  // there is space for this entry
 
 	  ///emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
 
@@ -407,23 +426,27 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 	  }
 	  
 	  dirent_ptr->d_reclen = sizeof(struct __dirent) + strlen(dirent_ptr->d_name);
-
+	  
 	  len += dirent_ptr->d_reclen;
 
 	  dirent_ptr->d_off = len;
 	}
+	else {
 
-	++offset;
+	  break;
+	}
       }
-      ptr = strtok(NULL, delim);
     }
 
-    fds[i].offset = offset;
-    
-    return len;
+    ptr = strtok(NULL, delim);
   }
-  
-  return _errno;
+
+  if (ptr)
+    fds[i].offset = ptr-fds[i].data;
+  else
+    fds[i].offset = strlen(fds[i].data);
+    
+  return len;
 }
 
 static int netfs_seek(int fd, int offset, int whence) {
@@ -508,6 +531,7 @@ int main() {
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
     fds[i].fd = -1;
+    fds[i].data = NULL;
   }
 
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
@@ -730,7 +754,7 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: len=%d", msg->pid, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -751,6 +775,7 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
+	  
 	  msg->_u.getdents_msg.len = count;
 	  msg->_errno = 0;
 	}

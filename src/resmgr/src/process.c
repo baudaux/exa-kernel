@@ -61,6 +61,18 @@ void add_proc_entry(pid_t pid) {
   struct vnode * vfs_proc_pid_fd = vfs_add_dir(vfs_proc_pid, "fd");
 }
 
+void del_proc_entry(pid_t pid) {
+
+  char str[16];
+
+  sprintf(str, "/proc/%d", pid);
+
+  struct vnode * vnode = vfs_find_node(str, NULL);
+
+  if (vnode)
+    vfs_del_tree(vnode);
+}
+
 void process_add_proc_fd_entry(pid_t pid, int fd, char * link) {
 
   char str[32];
@@ -556,6 +568,8 @@ pid_t process_exit(pid_t pid, int status) {
 
   processes[pid].proc_state = ZOMBIE_STATE;
   processes[pid].status = status;
+
+  del_proc_entry(pid);
 
   int ppid = processes[pid].ppid;
   

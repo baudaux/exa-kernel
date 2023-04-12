@@ -54,6 +54,9 @@ void device_init() {
 
   // Add /tmp for netfs
   vfs_add_dir(vnode, "tmp");
+
+  // Add /home
+  vfs_add_dir(vnode, "home");
 }
 
 unsigned short device_register_driver(unsigned char type, const char * name, const char * peer) {

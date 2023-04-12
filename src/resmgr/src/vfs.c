@@ -228,6 +228,32 @@ int vfs_del_node(struct vnode * node) {
   return 0;
 }
 
+int vfs_del_tree(struct vnode * node) {
+
+  if (!node)
+    return -1;
+
+  if (node->type == VDIR) {
+
+    struct vnode * n = node->_u.link.vnode;
+
+    while (n) {
+      
+      struct vnode * n2 = n->next;
+
+      vfs_del_tree(n);
+
+      n = n2;
+    }
+
+    n->next = node->next;
+  }
+  
+  vfs_del_node(node);
+  
+  return 0;
+}
+
 int vfs_set_mount(struct vnode * node, unsigned char type, unsigned short major, unsigned short minor) {
 
   node->type = VMOUNT;
@@ -738,6 +764,7 @@ int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, 
       buf->st_ino = (ino_t)vnode;
 
       buf->st_mode = 0;
+      buf->st_size = 0;
 
       switch(vnode->type) {
 
@@ -749,6 +776,7 @@ int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, 
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
+	buf->st_size = vnode->_u.file.file_size;
 	break;
 	
       case VSYMLINK:
@@ -789,6 +817,7 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       buf->st_ino = (ino_t)vnode;
 
       buf->st_mode = 0;
+      buf->st_size = 0;
 
       switch(vnode->type) {
 
@@ -800,6 +829,7 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
+	buf->st_size = vnode->_u.file.file_size;
 	break;
 	
       case VSYMLINK:
