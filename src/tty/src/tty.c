@@ -514,7 +514,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
   unsigned char * data = (unsigned char *)buf;
 
-  emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
+  //emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
 
   for (int i = 0; i < count; ++i) {
 
@@ -571,7 +571,7 @@ static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_
 
   case TIOCGPGRP:
 
-    emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCGPGRP %d", get_device_from_fd(fd)->fg_pgrp);
+    //emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCGPGRP %d", get_device_from_fd(fd)->fg_pgrp);
 
     if (get_device_from_fd(fd)->fg_pgrp == 0)
       return -1;
@@ -582,7 +582,7 @@ static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_
 
   case TIOCSPGRP:
 
-    emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSPGRP %d", *((int *)buf));
+    //emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSPGRP %d", *((int *)buf));
 
     memcpy(&(get_device_from_fd(fd)->fg_pgrp), buf, sizeof(int));
 
@@ -600,7 +600,7 @@ static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_
 
       memcpy(&arg, buf, sizeof(int));
 
-      emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSCTTY (%d %d %d)", get_device_from_fd(fd)->session, sid, arg);
+      //emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSCTTY (%d %d %d)", get_device_from_fd(fd)->session, sid, arg);
 
       if ( (pid == sid) && (get_device_from_fd(fd)->session == 0) && (!arg) ) {
 
@@ -636,7 +636,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
   unsigned char echo_buf[1024];
 
-  emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
+  //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
   int j = 0;
 
@@ -644,20 +644,20 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
     if ( (data[i] == '\r') && (dev->ctrl.c_iflag & IGNCR) ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: IGNCR");
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: IGNCR");
       
       // do nothing
     }
     else if ( (data[i] == '\r') && (dev->ctrl.c_iflag & ICRNL) ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: ICRNL");
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: ICRNL");
 
       data[j] = '\n';
       ++j;
     }
     else if ( (data[i] == '\n') && (dev->ctrl.c_iflag & INLCR) ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: INLCR");
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: INLCR");
 
       data[j] = '\r';
       ++j;
@@ -768,7 +768,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
     if ( (dev->read_pending.fd >= 0) && (dev->read_pending.len > 0) ) { // Pending read
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read %d", dev->read_pending.len);
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read %d", dev->read_pending.len);
 
       size_t len = 0;
 
@@ -787,7 +787,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 	len = count_circular_buffer(&dev->rx_buf);
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read len=%d", len);
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read len=%d", len);
 
       if (len > 0) {
 
@@ -804,12 +804,14 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
 	read_circular_buffer(&dev->rx_buf, sent_len, (char *)reply_msg->_u.io_msg.buf);
 
+	//emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: after pending read sent_len=%d remaining=%d", sent_len, count_circular_buffer(&dev->rx_buf));
+
 	return sent_len;
       }
     }
     else if (dev->read_select_pending.fd >= 0) {
 
-      emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read select");
+      //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: pending read select");
 
       int i;
 
@@ -1063,7 +1065,7 @@ int main() {
     }
     else if (msg->msg_id == OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: OPEN from %d (%d), %d", msg->pid, msg->_u.open_msg.sid, msg->_u.open_msg.minor);
+      //emscripten_log(EM_LOG_CONSOLE, "tty: OPEN from %d (%d), %d", msg->pid, msg->_u.open_msg.sid, msg->_u.open_msg.minor);
 
       if (msg->_u.open_msg.minor == 0) { // /dev/tty
 
@@ -1075,7 +1077,7 @@ int main() {
 	
 	if (!dev) {
 
-	  emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session %d -> NONE", msg->_u.open_msg.sid);
+	  //emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session %d -> NONE", msg->_u.open_msg.sid);
 
 	  msg->msg_id |= 0x80;
 
@@ -1100,7 +1102,7 @@ int main() {
 
 	if ( (get_device(msg->_u.open_msg.minor)->session == 0) && (msg->pid ==  msg->_u.open_msg.sid) ) {
 
-	  emscripten_log(EM_LOG_CONSOLE, "!!!! tty: set controlling tty of session %d (%d)", msg->_u.open_msg.sid, get_device(msg->_u.open_msg.minor)->session);
+	  //emscripten_log(EM_LOG_CONSOLE, "!!!! tty: set controlling tty of session %d (%d)", msg->_u.open_msg.sid, get_device(msg->_u.open_msg.minor)->session);
 	  
 	  // tty is not yet controlled so it is now controlling the sid session
 	  get_device(msg->_u.open_msg.minor)->session = msg->_u.open_msg.sid;
@@ -1132,7 +1134,7 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
+      //emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
 
       struct device_desc * dev;
 
@@ -1159,7 +1161,7 @@ int main() {
     }
     else if (msg->msg_id == IOCTL) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
+      //emscripten_log(EM_LOG_CONSOLE, "tty: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
 
       if (msg->_u.ioctl_msg.op == TIOCSCTTY) {
 
@@ -1184,7 +1186,7 @@ int main() {
     }
     else if (msg->msg_id == (GETSID|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: return from GETSID %d %d", msg->pid, msg->_u.getsid_msg.sid);
+      //emscripten_log(EM_LOG_CONSOLE, "tty: return from GETSID %d %d", msg->pid, msg->_u.getsid_msg.sid);
 
       struct message * ioctl_msg = (struct message *)&ioctl_buf[0];
 
