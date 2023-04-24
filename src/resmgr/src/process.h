@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <signal.h>
+
 #include "vfs.h"
 
 #define NB_PROCESSES_MAX  64
@@ -67,6 +69,8 @@ struct process {
   struct file_desc fds[NB_FILES_MAX];
 
   unsigned char fd_map[NB_FILES_MAX/8+1];
+
+  struct sigaction sigactions[NSIG];
 };
 
 void process_init();
@@ -101,6 +105,10 @@ int process_chdir(pid_t pid, char * dir);
 
 pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status);
 pid_t process_exit(pid_t pid, int status);
+
+int process_sigaction(pid_t pid, int signum, struct sigaction * act);
+int process_sigprocmask(pid_t pid, int how, sigset_t * set);
+int process_kill(pid_t pid, int sig, struct sigaction * act);
 
 void dump_processes();
 

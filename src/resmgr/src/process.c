@@ -211,6 +211,9 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 
     processes[pid].umask = processes[ppid].umask;
     memcpy(&processes[pid].sigprocmask, &processes[ppid].sigprocmask, sizeof(sigset_t));
+
+    memcpy(&processes[pid].sigactions, &processes[ppid].sigactions, 32*sizeof(struct sigaction));
+    
   }
   else {
 
@@ -218,6 +221,10 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
     processes[pid].sid = 0;
 
     strcpy(processes[pid].cwd, "");
+
+    sigemptyset(&processes[pid].sigprocmask);
+
+    memset(&processes[pid].sigactions, 0, 32*sizeof(struct sigaction));
   }
 
   if (name)
@@ -585,5 +592,82 @@ pid_t process_exit(pid_t pid, int status) {
     return ppid;
   }
   
+  return 0;
+}
+
+int process_sigaction(pid_t pid, int signum, struct sigaction * act) {
+
+  struct sigaction old;
+
+  if (!signum || (signum > NSIG) )
+    return -1;
+
+  memcpy(&old, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+
+  memcpy(&processes[pid].sigactions[signum-1], act, sizeof(struct sigaction));
+
+  memcpy(act, &old, sizeof(struct sigaction));
+
+  return 0;
+}
+
+int process_sigprocmask(pid_t pid, int how, sigset_t * set) {
+
+  sigset_t old;
+  unsigned char * set2 = (unsigned char *)set;
+  unsigned char * mask = (unsigned char *)&processes[pid].sigprocmask;
+
+  memcpy(&old, &processes[pid].sigprocmask, sizeof(sigset_t));
+
+  switch(how) {
+
+  case SIG_BLOCK:
+
+    for (int i = 0; i < NSIG; ++i) {
+
+      if (set2[i/8] & (1 << (i%8))) {
+
+	mask[i/8] |= 1 << (i%8);
+      }
+    }
+    
+    break;
+
+  case SIG_UNBLOCK:
+
+    for (int i = 0; i < NSIG; ++i) {
+
+      if (set2[i/8] & (1 << (i%8))) {
+
+	mask[i/8] &= ~(1 << (i%8));
+      }
+    }
+
+    break;
+
+  case SIG_SETMASK:
+
+    memcpy(&processes[pid].sigprocmask, set, sizeof(sigset_t));
+    break;
+
+  default:
+    
+    break;
+  }
+
+  memcpy(set, &old, sizeof(sigset_t));
+  
+  return 0;
+}
+
+int process_kill(pid_t pid, int signum, struct sigaction * act) {
+
+  if (sigismember(&processes[pid].sigprocmask, signum)) {
+
+    memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+
+    return 1;
+  }
+
   return 0;
 }

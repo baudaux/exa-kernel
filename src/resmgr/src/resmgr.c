@@ -1087,6 +1087,45 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
+    else if (msg->msg_id == SIGACTION) {
+
+      emscripten_log(EM_LOG_CONSOLE, "SIGACTION from %d: signum=%d", msg->pid, msg->_u.sigaction_msg.signum);
+
+      msg->_errno = process_sigaction(msg->pid, msg->_u.sigaction_msg.signum, &msg->_u.sigaction_msg.act);
+      
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
+    else if (msg->msg_id == SIGPROCMASK) {
+
+      emscripten_log(EM_LOG_CONSOLE, "SIGPROGMASK from %d: how=%d", msg->pid, msg->_u.sigprocmask_msg.how);
+
+      msg->_errno = process_sigprocmask(msg->pid, msg->_u.sigprocmask_msg.how, &msg->_u.sigprocmask_msg.sigset);
+      
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
+    else if (msg->msg_id == KILL) {
+
+      emscripten_log(EM_LOG_CONSOLE, "KILL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+
+      if (process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act)) {
+
+	if (msg->pid == msg->_u.kill_msg.pid) {
+	  
+	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}
+	else {
+
+	  //TODO
+	}
+      }
+    }
+    
   }
   
   return 0;
