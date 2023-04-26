@@ -18,6 +18,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <signal.h>
+
 #include "vfs.h"
 #include "process.h"
 #include "device.h"
@@ -33,6 +35,14 @@
 #define RESMGR_FILE "resmgr.peer"
 #define RESMGR_PATH RESMGR_ROOT "/" RESMGR_FILE
 
+#define NB_ITIMERS_MAX 64
+
+struct itimer {
+
+  pid_t pid;
+  int fd;
+};
+
 int main() {
 
   int sock;
@@ -40,13 +50,21 @@ int main() {
   int bytes_rec;
   socklen_t len;
   char buf[1256];
+  struct message * msg = (struct message *)&buf[0];
 
   int execve_size;
   int execve_pid;
   char execve_msg[1256];
 
+  struct itimer itimers[NB_ITIMERS_MAX];
+
   // Use console.log as tty is not yet started
   emscripten_log(EM_LOG_CONSOLE, "Starting resmgr v0.1.0 ...");
+
+  for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+    itimers[i].pid = 0;
+    itimers[i].fd = -1;
+  }
 
   vfs_init();
   process_init();
@@ -79,10 +97,58 @@ int main() {
   create_tty_process();
   
   while (1) {
+
+    fd_set rfds;
+    int retval;
+
+    FD_ZERO(&rfds);
+    FD_SET(sock, &rfds);
+
+    int fd_max = sock;
+
+    for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+      if (itimers[i].fd >= 0) {
+
+	FD_SET(itimers[i].fd, &rfds);
+
+	if (itimers[i].fd > fd_max)
+	  fd_max = itimers[i].fd;
+      }
+    }
+
+    retval = select(fd_max+1, &rfds, NULL, NULL, NULL);
+
+    if (retval < 0)
+      continue;
+
+    if (!FD_ISSET(sock, &rfds)) {
+
+      for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+	if ( (itimers[i].fd >= 0) && (FD_ISSET(itimers[i].fd, &rfds)) ) {
+
+	  uint64_t count = 0;
+
+	  read(itimers[i].fd, &count, sizeof(count));
+
+	  msg->msg_id = KILL;
+	  msg->pid = itimers[i].pid;
+	  msg->_u.kill_msg.pid = itimers[i].pid;
+	  msg->_u.kill_msg.sig = SIGALRM;
+
+	  int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+
+	  if (action == 2) {
+	    sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+	  }
+	}
+      }
+
+      continue;
+    }
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
-
-    struct message * msg = (struct message *)&buf[0];
 
     //emscripten_log(EM_LOG_CONSOLE, "resmgr: msg %d received from %s (%d)", msg->msg_id, remote_addr.sun_path,bytes_rec);
 
@@ -1113,7 +1179,15 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "KILL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
 
-      if (process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act)) {
+      int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+
+      emscripten_log(EM_LOG_CONSOLE, "KILL from %d: action=%d", msg->pid, action);
+
+      if (action == 1) { // Default action
+
+	
+      }
+      else if (action == 2) { // Custom action
 
 	if (msg->pid == msg->_u.kill_msg.pid) {
 	  
@@ -1124,6 +1198,55 @@ int main() {
 	  //TODO
 	}
       }
+    }
+    else if (msg->msg_id == (KILL|0x80)) {
+
+      emscripten_log(EM_LOG_CONSOLE, "KILL RETURN from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+
+      process_signal_delivered(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+
+      //TODO
+      /*if (msg->pid == msg->_u.kill_msg.pid) {
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}*/
+    }
+    else if (msg->msg_id == SETITIMER) {
+
+      emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: %d %d %d %d", msg->pid, msg->_u.setitimer_msg.val_sec, msg->_u.setitimer_msg.val_usec, msg->_u.setitimer_msg.it_sec, msg->_u.setitimer_msg.it_usec);
+
+      int fd = process_setitimer(msg->pid, msg->_u.setitimer_msg.which, msg->_u.setitimer_msg.val_sec, msg->_u.setitimer_msg.val_usec, msg->_u.setitimer_msg.it_sec, msg->_u.setitimer_msg.it_usec);
+
+      int i;
+
+      // Find if there is already a timer for this pid
+      for (i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+	if (itimers[i].pid == msg->pid) {
+
+	  itimers[i].fd = fd;
+	}
+      }
+
+      if (i == NB_ITIMERS_MAX) {
+
+	// Timer not found so we add it at the first free slot
+
+	for (i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+	  if (itimers[i].fd < 0) {
+
+	    itimers[i].pid = msg->pid;
+	    itimers[i].fd = fd;
+	    break;
+	  }
+	}
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: timerfd=%d", msg->pid, fd);
+
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     
   }

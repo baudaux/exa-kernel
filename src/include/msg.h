@@ -15,8 +15,8 @@
 
 #include <sys/socket.h>
 #include <sys/un.h>
-
 #include <signal.h>
+#include <sys/time.h>
 
 #define DEV_NAME_LENGTH_MAX  128
 
@@ -64,6 +64,8 @@ enum message_id {
   SIGACTION = 40,
   SIGPROCMASK,
   KILL,
+  SETITIMER,
+  GETITIMER,
 };
 
 enum dev_type {
@@ -292,6 +294,15 @@ struct kill_message {
   struct sigaction act;
 };
 
+struct setitimer_message {
+
+  int which;
+  int val_sec;
+  int val_usec;
+  int it_sec;
+  int it_usec;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -334,6 +345,7 @@ struct message {
     struct sigaction_message sigaction_msg;
     struct sigprocmask_message sigprocmask_msg;
     struct kill_message kill_msg;
+    struct setitimer_message setitimer_msg;
     
   } _u;
 };

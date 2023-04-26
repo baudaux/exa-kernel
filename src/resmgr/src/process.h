@@ -57,7 +57,8 @@ struct process {
   
   mode_t umask;
   sigset_t sigprocmask;
-  sigset_t pendingsig;
+  sigset_t sigpending;
+  sigset_t sigdelivering;
 
   int status;
   int wait_child;
@@ -71,6 +72,8 @@ struct process {
   unsigned char fd_map[NB_FILES_MAX/8+1];
 
   struct sigaction sigactions[NSIG];
+
+  int timerfd;
 };
 
 void process_init();
@@ -109,6 +112,9 @@ pid_t process_exit(pid_t pid, int status);
 int process_sigaction(pid_t pid, int signum, struct sigaction * act);
 int process_sigprocmask(pid_t pid, int how, sigset_t * set);
 int process_kill(pid_t pid, int sig, struct sigaction * act);
+void process_signal_delivered(pid_t pid, int signum);
+
+int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec);
 
 void dump_processes();
 

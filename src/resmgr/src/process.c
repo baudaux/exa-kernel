@@ -16,6 +16,7 @@
 #include <string.h>
 #include <signal.h>
 
+#include <sys/timerfd.h>
 
 #include <emscripten.h>
 
@@ -232,7 +233,8 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
   else
     strcpy(processes[pid].name, "");
 
-  sigemptyset(&processes[pid].pendingsig);
+  sigemptyset(&processes[pid].sigpending);
+  sigemptyset(&processes[pid].sigdelivering);
     
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
@@ -270,6 +272,8 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
     for (int i = 0; i < (NB_FILES_MAX/8+1); ++i)
       processes[pid].fd_map[i] = 0;
   }
+
+  processes[pid].timerfd = -1;
   
   ++nb_processes;
 
@@ -662,12 +666,59 @@ int process_sigprocmask(pid_t pid, int how, sigset_t * set) {
 
 int process_kill(pid_t pid, int signum, struct sigaction * act) {
 
-  if (sigismember(&processes[pid].sigprocmask, signum)) {
+    if ( (signum == SIGKILL) || (signum == SIGSTOP) ) {
 
-    memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+      sigaddset(&processes[pid].sigpending, signum);
 
-    return 1;
+      // Cannot change default behaviour for SIGKILL and SIGSTOP
+      
+      return 1; // Default action
+    }
+    else if ( (((int)processes[pid].sigactions[signum-1].sa_handler) != -2) && (!sigismember(&processes[pid].sigdelivering, signum)) ) { // Signal not ignored
+
+      sigaddset(&processes[pid].sigpending, signum);
+
+      if (sigismember(&processes[pid].sigprocmask, signum))
+	return 0; // No action
+      
+      memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+
+      if ( ((int)processes[pid].sigactions[signum-1].sa_handler) == 0)
+	return 1; // Default action
+
+      sigaddset(&processes[pid].sigdelivering, signum);
+      
+      return 2; // Custom action
+    }
+
+    return 0; // No action
+}
+
+void process_signal_delivered(pid_t pid, int signum) {
+
+  sigdelset(&processes[pid].sigpending, signum);
+}
+
+int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec) {
+
+  if (processes[pid].timerfd < 0)
+    processes[pid].timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+
+  struct itimerspec ts;
+     
+  ts.it_interval.tv_sec = it_sec;
+  ts.it_interval.tv_nsec = it_usec * 1000;
+  ts.it_value.tv_sec = val_sec;
+  ts.it_value.tv_nsec = val_usec * 1000;
+
+  // Temporary because val shall not be null
+  if ( (ts.it_value.tv_sec == 0) && (ts.it_value.tv_nsec == 0) ) {
+
+    ts.it_value.tv_sec = it_sec;
+    ts.it_value.tv_nsec = it_usec * 1000;
   }
-
-  return 0;
+     
+  timerfd_settime(processes[pid].timerfd, 0, &ts, NULL);
+  
+  return processes[pid].timerfd;
 }
