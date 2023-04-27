@@ -28,6 +28,8 @@
 
 #include <emscripten.h>
 
+#define DEBUG 0
+
 #define NETFS_VERSION "netfs v0.1.0"
 
 #define NETFS_PATH "/var/netfs.peer"
@@ -188,7 +190,7 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
 
 	    response.text().then(text => {
 
-		console.log(text);
+		//console.log(text);
 		stringToUTF8(text, buf, count);
 		
 		//Module.HEAPU8.set(buffer, buf);
@@ -200,7 +202,7 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
 	  else
 	    wakeUp(-2); // NOENT
 	}).catch((error) => {
-	    console.error("Error:", error);
+	    //console.error("Error:", error);
 	  });
   });
 });
@@ -212,7 +214,8 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
   if (i < 0)
     return -1;
 
-  emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d %d %d %d", fd, count, fds[i].offset, fds[i].size);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d %d %d %d", fd, count, fds[i].offset, fds[i].size);
 
 
   if (fds[i].offset >= fds[i].size) {
@@ -222,7 +225,8 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
   
   int size = do_fetch(fds[i].pathname, fds[i].offset, buf, count);
 
-  emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes", size);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes", size);
 
   if (size >= 0) {
 
@@ -265,7 +269,8 @@ static int netfs_close(int fd) {
 
 static int netfs_stat(const char * pathname, struct stat * stat) {
 
-  emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
 
   char buf[1256];
 
@@ -277,7 +282,8 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
   
   if (size > 0) {
 
-    emscripten_log(EM_LOG_CONSOLE, "netfs_stat result\n%s", buf);
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "netfs_stat result\n%s", buf);
 
     char delim[] = "\n";
 
@@ -298,7 +304,8 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
 
 	stat->st_mode = atoi(ptr2+1);
 
-	emscripten_log(EM_LOG_CONSOLE, "netfs_stat mode=%d %d %d", stat->st_mode, S_ISDIR(stat->st_mode), S_ISREG(stat->st_mode));
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "netfs_stat mode=%d %d %d", stat->st_mode, S_ISDIR(stat->st_mode), S_ISREG(stat->st_mode));
       }
       else if (strncmp(ptr, "size", 4) == 0) {
 
@@ -316,7 +323,8 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
 
 static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  emscripten_log(EM_LOG_CONSOLE,"netfs_open: %s", pathname);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"netfs_open: %s", pathname);
 
   int _errno;
   struct stat stat;
@@ -364,7 +372,8 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
   if (fds[i].data_size == 0)
     return 0;
   
-  emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d\n", fd, fds[i].offset);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d\n", fd, fds[i].offset);
 
   char delim[] = "\n";
 
@@ -526,7 +535,8 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  emscripten_log(EM_LOG_CONSOLE, "Starting " NETFS_VERSION "...");
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "Starting " NETFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -585,7 +595,8 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
 
       minor += 1;
 	
@@ -604,7 +615,8 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
       unsigned short minor = msg->_u.dev_msg.minor;
 
@@ -684,11 +696,14 @@ int main() {
 	reply->_u.io_msg.len = dev->read(msg->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
 	reply->_errno = 0;
 
-	emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
       }
       else {
 
-	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	
 	reply->_errno = ENXIO;
       }
       
@@ -706,7 +721,8 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "netfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
       struct device_ops * dev = NULL;
 
@@ -728,7 +744,8 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      emscripten_log(EM_LOG_CONSOLE, "netfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "netfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -754,7 +771,8 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -797,7 +815,8 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: CHDIR from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "netfs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 

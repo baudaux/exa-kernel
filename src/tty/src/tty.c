@@ -33,6 +33,8 @@
 
 #include <emscripten.h>
 
+#define DEBUG 0
+
 #define TTY_VERSION "[tty v0.1.0]"
 
 #define TTY_PATH "/var/tty.peer"
@@ -912,7 +914,8 @@ int main() {
   char ioctl_buf[1256];
   
   // Use console.log as tty is not yet started
-  emscripten_log(EM_LOG_CONSOLE, "Starting " TTY_VERSION "...");
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "Starting " TTY_VERSION "...");
   
   /* Create the server local socket */
   sock = socket (AF_UNIX, SOCK_DGRAM, 0);
@@ -994,13 +997,15 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
       // Probe terminal
       probe_terminal();
     }
     else if (msg->msg_id == (PROBE_TTY|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "PROBE_TTY successful: rows=%d cols=%d",msg->_u.probe_tty_msg.rows, msg->_u.probe_tty_msg.cols);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "PROBE_TTY successful: rows=%d cols=%d",msg->_u.probe_tty_msg.rows, msg->_u.probe_tty_msg.cols);
 
       minor += 1;
       
@@ -1069,7 +1074,8 @@ int main() {
 
       if (msg->_u.open_msg.minor == 0) { // /dev/tty
 
-	emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session = %d", msg->_u.open_msg.sid);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session = %d", msg->_u.open_msg.sid);
 
 	unsigned short min;
 	
@@ -1087,7 +1093,8 @@ int main() {
 	  continue;
 	}
 
-	emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session -> min=%d", min);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session -> min=%d", min);
 
 	msg->_u.open_msg.minor = min;
       }

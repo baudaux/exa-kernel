@@ -37,6 +37,8 @@
 
 #define NB_ITIMERS_MAX 64
 
+#define DEBUG 0
+
 struct itimer {
 
   pid_t pid;
@@ -59,7 +61,9 @@ int main() {
   struct itimer itimers[NB_ITIMERS_MAX];
 
   // Use console.log as tty is not yet started
-  emscripten_log(EM_LOG_CONSOLE, "Starting resmgr v0.1.0 ...");
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "Starting resmgr v0.1.0 ...");
 
   for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
     itimers[i].pid = 0;
@@ -132,12 +136,18 @@ int main() {
 
 	  read(itimers[i].fd, &count, sizeof(count));
 
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "resmgr: ITIMER count=%d", count);
+
 	  msg->msg_id = KILL;
 	  msg->pid = itimers[i].pid;
 	  msg->_u.kill_msg.pid = itimers[i].pid;
 	  msg->_u.kill_msg.sig = SIGALRM;
 
 	  int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "resmgr: process_kill action=%d", action);
 
 	  if (action == 2) {
 	    sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
@@ -150,11 +160,13 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    //emscripten_log(EM_LOG_CONSOLE, "resmgr: msg %d received from %s (%d)", msg->msg_id, remote_addr.sun_path,bytes_rec);
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: msg %d received from %s (%d)", msg->msg_id, remote_addr.sun_path,bytes_rec);
 
     if (msg->msg_id == REGISTER_DRIVER) {
       
-      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER %s (%d)", msg->_u.dev_msg.dev_name, msg->_u.dev_msg.dev_type);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER %s (%d)", msg->_u.dev_msg.dev_name, msg->_u.dev_msg.dev_type);
 
       // Add driver
       msg->_u.dev_msg.major = device_register_driver(msg->_u.dev_msg.dev_type, (const char *)msg->_u.dev_msg.dev_name, (const char *)remote_addr.sun_path);
@@ -175,7 +187,8 @@ int main() {
     }
     else if (msg->msg_id == REGISTER_DEVICE) {
       
-      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE %s (%d,%d,%d)", msg->_u.dev_msg.dev_name, msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE %s (%d,%d,%d)", msg->_u.dev_msg.dev_name, msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
       device_register_device(msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor, (const char *)msg->_u.dev_msg.dev_name);
 
@@ -217,7 +230,8 @@ int main() {
       struct device * dev = NULL;
       char pathname[1024];
 
-      emscripten_log(EM_LOG_CONSOLE, "MOUNT %d %d %d %s", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor, (const char *)&msg->_u.mount_msg.pathname[0]);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "MOUNT %d %d %d %s", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor, (const char *)&msg->_u.mount_msg.pathname[0]);
 
       struct vnode * vnode = vfs_find_node((const char *)&msg->_u.mount_msg.pathname[0], NULL);
   
@@ -250,7 +264,8 @@ int main() {
 	msg->_u.io_msg.len = strlen((char *)(msg->_u.io_msg.buf))+1;
 
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
-	emscripten_log(EM_LOG_CONSOLE, "Mount path: %s", pathname);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "Mount path: %s", pathname);
 
 	if (strcmp((const char *)&(pathname[0]),"/etc") == 0) {
 
@@ -275,7 +290,8 @@ int main() {
       msg->msg_id |= 0x80;
       msg->_errno = 0;
 
-      emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
 
       msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff));
 
@@ -301,7 +317,8 @@ int main() {
       msg->msg_id |= 0x80;
       msg->_errno = 0;
 
-      emscripten_log(EM_LOG_CONSOLE, "BIND %x %s", ((struct sockaddr_un *)&(msg->_u.bind_msg.addr))->sun_family, ((struct sockaddr_un *)&(msg->_u.bind_msg.addr))->sun_path);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "BIND %x %s", ((struct sockaddr_un *)&(msg->_u.bind_msg.addr))->sun_family, ((struct sockaddr_un *)&(msg->_u.bind_msg.addr))->sun_path);
 
       //TODO: bind in all possible fs, not only vfs
       
@@ -333,7 +350,8 @@ int main() {
     }
     else if (msg->msg_id == OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "OPEN from %d: %x %x %s", msg->pid, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "OPEN from %d: %x %x %s", msg->pid, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname);
 
       char * path;
       char new_path[1024];
@@ -362,19 +380,22 @@ int main() {
 	
 	vfs_get_path(vfs_get_vnode(remote_fd), new_path);
 
-	emscripten_log(EM_LOG_CONSOLE, "vfs_get_path: %s", new_path);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "vfs_get_path: %s", new_path);
 	
 	if (remote_fd == 0) {
 
 	  struct vnode * vnode = vfs_get_vnode(remote_fd);
 
-	  emscripten_log(EM_LOG_CONSOLE, "vnode is a device or mount point: %d %d %d %s",vnode->_u.dev.type, vnode->_u.dev.major, vnode->_u.dev.minor, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "vnode is a device or mount point: %d %d %d %s",vnode->_u.dev.type, vnode->_u.dev.major, vnode->_u.dev.minor, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
 
 	  char node_path[1024];
 	
 	  vfs_get_path(vnode, node_path);
 
-	  emscripten_log(EM_LOG_CONSOLE, "OPEN: VMOUNT %s trail=%s", node_path, vfs_get_pathname(remote_fd));
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "OPEN: VMOUNT %s trail=%s", node_path, vfs_get_pathname(remote_fd));
 
 	  msg->_u.open_msg.sid = process_getsid(msg->pid);
 
@@ -418,7 +439,8 @@ int main() {
       }
       else {
 
-	emscripten_log(EM_LOG_CONSOLE, "vnode not found");
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "vnode not found");
 
 	msg->msg_id |= 0x80;
 	msg->_errno = ENOENT;
@@ -428,7 +450,8 @@ int main() {
     }
     else if (msg->msg_id == (OPEN|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: %d %x %x %s %d %d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: %d %x %x %s %d %d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
 
       if (msg->_errno == 0) {
 
@@ -445,7 +468,8 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
 
       unsigned char type;
       unsigned short major;
@@ -498,7 +522,8 @@ int main() {
 	}
 	else {
 
-	  emscripten_log(EM_LOG_CONSOLE, "CLOSE: do not close");
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "CLOSE: do not close");
 
 	  // Other fd are there, do not close fd in the driver
 
@@ -510,7 +535,8 @@ int main() {
       }
       else {
 
-	emscripten_log(EM_LOG_CONSOLE, "CLOSE: not found");
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "CLOSE: not found");
 
 	msg->msg_id |= 0x80;
 	msg->_errno = EBADF;
@@ -520,7 +546,8 @@ int main() {
     }
     else if (msg->msg_id == (CLOSE|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Response from CLOSE from %d (%s)", msg->pid, process_get_peer_addr(msg->pid)->sun_path);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Response from CLOSE from %d (%s)", msg->pid, process_get_peer_addr(msg->pid)->sun_path);
 
       // Forward response to process
 
@@ -529,7 +556,8 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
 
@@ -558,7 +586,8 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       //TODO : read remaining bytes if needed (beyond 1256)
 
@@ -580,7 +609,8 @@ int main() {
     }
     else if (msg->msg_id == IOCTL) {
       
-      emscripten_log(EM_LOG_CONSOLE, "IOCTL from %d: %d %d", msg->pid, msg->_u.ioctl_msg.fd, msg->_u.ioctl_msg.op);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "IOCTL from %d: %d %d", msg->pid, msg->_u.ioctl_msg.fd, msg->_u.ioctl_msg.op);
 
       msg->msg_id |= 0x80;
 
@@ -598,12 +628,14 @@ int main() {
     }
     else if (msg->msg_id == FCNTL) {
       
-      emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
 
     }
     else if (msg->msg_id == SETSID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SETSID from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SETSID from %d", msg->pid);
 
       msg->_u.setsid_msg.sid = process_setsid(msg->pid);
       
@@ -613,14 +645,16 @@ int main() {
       if (msg->_u.setsid_msg.sid < 0)
 	msg->_errno = EPERM;
 
-      emscripten_log(EM_LOG_CONSOLE, "SETSID --> %d", msg->_u.setsid_msg.sid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SETSID --> %d", msg->_u.setsid_msg.sid);
 
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       
     }
     else if (msg->msg_id == GETSID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "GETSID from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "GETSID from %d", msg->pid);
 
       if (msg->_u.getsid_msg.pid == 0) {
 	msg->_u.getsid_msg.sid = process_getsid(msg->pid);
@@ -644,7 +678,8 @@ int main() {
     }
     else if (msg->msg_id == FORK) {
 
-      emscripten_log(EM_LOG_CONSOLE, "FORK from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "FORK from %d", msg->pid);
 
       msg->_u.fork_msg.child = process_fork(-1, msg->pid, NULL);
       
@@ -656,7 +691,8 @@ int main() {
     }
     else if (msg->msg_id == EXECVE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: %lu", msg->pid, msg->_u.execve_msg.args_size);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: %lu", msg->pid, msg->_u.execve_msg.args_size);
 
       if (msg->_u.execve_msg.args_size == 0xffffffff) {
 
@@ -675,7 +711,8 @@ int main() {
     }
     else if (msg->msg_id == DUP) {
 
-      emscripten_log(EM_LOG_CONSOLE, "DUP from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "DUP from %d", msg->pid);
 
       msg->_u.dup_msg.new_fd = process_dup(msg->pid, msg->_u.dup_msg.fd, msg->_u.dup_msg.new_fd);
       
@@ -686,7 +723,8 @@ int main() {
     }
     else if (msg->msg_id == GETPPID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "GETPPID from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "GETPPID from %d", msg->pid);
 
       msg->_u.getppid_msg.ppid = process_getppid(msg->pid);
       
@@ -699,7 +737,8 @@ int main() {
     }
     else if (msg->msg_id == GETPGID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "GETPGID from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "GETPGID from %d", msg->pid);
 
       if (msg->_u.getpgid_msg.pid == 0)
 	msg->_u.getpgid_msg.pgid = process_getpgid(msg->pid);
@@ -715,7 +754,8 @@ int main() {
     }
     else if (msg->msg_id == SETPGID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SETPGID from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SETPGID from %d", msg->pid);
 
       if (msg->_u.getpgid_msg.pid == 0)
         process_setpgid(msg->pid, msg->_u.getpgid_msg.pgid);
@@ -731,7 +771,8 @@ int main() {
     }
     else if (msg->msg_id == IS_OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "IS_OPEN from %d: %d", msg->pid, msg->_u.is_open_msg.fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "IS_OPEN from %d: %d", msg->pid, msg->_u.is_open_msg.fd);
 
       msg->_errno = ENOENT;
 
@@ -743,7 +784,8 @@ int main() {
 
 	  strcpy(msg->_u.is_open_msg.peer, drv->peer);
 
-	  emscripten_log(EM_LOG_CONSOLE, "IS_OPEN found %d %d %d %s", msg->_u.is_open_msg.type, msg->_u.is_open_msg.major, msg->_u.is_open_msg.remote_fd, msg->_u.is_open_msg.peer);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "IS_OPEN found %d %d %d %s", msg->_u.is_open_msg.type, msg->_u.is_open_msg.major, msg->_u.is_open_msg.remote_fd, msg->_u.is_open_msg.peer);
 
 	  msg->_errno = 0;
 	}
@@ -754,7 +796,8 @@ int main() {
     }
     else if (msg->msg_id == READLINK) {
       
-      emscripten_log(EM_LOG_CONSOLE, "READLINK from %d: %s", msg->pid, msg->_u.readlink_msg.pathname_or_buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "READLINK from %d: %s", msg->pid, msg->_u.readlink_msg.pathname_or_buf);
 
       char * pathname;
       char str[1024];
@@ -775,7 +818,8 @@ int main() {
 
       if (node->type == VSYMLINK) {
 
-	emscripten_log(EM_LOG_CONSOLE, "READLINK found: %s", node->_u.link.symlink);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "READLINK found: %s", node->_u.link.symlink);
 
 	strcpy(msg->_u.readlink_msg.pathname_or_buf, (const char *)node->_u.link.symlink);
 
@@ -794,7 +838,8 @@ int main() {
     }
     else if (msg->msg_id == STAT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       char * path;
       char new_path[1024];
@@ -825,7 +870,8 @@ int main() {
 
 	if (vnode == NULL) {
 
-	  emscripten_log(EM_LOG_CONSOLE, "STAT from %d: %s found", msg->pid, path);
+	 if (DEBUG)
+	   emscripten_log(EM_LOG_CONSOLE, "STAT from %d: %s found", msg->pid, path);
 
 	  msg->msg_id |= 0x80;
 	  msg->_errno = 0;
@@ -848,7 +894,8 @@ int main() {
 
 	  strcpy(msg->_u.stat_msg.pathname_or_buf, node_path);
 
-	  emscripten_log(EM_LOG_CONSOLE, "STAT: VMOUNT %s %s %s", node_path, trail, msg->_u.stat_msg.pathname_or_buf);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "STAT: VMOUNT %s %s %s", node_path, trail, msg->_u.stat_msg.pathname_or_buf);
 
 	  driver_addr.sun_family = AF_UNIX;
 	  strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
@@ -871,7 +918,8 @@ int main() {
     }
     else if (msg->msg_id == (STAT|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Response from STAT from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Response from STAT from %d", msg->pid);
 
       // Forward response to process
       
@@ -880,7 +928,8 @@ int main() {
     }
     else if (msg->msg_id == LSTAT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "LSTAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "LSTAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       char * path;
       char new_path[1024];
@@ -932,7 +981,8 @@ int main() {
 
 	  strcpy(msg->_u.stat_msg.pathname_or_buf, node_path);
 	  
-	  emscripten_log(EM_LOG_CONSOLE, "LSTAT: VMOUNT %s", msg->_u.stat_msg.pathname_or_buf);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "LSTAT: VMOUNT %s", msg->_u.stat_msg.pathname_or_buf);
 
 	  driver_addr.sun_family = AF_UNIX;
 	  strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
@@ -955,7 +1005,8 @@ int main() {
     }
     else if (msg->msg_id == (LSTAT|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Response from LSTAT from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Response from LSTAT from %d", msg->pid);
 
       // Forward response to process
       
@@ -964,7 +1015,8 @@ int main() {
     }
     else if (msg->msg_id == TIMERFD_CREATE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "TIMERFD_CREATE from %d (%d)", msg->pid, msg->_u.timerfd_create_msg.clockid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "TIMERFD_CREATE from %d (%d)", msg->pid, msg->_u.timerfd_create_msg.clockid);
 
       msg->_u.timerfd_create_msg.fd = process_create_fd(msg->pid, -3, 0, 0, msg->_u.timerfd_create_msg.clockid & 0xffff);
 
@@ -975,7 +1027,8 @@ int main() {
     }
     else if (msg->msg_id == GETCWD) {
 
-      emscripten_log(EM_LOG_CONSOLE, "GETCWD from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "GETCWD from %d", msg->pid);
 
       strcpy((char *)msg->_u.cwd_msg.buf, process_getcwd(msg->pid));
       msg->_u.cwd_msg.len = strlen((char *)msg->_u.cwd_msg.buf)+1;
@@ -987,7 +1040,8 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s", msg->pid, msg->_u.cwd_msg.buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s", msg->pid, msg->_u.cwd_msg.buf);
 
       msg->_errno = 0;
 
@@ -1016,13 +1070,15 @@ int main() {
   
       if (vnode) {
 
-	emscripten_log(EM_LOG_CONSOLE, "CHDIR resolved %s", dir);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "CHDIR resolved %s", dir);
 
 	char new_dir[1024];
 	
 	vfs_get_path(vnode, new_dir);
 
-	emscripten_log(EM_LOG_CONSOLE, "CHDIR resolved -> %s %d", new_dir, vnode->type);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "CHDIR resolved -> %s %d", new_dir, vnode->type);
 
 	if (vnode->type == VDIR) {
 	  
@@ -1041,7 +1097,8 @@ int main() {
 	  
 	  strcpy(msg->_u.cwd_msg.buf, new_dir);
 
-	  emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s -> send to driver", msg->pid, msg->_u.cwd_msg.buf);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s -> send to driver", msg->pid, msg->_u.cwd_msg.buf);
 
 	  driver_addr.sun_family = AF_UNIX;
 	  strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
@@ -1066,7 +1123,8 @@ int main() {
     }
     else if (msg->msg_id == (CHDIR|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Return from CHDIR from %d: %s", msg->pid, msg->_u.cwd_msg.buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Return from CHDIR from %d: %s", msg->pid, msg->_u.cwd_msg.buf);
 
       if (msg->_errno == 0) {
 
@@ -1078,7 +1136,8 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: count=%d", msg->pid, msg->_u.getdents_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: count=%d", msg->pid, msg->_u.getdents_msg.len);
 
       ssize_t count = (msg->_u.getdents_msg.len < 1024)?msg->_u.getdents_msg.len:1024;
       
@@ -1101,7 +1160,8 @@ int main() {
     }
     else if (msg->msg_id == WAIT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "WAIT from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "WAIT from %d", msg->pid);
 
       if (msg->_u.wait_msg.pid=process_wait(msg->pid, msg->_u.wait_msg.pid, msg->_u.wait_msg.options, &msg->_u.wait_msg.status)) {
 	
@@ -1111,7 +1171,8 @@ int main() {
     }
     else if (msg->msg_id == EXIT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: status=%d", msg->pid, msg->_u.exit_msg.status);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: status=%d", msg->pid, msg->_u.exit_msg.status);
 
       int pid = msg->pid;
       int ppid;
@@ -1125,7 +1186,8 @@ int main() {
 	msg->_u.wait_msg.pid = pid;
 	msg->_u.wait_msg.status = msg->_u.exit_msg.status << 8;
 
-	emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d", msg->pid);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d", msg->pid);
 	 // Forward response to process
 	
 	 sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
@@ -1134,7 +1196,8 @@ int main() {
     }
     else if (msg->msg_id == SEEK) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: fd=%d off=%d whence=%d", msg->pid, msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SEEK from %d: fd=%d off=%d whence=%d", msg->pid, msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 
       msg->msg_id |= 0x80;
       
@@ -1155,7 +1218,8 @@ int main() {
     }
     else if (msg->msg_id == SIGACTION) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SIGACTION from %d: signum=%d", msg->pid, msg->_u.sigaction_msg.signum);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SIGACTION from %d: signum=%d", msg->pid, msg->_u.sigaction_msg.signum);
 
       msg->_errno = process_sigaction(msg->pid, msg->_u.sigaction_msg.signum, &msg->_u.sigaction_msg.act);
       
@@ -1166,7 +1230,8 @@ int main() {
     }
     else if (msg->msg_id == SIGPROCMASK) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SIGPROGMASK from %d: how=%d", msg->pid, msg->_u.sigprocmask_msg.how);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SIGPROGMASK from %d: how=%d", msg->pid, msg->_u.sigprocmask_msg.how);
 
       msg->_errno = process_sigprocmask(msg->pid, msg->_u.sigprocmask_msg.how, &msg->_u.sigprocmask_msg.sigset);
       
@@ -1177,11 +1242,13 @@ int main() {
     }
     else if (msg->msg_id == KILL) {
 
-      emscripten_log(EM_LOG_CONSOLE, "KILL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "KILL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
 
       int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
 
-      emscripten_log(EM_LOG_CONSOLE, "KILL from %d: action=%d", msg->pid, action);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "KILL from %d: action=%d", msg->pid, action);
 
       if (action == 1) { // Default action
 
@@ -1199,20 +1266,21 @@ int main() {
 	}
       }
     }
-    else if (msg->msg_id == (KILL|0x80)) {
+    else if (msg->msg_id == EXA_RELEASE_SIGNAL) {
+      
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "EXA_RELEASE_SIGNAL from %d: pid=%d sig=%d", msg->pid, msg->_u.exa_release_signal_msg.sig);
+      
+      process_signal_delivered(msg->pid, msg->_u.exa_release_signal_msg.sig);
 
-      emscripten_log(EM_LOG_CONSOLE, "KILL RETURN from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+      msg->msg_id |= 0x80;
 
-      process_signal_delivered(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
-
-      //TODO
-      /*if (msg->pid == msg->_u.kill_msg.pid) {
-	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-	}*/
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == SETITIMER) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: %d %d %d %d", msg->pid, msg->_u.setitimer_msg.val_sec, msg->_u.setitimer_msg.val_usec, msg->_u.setitimer_msg.it_sec, msg->_u.setitimer_msg.it_usec);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: %d %d %d %d", msg->pid, msg->_u.setitimer_msg.val_sec, msg->_u.setitimer_msg.val_usec, msg->_u.setitimer_msg.it_sec, msg->_u.setitimer_msg.it_usec);
 
       int fd = process_setitimer(msg->pid, msg->_u.setitimer_msg.which, msg->_u.setitimer_msg.val_sec, msg->_u.setitimer_msg.val_usec, msg->_u.setitimer_msg.it_sec, msg->_u.setitimer_msg.it_usec);
 
@@ -1242,7 +1310,8 @@ int main() {
 	}
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: timerfd=%d", msg->pid, fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "SETITIMER from %d: timerfd=%d", msg->pid, fd);
 
       msg->msg_id |= 0x80;
       

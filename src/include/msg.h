@@ -66,6 +66,7 @@ enum message_id {
   KILL,
   SETITIMER,
   GETITIMER,
+  EXA_RELEASE_SIGNAL = 45,
 };
 
 enum dev_type {
@@ -294,13 +295,18 @@ struct kill_message {
   struct sigaction act;
 };
 
+struct exa_release_signal_message {
+
+  int sig;
+};
+
 struct setitimer_message {
 
   int which;
-  int val_sec;
-  int val_usec;
   int it_sec;
   int it_usec;
+  int val_sec;
+  int val_usec;
 };
 
 struct message {
@@ -346,6 +352,7 @@ struct message {
     struct sigprocmask_message sigprocmask_msg;
     struct kill_message kill_msg;
     struct setitimer_message setitimer_msg;
+    struct exa_release_signal_message exa_release_signal_msg;
     
   } _u;
 };
