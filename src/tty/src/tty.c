@@ -1140,7 +1140,7 @@ int main() {
       }
     }
     else if (msg->msg_id == WRITE) {
-
+      
       //emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
 
       struct device_desc * dev;
