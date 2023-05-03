@@ -221,7 +221,8 @@ int main() {
 
 	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
 
-	  emscripten_log(EM_LOG_CONSOLE, "Send msg to %s", tty_addr.sun_path);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "Send msg to %s", tty_addr.sun_path);
 	}
       
     }
@@ -246,7 +247,8 @@ int main() {
       else {
 	msg->_errno = ENOTDIR;
 
-	emscripten_log(EM_LOG_CONSOLE, "mount: %s not a directory", msg->_u.mount_msg.pathname);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "mount: %s not a directory", msg->_u.mount_msg.pathname);
       }
 
       msg->msg_id |= 0x80;
@@ -308,7 +310,8 @@ int main() {
 	// TODO
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "SOCKET created %d", msg->_u.socket_msg.fd);
+      if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "SOCKET created %d", msg->_u.socket_msg.fd);
 
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
@@ -500,7 +503,8 @@ int main() {
 	    driver_addr.sun_family = AF_UNIX;
 	    strcpy(driver_addr.sun_path, device_get_driver(type, major)->peer);
 
-	    emscripten_log(EM_LOG_CONSOLE, "CLOSE send to: %s", driver_addr.sun_path);
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "CLOSE send to: %s", driver_addr.sun_path);
 
 	    sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
 	  }
@@ -569,7 +573,8 @@ int main() {
 
       if (len >= 0) {
 	
-	emscripten_log(EM_LOG_CONSOLE, "READ done : %d bytes", len);
+	if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "READ done : %d bytes", len);
 
 	reply->_u.io_msg.len = len;
 	      
@@ -595,7 +600,8 @@ int main() {
       
       if (vfs_write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len) >= 0)  {
 
-	 emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: done");
+	 if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: done");
 	      
 	msg->_errno = 0;
       }
@@ -1205,7 +1211,8 @@ int main() {
 
       if (msg->_u.seek_msg.offset >= 0)  {
 
-	emscripten_log(EM_LOG_CONSOLE, "SEEK: done");
+	if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "SEEK: done");
 	
 	msg->_errno = 0;
       }

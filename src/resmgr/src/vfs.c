@@ -578,9 +578,10 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
 
     fds[fd].offset += bytes_read;
 
-    for (int i=0; i < bytes_read; ++i) {
-
-      emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
+    if (DEBUG) {
+      for (int i=0; i < bytes_read; ++i) {
+	emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
+      }
     }
 
     return bytes_read;

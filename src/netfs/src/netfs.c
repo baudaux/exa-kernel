@@ -190,8 +190,7 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
 
 	    response.text().then(text => {
 
-		//console.log(text);
-		stringToUTF8(text, buf, count);
+		stringToUTF8(text, buf, contentLength+1);
 		
 		//Module.HEAPU8.set(buffer, buf);
 		
@@ -373,17 +372,20 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
     return 0;
   
   if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d\n", fd, fds[i].offset);
+    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d count=%d", fd, fds[i].offset, count);
 
   char delim[] = "\n";
 
   int len = 0;
-
-  char * ptr = strtok(fds[i].data+fds[i].offset, delim);
-
+  
+  char * savePtr = fds[i].data+fds[i].offset;
+  
+  char * ptr = strtok(savePtr, delim);
+  
   while (ptr != NULL) {
 
-    //emscripten_log(EM_LOG_CONSOLE, "**** ptr: %s", ptr);
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "**** len=%d ptr: %s", len, ptr);
 
     char * ptr2 = strchr(ptr, '=');
 
@@ -392,7 +394,7 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
       if (strncmp(ptr, "errno", 5) == 0) {
 
 	int _errno = atoi(ptr2+1);
-
+	  
 	if (_errno)
 	  return _errno;
       }
@@ -406,10 +408,12 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
       if (ptr2) {
 
 	strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
+	dirent_ptr->d_name[ptr2-ptr] = 0;
 
 	if ((len+sizeof(struct __dirent)+strlen(dirent_ptr->d_name)) < count) {  // there is space for this entry
 
-	  ///emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
 
 	  ptr = ptr2+1;
 	
@@ -442,6 +446,8 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 	}
 	else {
 
+	  ptr[strlen(ptr)] = '\n';
+	  
 	  break;
 	}
       }
@@ -449,11 +455,16 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 
     ptr = strtok(NULL, delim);
   }
-
-  if (ptr)
+  
+  if (ptr) {
     fds[i].offset = ptr-fds[i].data;
-  else
+  }
+  else {
     fds[i].offset = strlen(fds[i].data);
+  }
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "*** len=%d remains: %s", len, ptr);
     
   return len;
 }
@@ -790,7 +801,8 @@ int main() {
 
 	count = dev->getdents(msg->_u.getdents_msg.fd, (char *)(msg->_u.getdents_msg.buf), count);
 
-	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
 	  
