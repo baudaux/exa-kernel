@@ -67,6 +67,7 @@ enum message_id {
   SETITIMER,
   GETITIMER,
   EXA_RELEASE_SIGNAL = 45,
+  FACCESSAT,
 };
 
 enum dev_type {
@@ -309,6 +310,18 @@ struct setitimer_message {
   int val_usec;
 };
 
+struct faccessat_message {
+
+  int dirfd;
+  int amode;
+  int flags;
+  int len;
+  char pathname[1024];
+  unsigned char type;
+  unsigned short major;
+  unsigned short minor;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -353,6 +366,7 @@ struct message {
     struct kill_message kill_msg;
     struct setitimer_message setitimer_msg;
     struct exa_release_signal_message exa_release_signal_msg;
+    struct faccessat_message faccessat_msg;
     
   } _u;
 };

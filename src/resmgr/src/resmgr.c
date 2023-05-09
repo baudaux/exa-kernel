@@ -1324,6 +1324,84 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
+    else if (msg->msg_id == FACCESSAT) {
+      
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "FACCESSAT from %d: %s", msg->pid, msg->_u.faccessat_msg.pathname);
+
+      char * path;
+      char new_path[1024];
+
+      if (msg->_u.faccessat_msg.pathname[0] == '/') {
+
+	path = msg->_u.faccessat_msg.pathname;
+      }
+      else {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(new_path, "%s%s", cwd, msg->_u.faccessat_msg.pathname);
+	else
+	  sprintf(new_path, "%s/%s", cwd, msg->_u.faccessat_msg.pathname);
+
+	path = &new_path[0];
+      }
+
+      struct stat stat_buf;
+      char * trail;
+      
+      struct vnode * vnode = vfs_find_node((const char *)path, &trail);
+
+      if (vnode == NULL) {
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "FACCESSAT from %d: %s not found", msg->pid, path);
+
+	msg->msg_id |= 0x80;
+	msg->_errno = ENOENT;
+
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else if (vnode->type == VMOUNT) {
+
+	struct sockaddr_un driver_addr;
+
+	msg->_u.faccessat_msg.type = vnode->_u.dev.type;
+	msg->_u.faccessat_msg.major = vnode->_u.dev.major;
+	msg->_u.faccessat_msg.minor = vnode->_u.dev.minor;
+
+	char node_path[1024];
+	
+	vfs_get_path(vnode, node_path);
+
+	strcat(node_path, trail);
+
+	strcpy(msg->_u.faccessat_msg.pathname, node_path);
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "FACCESSAT: VMOUNT %s %s %s", node_path, trail, msg->_u.faccessat_msg.pathname);
+
+	driver_addr.sun_family = AF_UNIX;
+	strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
+
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	}
+      else {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	
+      }
+    }
+    else if (msg->msg_id == (FACCESSAT|0x80)) {
+
+      // Forward response to process
+
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+    }
     
   }
   

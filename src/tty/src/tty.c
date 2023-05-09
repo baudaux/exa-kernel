@@ -137,6 +137,8 @@ static void init_ctrl(struct termios * ctrl) {
   ctrl->c_cflag = TTYDEF_CFLAG;
   ctrl->c_lflag = TTYDEF_LFLAG;
 
+  ctrl->c_cflag |= B9600;
+
   ctrl->c_line = 0;
 
   ctrl->c_cc[VINTR] = 3;    // C-C
@@ -404,7 +406,8 @@ static void local_tty_start_timer(int fd) {
 
 static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigned short minor, pid_t pid, pid_t sid) {
 
-  //emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d", last_fd);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d", last_fd);
 
   ++last_fd;
 
@@ -417,6 +420,9 @@ static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigne
 
 static ssize_t local_tty_read(int fd, void * buf, size_t len) {
 
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "local_tty_read: len=%d", len);
+  
   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
   
   size_t len2 = 0;
@@ -516,7 +522,8 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
   unsigned char * data = (unsigned char *)buf;
 
-  //emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
 
   for (int i = 0; i < count; ++i) {
 
@@ -536,8 +543,9 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 }
 
 static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_t pid, pid_t sid, pid_t pgid) {
-  
-  //emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: fd=%d op=%d", fd, op);
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: fd=%d op=%d", fd, op);
   
   switch(op) {
 
@@ -638,7 +646,8 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
   unsigned char echo_buf[1024];
 
-  //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
   int j = 0;
 
@@ -853,6 +862,9 @@ static void del_read_select_pending_request(pid_t pid, int remote_fd, int fd, st
 }
 
 static int local_tty_select(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, struct sockaddr_un * sock_addr) {
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "local_tty_select");
 
   struct device_desc * dev = get_device_from_fd(remote_fd);
 

@@ -48,6 +48,7 @@ struct device_ops {
   int (*stat)(const char *pathname, struct stat * stat);
   ssize_t (*getdents)(int fd, char * buf, ssize_t count);
   int (*seek)(int fd, int offset, int whence);
+  int (*faccess)(const char *pathname, int amode, int flags);
 };
 
 struct fd_entry {
@@ -181,21 +182,21 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
 	      contentLength = parseInt(response.headers.get('Content-Length'));
 	    }
 
-	    /*response.arrayBuffer().then(buffer => {
-		
-		Module.HEAPU8.set(buffer, buf);
+	    response.arrayBuffer().then(buffer => {
+
+		Module.HEAPU8.set(new Uint8Array(buffer), buf);
 		
 		wakeUp(contentLength);
-		});*/
+		});
 
-	    response.text().then(text => {
+	    /*response.text().then(text => {
 
 		stringToUTF8(text, buf, contentLength+1);
 		
 		//Module.HEAPU8.set(buffer, buf);
 		
 		wakeUp(contentLength);
-		})
+		});*/
 	    
 	  }
 	  else
@@ -504,6 +505,17 @@ static int netfs_seek(int fd, int offset, int whence) {
   return fds[fd].offset;
 }
 
+int netfs_faccess(const char * pathname, int amode, int flags) {
+
+  if (amode & W_OK)
+    return EACCES;
+
+  if (do_fetch_head(pathname) < 0)
+    return EACCES;
+      
+  return 0;
+}
+
 static struct device_ops netfs_ops = {
 
   .open = netfs_open,
@@ -514,6 +526,7 @@ static struct device_ops netfs_ops = {
   .stat = netfs_stat,
   .getdents = netfs_getdents,
   .seek = netfs_seek,
+  .faccess = netfs_faccess,
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -867,6 +880,13 @@ int main() {
       msg->msg_id |= 0x80;
 
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FACCESSAT) {
+
+      msg->_errno = get_device(msg->_u.faccessat_msg.minor)->faccess((const char *)(msg->_u.faccessat_msg.pathname), msg->_u.faccessat_msg.amode, msg->_u.faccessat_msg.flags);
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     
   }
