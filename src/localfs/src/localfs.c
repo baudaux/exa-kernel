@@ -31,6 +31,8 @@
 
 #include <emscripten.h>
 
+#define DEBUG 0
+
 #define LOCALFS_VERSION "localfs v0.1.0"
 
 #define LOCALFS_PATH "/var/localfs.peer"
@@ -49,6 +51,7 @@ struct device_ops {
   int (*stat)(const char *pathname, struct stat * stat);
   ssize_t (*getdents)(int fd, char * buf, ssize_t count);
   int (*seek)(int fd, int offset, int whence);
+  int (*faccess)(const char *pathname, int amode, int flags);
 };
 
 struct fd_entry {
@@ -59,10 +62,12 @@ struct fd_entry {
   char pathname[1024];
   int flags;
   unsigned short mode;
+  mode_t type;
   unsigned int size;
   unsigned int offset;
   char * data;
   unsigned int data_size;
+  void * lfs_handle;
 };
 
 static unsigned short major;
@@ -76,7 +81,35 @@ static int last_fd = 0;
 
 static struct fd_entry fds[NB_FD_MAX];
 
-int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, unsigned int size) {
+static struct lfs_config lfs_config = {
+
+  .read = &lfs_blk_read,
+  .prog = &lfs_blk_prog,
+  .erase = &lfs_blk_erase,
+  .sync = lfs_blk_sync,
+
+#ifdef LFS_THREADSAFE
+  .lock = NULL,
+  .unlock = NULL,
+#endif
+
+  .read_size = LFS_READ_SIZE,
+  .prog_size = LFS_READ_SIZE,
+  .block_size = LFS_BLK_SIZE,
+  .block_count = LFS_BLK_NB,
+  .block_cycles = 1000,
+  .cache_size = LFS_CACHE_SIZE,
+  .lookahead_size = 8,
+  .read_buffer = NULL,
+  .prog_buffer = NULL,
+  .lookahead_buffer = NULL,
+  .name_max = 0,
+  .file_max = 0,
+  .attr_max = 0,
+  .metadata_max = 0,
+};
+
+int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
@@ -90,11 +123,25 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       strcpy(fds[i].pathname, pathname);
       fds[i].flags = flags;
       fds[i].mode = mode;
+      fds[i].type = type;
       fds[i].size = size;
       fds[i].offset = 0;
+      fds[i].lfs_handle = lfs_handle;
 
       return last_fd;
     }
+  }
+
+  return -1;
+}
+
+int del_fd_entry(int index) {
+
+  if (fds[index].fd >= 0) {
+
+    fds[index].fd = -1;
+
+    return 0;
   }
 
   return -1;
@@ -115,14 +162,23 @@ int find_fd_entry(int fd) {
 
 
 static ssize_t localfs_read(int fd, void * buf, size_t count) {
-  
-  return 0;
+
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+
+  return lfs_file_read(&lfs, fds[i].lfs_handle, buf, count);
 }
 
 static ssize_t localfs_write(int fd, const void * buf, size_t count) {
 
-  
-  return 0;
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+
+  return lfs_file_write(&lfs, fds[i].lfs_handle, buf, count);
 }
 
 static int localfs_ioctl(int fildes, int request, ... /* arg */) {
@@ -132,19 +188,137 @@ static int localfs_ioctl(int fildes, int request, ... /* arg */) {
 
 static int localfs_close(int fd) {
 
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+
+  int res;
+
+  if (fds[i].type & S_IFDIR)
+    res = lfs_dir_close(&lfs, fds[i].lfs_handle);
+  else
+    res = lfs_file_close(&lfs, fds[i].lfs_handle);
+
+  if (res == LFS_ERR_OK)
+    del_fd_entry(i);
   
-  
-  return 0;
+  return res;
 }
 
 static int localfs_stat(const char * pathname, struct stat * stat) {
 
-  return 0;
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"localfs_stat: %s", pathname);
+  
+  struct lfs_info info;
+
+  int res = lfs_stat(&lfs, pathname, &info);
+
+  if (res == LFS_ERR_OK) {
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"localfs_stat -> %d %d %s", info.type, info.size, info.name);
+  }
+
+  if ((res == LFS_ERR_OK) && stat) {
+
+    stat->st_dev = makedev(major, 1);
+    
+    if (info.type == LFS_TYPE_REG) {
+      stat->st_mode = S_IFREG;
+      stat->st_size = info.size;
+    }
+    else if (info.type == LFS_TYPE_DIR){
+      stat->st_mode = S_IFDIR;
+      stat->st_size = 0;
+    }
+    else {
+      stat->st_mode = S_IFREG;
+      stat->st_size = 0;
+    }
+  }
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", res, stat->st_mode);
+  
+  return res;
 }
 
 static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  return 0;
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"localfs_open: %s", pathname);
+
+  int _errno;
+  struct stat stat;
+
+  _errno = localfs_stat(pathname, &stat);
+
+  if ( (_errno == LFS_ERR_OK) || (flags & O_CREAT) ) {
+
+    int lfs_flags = 0;
+    int res = -1;
+    void * lfs_handle = NULL;
+
+    if (_errno != LFS_ERR_OK) {
+
+      stat.st_mode = S_IFREG; // Create a regular file if it does not exist
+    }
+
+    if ((flags & 3) == 0)
+      lfs_flags |= LFS_O_RDONLY;
+    if (flags & O_WRONLY)
+      lfs_flags |= LFS_O_WRONLY;
+    if (flags & O_RDWR)
+      lfs_flags |= LFS_O_RDWR;
+    if (flags & O_CREAT)
+      lfs_flags |= LFS_O_CREAT;
+    if (flags & O_EXCL)
+      lfs_flags |= LFS_O_EXCL;
+    if (flags & O_TRUNC)
+      lfs_flags |= LFS_O_TRUNC;
+    if (flags & O_APPEND)
+      lfs_flags |= LFS_O_APPEND;
+
+    if (stat.st_mode == S_IFREG) {
+
+      if (flags & O_DIRECTORY)   // Error pathname is not a directory
+	return -1;
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_file: %x %x", flags, lfs_flags);
+
+      lfs_handle = malloc(sizeof(lfs_file_t));
+      
+      res = lfs_file_open(&lfs, (lfs_file_t *)lfs_handle, pathname, lfs_flags);
+    }
+    else if (stat.st_mode == S_IFDIR) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
+
+      lfs_handle = malloc(sizeof(lfs_dir_t));
+
+      res = lfs_dir_open(&lfs, lfs_handle, pathname);
+    }
+
+    if (res == LFS_ERR_OK) {
+      return add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
+    }
+    else {
+
+      if (lfs_handle)
+	free(lfs_handle);
+      
+      _errno = res;
+    }
+  }
+
+  if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"<-- localfs_open : errno=%d", _errno);
+
+  return _errno;
   
 }
 
@@ -158,11 +332,65 @@ struct __dirent {
 
 static ssize_t localfs_getdents(int fd, char * buf, ssize_t count) {
 
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
   
-  return 0;
+  int res = 1;
+  int len = 0;
+
+  struct lfs_info info;
+
+  while (res > 0) {
+    
+    res = lfs_dir_read(&lfs, fds[i].lfs_handle, &info);
+
+    if (res > 0) {
+    
+      struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
+
+      if ((len+sizeof(struct __dirent)+strlen(info.name)) < count) {  // there is space for this entry
+
+	strcpy(dirent_ptr->d_name, info.name);
+	
+	if (info.type == LFS_TYPE_DIR){
+	  dirent_ptr->d_type = DT_DIR;
+	}
+	else {
+	  dirent_ptr->d_type = DT_REG;
+	}
+	
+	dirent_ptr->d_reclen = sizeof(struct __dirent) + strlen(dirent_ptr->d_name);
+	  
+	len += dirent_ptr->d_reclen;
+
+	dirent_ptr->d_off = len;	  
+      }
+      else {
+
+	// Unread
+
+	lfs_soff_t off = lfs_dir_tell(&lfs, fds[i].lfs_handle);
+	lfs_dir_seek(&lfs, fds[i].lfs_handle, off-1);
+      }
+    }
+  }
+  
+  return len;
 }
 
 static int localfs_seek(int fd, int offset, int whence) {
+
+  int i = find_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+
+  return lfs_file_seek(&lfs, fds[i].lfs_handle, offset, whence);
+}
+
+static int localfs_faccess(const char * pathname, int amode, int flags) {
 
   return 0;
 }
@@ -177,6 +405,7 @@ static struct device_ops localfs_ops = {
   .stat = localfs_stat,
   .getdents = localfs_getdents,
   .seek = localfs_seek,
+  .faccess = localfs_faccess,
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -230,7 +459,7 @@ int main() {
     return -1;
   }
 
-  /* Bind server socket to NETFS_PATH */
+  /* Bind server socket to LOCALFS_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
   local_addr.sun_family = AF_UNIX;
   strcpy(local_addr.sun_path, LOCALFS_PATH);
@@ -259,8 +488,9 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    emscripten_log(EM_LOG_CONSOLE,"*** localfs: %d", msg->msg_id);
-
+    if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "*** localfs: %d", msg->msg_id);
+    
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
       if (msg->_errno)
@@ -268,71 +498,87 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
-
-      struct lfs_config lfs_config = {
-
-	.read = &lfs_blk_read,
-	.prog = &lfs_blk_prog,
-	.erase = &lfs_blk_erase,
-	.sync = lfs_blk_sync,
-
-#ifdef LFS_THREADSAFE
-	.lock = NULL,
-	.unlock = NULL,
-#endif
-
-	.read_size = LFS_READ_SIZE,
-	.prog_size = LFS_READ_SIZE,
-	.block_size = LFS_BLK_SIZE,
-	.block_count = LFS_BLK_NB,
-	.block_cycles = 1000,
-	.cache_size = LFS_CACHE_SIZE,
-	.lookahead_size = 8,
-	.read_buffer = NULL,
-	.prog_buffer = NULL,
-	.lookahead_buffer = NULL,
-	.name_max = 0,
-	.file_max = 0,
-	.attr_max = 0,
-	.metadata_max = 0,
-      };
+      if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
       int res = lfs_mount(&lfs, &lfs_config);
 
-      emscripten_log(EM_LOG_CONSOLE,"lfs_mount: res=%d", res);
+      if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
 
       if (res < 0) {
 
 	res = lfs_format(&lfs, &lfs_config);
 
-	emscripten_log(EM_LOG_CONSOLE,"lfs_format: res=%d", res);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
+
+	if (res == 0) {
+
+	  res = lfs_mount(&lfs, &lfs_config);
+	  
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "second lfs_mount: res=%d", res);
+	}
       }
 
-      /*minor += 1;
-	
-      register_device(minor, &localfs_ops);
-      
-      msg->msg_id = REGISTER_DEVICE;
-      msg->_u.dev_msg.minor = minor;
+      if (res == 0) {
 
-      memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "netfs%d", msg->_u.dev_msg.minor);
+	minor += 1;
+	
+	register_device(minor, &localfs_ops);
+      
+	msg->msg_id = REGISTER_DEVICE;
+	msg->_u.dev_msg.minor = minor;
+
+	memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
+	sprintf((char *)&msg->_u.dev_msg.dev_name[0], "localfs%d", msg->_u.dev_msg.minor);
   
-      sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));*/
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+      }
     }
     else if (msg->msg_id == (REGISTER_DEVICE|0x80)) {
 
       if (msg->_errno)
 	continue;
 
-      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
+      unsigned short minor = msg->_u.dev_msg.minor;
+
+      msg->msg_id = MOUNT;
+      msg->_u.mount_msg.dev_type = FS_DEV;
+      msg->_u.mount_msg.major = major;
+      msg->_u.mount_msg.minor = minor;
+
+      memset(msg->_u.mount_msg.pathname, 0, sizeof(msg->_u.mount_msg.pathname));
+
+      if (minor == 1) {
+
+	int res = lfs_mkdir(&lfs, "/home");
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "mkdir /home: res=%d", res);
+
+	if (res == LFS_ERR_EXIST) {
+	  res = 0;
+	}
+
+	if (res == 0) {
+	  strcpy((char *)&msg->_u.mount_msg.pathname[0], "/home");
+	
+	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+	}
+      }
       
     }
     else if (msg->msg_id == (MOUNT|0x80)) {
 
-      
+      if (msg->_errno)
+	continue;
+
+      emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     
     else if (msg->msg_id == OPEN) {
@@ -389,11 +635,50 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
       
+      struct device_ops * dev = NULL;
+
+      int i = find_fd_entry(msg->_u.io_msg.fd);
+
+      if (i >= 0) {
+        
+	dev = get_device(fds[i].minor);
+      }
       
+      if (dev) {
+	
+	msg->_u.io_msg.len = dev->write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len);
+	msg->_errno = 0;
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == IOCTL) {
 
+      struct device_ops * dev = NULL;
+
+      int i = find_fd_entry(msg->_u.ioctl_msg.fd);
+
+      if (i >= 0) {
+        
+	dev = get_device(fds[i].minor);
+      }
       
+      if (dev) {
+	
+	msg->_errno = dev->ioctl(msg->_u.ioctl_msg.fd, msg->_u.ioctl_msg.op, msg->_u.ioctl_msg.len, msg->_u.ioctl_msg.buf);
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == CLOSE) {
 
@@ -445,7 +730,7 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -488,7 +773,7 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "netfs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 
@@ -527,6 +812,13 @@ int main() {
       msg->msg_id |= 0x80;
 
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FACCESSAT) {
+
+      msg->_errno = get_device(msg->_u.faccessat_msg.minor)->faccess((const char *)(msg->_u.faccessat_msg.pathname), msg->_u.faccessat_msg.amode, msg->_u.faccessat_msg.flags);
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     
   }

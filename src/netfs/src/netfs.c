@@ -415,7 +415,7 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 
 	  if (DEBUG)
 	    emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
-
+	  
 	  ptr = ptr2+1;
 	
 	  ptr2 = strchr(ptr, ';');
@@ -505,7 +505,7 @@ static int netfs_seek(int fd, int offset, int whence) {
   return fds[fd].offset;
 }
 
-int netfs_faccess(const char * pathname, int amode, int flags) {
+static int netfs_faccess(const char * pathname, int amode, int flags) {
 
   if (amode & W_OK)
     return EACCES;
