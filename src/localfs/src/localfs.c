@@ -31,7 +31,7 @@
 
 #include <emscripten.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 #define LOCALFS_VERSION "localfs v0.1.0"
 
@@ -111,6 +111,9 @@ static struct lfs_config lfs_config = {
 
 int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
 
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
+  
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
     if (fds[i].fd < 0) {
@@ -127,6 +130,9 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].size = size;
       fds[i].offset = 0;
       fds[i].lfs_handle = lfs_handle;
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
 
       return last_fd;
     }
@@ -228,14 +234,17 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
     if (info.type == LFS_TYPE_REG) {
       stat->st_mode = S_IFREG;
       stat->st_size = info.size;
+      stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
     }
-    else if (info.type == LFS_TYPE_DIR){
+    else if (info.type == LFS_TYPE_DIR) {
       stat->st_mode = S_IFDIR;
       stat->st_size = 0;
+      stat->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
     }
     else {
       stat->st_mode = S_IFREG;
       stat->st_size = 0;
+      stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
     }
   }
 
@@ -281,7 +290,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     if (flags & O_APPEND)
       lfs_flags |= LFS_O_APPEND;
 
-    if (stat.st_mode == S_IFREG) {
+    if (stat.st_mode & S_IFREG) {
 
       if (flags & O_DIRECTORY)   // Error pathname is not a directory
 	return -1;
@@ -293,7 +302,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
       
       res = lfs_file_open(&lfs, (lfs_file_t *)lfs_handle, pathname, lfs_flags);
     }
-    else if (stat.st_mode == S_IFDIR) {
+    else if (stat.st_mode & S_IFDIR) {
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
@@ -583,7 +592,11 @@ int main() {
     
     else if (msg->msg_id == OPEN) {
 
+      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
+
       int remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+
+      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
 
       if (remote_fd >= 0) {
 
@@ -819,6 +832,44 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FSTAT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+
+      struct stat stat_buf;
+
+      int i = find_fd_entry(msg->_u.fstat_msg.fd);
+
+      if (i >= 0) {
+
+	int min = fds[i].minor;
+
+	stat_buf.st_dev = makedev(major, min);
+	stat_buf.st_ino = (ino_t)&devices[min];
+
+	int _errno = 0;
+
+	if ((_errno=get_device(min)->stat((const char *)fds[i].pathname, &stat_buf)) == 0) {
+	
+	  msg->_u.fstat_msg.len = sizeof(struct stat);
+	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat));
+
+	  msg->_errno = 0;
+	}
+	else {
+
+	  msg->_errno = -_errno;
+	}
+      }
+      else {
+
+	msg->_errno = -EBADF;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
     }
     
   }

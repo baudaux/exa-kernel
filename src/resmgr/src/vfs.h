@@ -95,6 +95,7 @@ int vfs_ioctl(int fd, int op);
 
 int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** vnode, char ** trail);
 int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** vnode, char ** trail);
+int vfs_fstat(int fd, struct stat * stat_buf);
 
 int vfs_seek(int fd, int offset, int whence);
 

@@ -888,6 +888,44 @@ int main() {
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
+    else if (msg->msg_id == FSTAT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "netfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+
+      struct stat stat_buf;
+
+      int i = find_fd_entry(msg->_u.fstat_msg.fd);
+
+      if (i >= 0) {
+
+	int min = fds[i].minor;
+
+	stat_buf.st_dev = makedev(major, min);
+	stat_buf.st_ino = (ino_t)&devices[min];
+
+	int _errno = 0;
+
+	if ((_errno=get_device(min)->stat((const char *)fds[i].pathname, &stat_buf)) == 0) {
+	
+	  msg->_u.fstat_msg.len = sizeof(struct stat);
+	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat));
+
+	  msg->_errno = 0;
+	}
+	else {
+
+	  msg->_errno = -_errno;
+	}
+      }
+      else {
+
+	msg->_errno = -EBADF;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
     
   }
   

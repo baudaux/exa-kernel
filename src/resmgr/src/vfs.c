@@ -787,23 +787,27 @@ int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, 
       case VDIR:
 
 	buf->st_mode |= S_IFDIR;
+	buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
 	break;
 	
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
 	buf->st_size = vnode->_u.file.file_size;
+	buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
 	break;
 	
       case VSYMLINK:
 
 	//TODO
         buf->st_mode |= S_IFDIR;
+	buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
 	break;
 	
       default:
 
 	buf->st_mode |= S_IFREG;
+	buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
 	break;
       }
       
@@ -840,23 +844,21 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       case VDIR:
 
 	buf->st_mode |= S_IFDIR;
+	buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
 	break;
 	
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
 	buf->st_size = vnode->_u.file.file_size;
+	buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
 	break;
 	
       case VSYMLINK:
 
 	//TODO
         buf->st_mode |= S_IFDIR;
-	break;
-	
-      default:
-
-	buf->st_mode |= S_IFREG;
+	buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
 	break;
       }
       
@@ -864,6 +866,39 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
     }
   }
   
+  return -1;
+}
+
+int vfs_fstat(int fd, struct stat * buf) {
+
+  struct vnode * vnode = vfs_get_vnode(fd);
+
+  if (vnode) {
+
+    buf->st_dev = makedev(0, 0); // vfs major, minor
+    buf->st_ino = (ino_t)vnode;
+
+    buf->st_mode = 0;
+    buf->st_size = 0;
+
+    switch(vnode->type) {
+
+    case VDIR:
+
+      buf->st_mode |= S_IFDIR;
+      buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
+      break;
+	
+    default:
+
+      buf->st_mode |= S_IFREG;
+      buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+      break;
+    }
+      
+    return 0;
+  }
+
   return -1;
 }
 

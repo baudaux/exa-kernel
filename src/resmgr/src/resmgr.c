@@ -37,7 +37,7 @@
 
 #define NB_ITIMERS_MAX 64
 
-#define DEBUG 0
+#define DEBUG 1
 
 struct itimer {
 
@@ -1402,7 +1402,28 @@ int main() {
 
       sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
     }
-    
+    else if (msg->msg_id == FSTAT) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "resmgr: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+
+      struct stat stat_buf;
+
+      msg->_errno = vfs_fstat(msg->_u.fstat_msg.fd, &stat_buf);
+
+      if (msg->_errno == 0) {
+	msg->_u.fstat_msg.len = sizeof(struct stat);
+	memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat));
+      }
+      else {
+      
+	msg->_u.fstat_msg.len = 0;
+      }  
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
   }
   
   return 0;
