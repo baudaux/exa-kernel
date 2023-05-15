@@ -35,6 +35,8 @@
 #define RESMGR_FILE "resmgr.peer"
 #define RESMGR_PATH RESMGR_ROOT "/" RESMGR_FILE
 
+#define PIPE_PATH "/var/pipe.peer"
+
 #define NB_ITIMERS_MAX 64
 
 #define DEBUG 1
@@ -171,13 +173,17 @@ int main() {
       // Add driver
       msg->_u.dev_msg.major = device_register_driver(msg->_u.dev_msg.dev_type, (const char *)msg->_u.dev_msg.dev_name, (const char *)remote_addr.sun_path);
 
-      if (msg->_u.dev_msg.major == 1) {
+      if (msg->_u.dev_msg.major == 1) { // tty
 
 	// TTY driver: add /dev/tty with minor 0
 	
 	struct vnode * vnode = vfs_find_node("/dev", NULL);
 	
 	vfs_add_dev(vnode, "tty", CHR_DEV, 1, 0);
+      }
+      else if (msg->_u.dev_msg.major == 3) { // pipe
+
+	create_init_process();
       }
       
       msg->msg_id |= 0x80;
@@ -281,7 +287,7 @@ int main() {
 
 	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
 
-	  create_init_process();
+	  create_pipe_process();
 
 	  dump_processes();
 	}
@@ -1424,6 +1430,38 @@ int main() {
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
     }
+     else if (msg->msg_id == PIPE) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "resmgr: PIPE from %d", msg->pid);
+
+      struct sockaddr_un pipe_addr;
+
+      memset(&pipe_addr, 0, sizeof(pipe_addr));
+      pipe_addr.sun_family = AF_UNIX;
+      strcpy(pipe_addr.sun_path, PIPE_PATH);
+  
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &pipe_addr, sizeof(pipe_addr));
+     }
+     else if (msg->msg_id == (PIPE|0x80)) {
+
+       if (msg->_errno == 0) {
+
+	 msg->_u.pipe_msg.fd[0] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[0], 0, 0, 0);
+
+	 // Add /proc/<pid>/fd/<fd> entry
+	 process_add_proc_fd_entry(msg->pid, msg->_u.pipe_msg.fd[0], "pipe");
+
+	 msg->_u.pipe_msg.fd[1] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[1], 0, 0, 0);
+
+	 // Add /proc/<pid>/fd/<fd> entry
+	 process_add_proc_fd_entry(msg->pid, msg->_u.pipe_msg.fd[1], "pipe");
+       }
+
+       // Forward response to process
+
+       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+     }
   }
   
   return 0;

@@ -68,6 +68,7 @@ enum message_id {
   GETITIMER,
   EXA_RELEASE_SIGNAL = 45,
   FACCESSAT,
+  PIPE,
 };
 
 enum dev_type {
@@ -322,6 +323,13 @@ struct faccessat_message {
   unsigned short minor;
 };
 
+struct pipe_message {
+
+  int fd[2];
+  int flags;
+  int remote_fd[2];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -367,6 +375,7 @@ struct message {
     struct setitimer_message setitimer_msg;
     struct exa_release_signal_message exa_release_signal_msg;
     struct faccessat_message faccessat_msg;
+    struct pipe_message pipe_msg;
     
   } _u;
 };

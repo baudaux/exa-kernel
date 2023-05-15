@@ -27,7 +27,8 @@
 #define RESMGR_ID 1
 #define TTY_ID    2
 #define NETFS_ID  3
-#define INIT_ID   4
+#define PIPE_ID   4
+#define INIT_ID   5
 
 static struct process processes[NB_PROCESSES_MAX];
 static int nb_processes = 0;
@@ -158,6 +159,37 @@ pid_t create_netfs_process() {
     
     if (DEBUG)
       emscripten_log(EM_LOG_CONSOLE,"netfs process created: %d",pid);
+
+    return pid;
+  }
+
+  return 0;
+}
+
+pid_t create_pipe_process() {
+
+  process_fork(PIPE_ID, NO_PARENT, "pipe");
+  
+  pid_t pid = fork();
+  
+  if (pid == -1) { // Error
+    
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"Error while creating pipe process ...");
+    
+    return -1;
+    
+  } else if (pid == 0) { // Child process
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"starting pipe process...");
+
+    execl ("/bin/pipe", "/bin/pipe", (void*)0);
+    
+  } else { // Parent process
+    
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"pipe process created: %d",pid);
 
     return pid;
   }

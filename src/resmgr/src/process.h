@@ -82,6 +82,7 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name);
 
 pid_t create_tty_process();
 pid_t create_netfs_process();
+pid_t create_pipe_process();
 pid_t create_init_process();
 
 void process_add_proc_fd_entry(pid_t pid, int fd, char * link);
