@@ -39,6 +39,8 @@
 
 #define NB_ITIMERS_MAX 64
 
+#define NB_JOBS_MAX    16
+
 #define DEBUG 1
 
 struct itimer {
@@ -46,6 +48,34 @@ struct itimer {
   pid_t pid;
   int fd;
 };
+
+enum {
+
+  NO_JOB = 0,
+  CLOEXEC_JOB,
+  EXIT_JOB,
+  EXEC_JOB,
+};
+
+struct job {
+
+  char type;
+  pid_t pid;
+  int size;
+  char buf[1256];
+};
+
+static struct job jobs[NB_JOBS_MAX];
+
+static unsigned short vfs_major;
+static unsigned short vfs_minor;
+
+int close_opened_fd(int job, int sock, char * buf);
+
+void jobs_init();
+int get_pending_job(pid_t pid);
+int add_pending_job(int job, pid_t pid, char * buf, size_t size);
+int continue_pending_job(pid_t pid, int sock);
 
 int main() {
 
@@ -56,6 +86,7 @@ int main() {
   char buf[1256];
   struct message * msg = (struct message *)&buf[0];
 
+  // TODO: use jobs
   int execve_size;
   int execve_pid;
   char execve_msg[1256];
@@ -75,11 +106,11 @@ int main() {
   vfs_init();
   process_init();
   device_init();
+  
+  jobs_init();
 
   /* Create the server local socket */
   sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-
-  // TODO: Add close on exec
   
   memset(&local_addr, 0, sizeof(local_addr));
   local_addr.sun_family = AF_UNIX;
@@ -93,8 +124,8 @@ int main() {
   vfs_add_file(vnode, RESMGR_FILE);
 
   /* Register vfs driver */
-  unsigned short vfs_major = device_register_driver(FS_DEV, "vfs", RESMGR_PATH);
-  unsigned short vfs_minor = 1;
+  vfs_major = device_register_driver(FS_DEV, "vfs", RESMGR_PATH);
+  vfs_minor = 1;
 
   device_register_device(FS_DEV, vfs_major, vfs_minor, "vfs1");
 
@@ -181,7 +212,7 @@ int main() {
 	
 	vfs_add_dev(vnode, "tty", CHR_DEV, 1, 0);
       }
-      else if (msg->_u.dev_msg.major == 3) { // pipe
+      else if (strcmp(msg->_u.dev_msg.dev_name, "pipe") == 0) {
 
 	create_init_process();
       }
@@ -301,7 +332,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
 
-      msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff));
+      msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
 
       // Add /proc/<pid>/fd/<fd> entry
       process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
@@ -438,7 +469,7 @@ int main() {
 	  msg->_u.open_msg.minor = vfs_minor;
 	  strcpy((char *)msg->_u.open_msg.peer, RESMGR_PATH);
 	  
-	  msg->_u.open_msg.fd = process_create_fd(msg->pid, msg->_u.open_msg.remote_fd, msg->_u.open_msg.type, msg->_u.open_msg.major, msg->_u.open_msg.minor);
+	  msg->_u.open_msg.fd = process_create_fd(msg->pid, msg->_u.open_msg.remote_fd, msg->_u.open_msg.type, msg->_u.open_msg.major, msg->_u.open_msg.minor, msg->_u.open_msg.flags);
 
 	  // Add /proc/<pid>/fd/<fd> entry
 	  process_add_proc_fd_entry(msg->pid, msg->_u.open_msg.fd, new_path);
@@ -464,7 +495,7 @@ int main() {
 
       if (msg->_errno == 0) {
 
-	msg->_u.open_msg.fd = process_create_fd(msg->pid, msg->_u.open_msg.remote_fd, msg->_u.open_msg.type, msg->_u.open_msg.major, msg->_u.open_msg.minor);
+	msg->_u.open_msg.fd = process_create_fd(msg->pid, msg->_u.open_msg.remote_fd, msg->_u.open_msg.type, msg->_u.open_msg.major, msg->_u.open_msg.minor, msg->_u.open_msg.flags);
 
 	// Add /proc/<pid>/fd/<fd> entry
 	process_add_proc_fd_entry(msg->pid, msg->_u.open_msg.fd, (char *)msg->_u.open_msg.pathname);
@@ -491,7 +522,7 @@ int main() {
 	process_close_fd(msg->pid, msg->_u.close_msg.fd);
 
 	// Remove /proc/<pid>/fd/<fd> entry
-	process_del_proc_fd_entry(msg->pid, msg->_u.open_msg.fd);
+	process_del_proc_fd_entry(msg->pid, msg->_u.close_msg.fd);
 
 	// Find fd in other processes
 	if (process_find_open_fd(type, major, remote_fd) < 0) {
@@ -559,9 +590,21 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "Response from CLOSE from %d (%s)", msg->pid, process_get_peer_addr(msg->pid)->sun_path);
 
-      // Forward response to process
+      int job;
+      
+      if (job=get_pending_job(msg->pid)) {
 
-      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+	if (close_opened_fd(job, sock, buf) > 0)
+	    continue;
+
+	continue_pending_job(msg->pid, sock);
+      }
+      else {
+
+	// Forward response to process
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      }
       
     }
     else if (msg->msg_id == READ) {
@@ -643,6 +686,31 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
 
+      msg->_u.fcntl_msg.ret = 0;
+      msg->_errno = 0;
+
+      if (msg->_u.fcntl_msg.cmd == F_SETFD) {
+
+	int flags;
+	int flags2 = 0;
+
+	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	if (flags & FD_CLOEXEC) {
+	  
+	  flags2 |= O_CLOEXEC;  
+	}
+	
+	msg->_errno = process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.fd, flags2);
+      }
+      else if (msg->_u.fcntl_msg.cmd == F_GETFD) {
+
+	msg->_u.fcntl_msg.ret = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.fd);
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
     }
     else if (msg->msg_id == SETSID) {
 
@@ -710,6 +778,23 @@ int main() {
 
 	if (msg->pid == ((struct message *)execve_msg)->pid) {
 
+	  // Close all opened fd with flag O_CLOEXEC
+
+	  unsigned char type;
+	  unsigned short major;
+	  int remote_fd;
+
+	  if (process_opened_fd(msg->pid, &type, &major, &remote_fd, O_CLOEXEC) >= 0) {
+
+	    emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: there are O_CLOEXEC opened fd", msg->pid);
+
+	    if (close_opened_fd(CLOEXEC_JOB, sock, buf) > 0) {
+
+	      add_pending_job(CLOEXEC_JOB, msg->pid, buf, 1256);
+	      continue; // Wait CLOSE response before closing the other opened fd
+	    }
+	  }
+	  
 	  ((struct message *)execve_msg)->msg_id |= 0x80;
 
 	  sendto(sock, execve_msg, execve_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
@@ -1030,7 +1115,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "TIMERFD_CREATE from %d (%d)", msg->pid, msg->_u.timerfd_create_msg.clockid);
 
-      msg->_u.timerfd_create_msg.fd = process_create_fd(msg->pid, -3, 0, 0, msg->_u.timerfd_create_msg.clockid & 0xffff);
+      msg->_u.timerfd_create_msg.fd = process_create_fd(msg->pid, -3, 0, 0, msg->_u.timerfd_create_msg.clockid & 0xffff, msg->_u.timerfd_create_msg.flags);
 
       msg->msg_id |= 0x80;
       msg->_errno = 0;
@@ -1185,6 +1270,18 @@ int main() {
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: status=%d", msg->pid, msg->_u.exit_msg.status);
+
+      // Close all opened fd
+
+      unsigned char type;
+      unsigned short major;
+      int remote_fd;
+
+      if (process_opened_fd(msg->pid, &type, &major, &remote_fd, 0) >= 0) {
+	
+	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
+	//add_pending_job(msg->pid,
+      }
 
       int pid = msg->pid;
       int ppid;
@@ -1447,15 +1544,17 @@ int main() {
 
        if (msg->_errno == 0) {
 
-	 msg->_u.pipe_msg.fd[0] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[0], 0, 0, 0);
+	 msg->_u.pipe_msg.fd[0] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.type, msg->_u.pipe_msg.major, msg->_u.pipe_msg.minor, msg->_u.pipe_msg.flags);
 
 	 // Add /proc/<pid>/fd/<fd> entry
 	 process_add_proc_fd_entry(msg->pid, msg->_u.pipe_msg.fd[0], "pipe");
 
-	 msg->_u.pipe_msg.fd[1] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[1], 0, 0, 0);
+	 msg->_u.pipe_msg.fd[1] = process_create_fd(msg->pid, msg->_u.pipe_msg.remote_fd[1], msg->_u.pipe_msg.type, msg->_u.pipe_msg.major, msg->_u.pipe_msg.minor, msg->_u.pipe_msg.flags);
 
 	 // Add /proc/<pid>/fd/<fd> entry
 	 process_add_proc_fd_entry(msg->pid, msg->_u.pipe_msg.fd[1], "pipe");
+
+	 emscripten_log(EM_LOG_CONSOLE, "resmgr: Return of PIPE: (%d,%d), (%d,%d)", msg->_u.pipe_msg.fd[0], msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.fd[1], msg->_u.pipe_msg.remote_fd[1]);
        }
 
        // Forward response to process
@@ -1465,4 +1564,120 @@ int main() {
   }
   
   return 0;
+}
+
+int close_opened_fd(int job, int sock, char * buf) {
+
+  struct message * msg = (struct message *)&buf[0];
+  
+  int fd = -1;
+  unsigned char type;
+  unsigned short major;
+  int remote_fd;
+
+  while (1) {
+
+    fd = process_opened_fd(msg->pid, &type, &major, &remote_fd, (job == CLOEXEC_JOB)?O_CLOEXEC:0);
+
+    if (fd < 0)
+      break;
+
+    // Get the fd of the process
+
+    // Close the fd for this process
+    process_close_fd(msg->pid, fd);
+
+    // Remove /proc/<pid>/fd/<fd> entry
+    process_del_proc_fd_entry(msg->pid, fd);
+
+    // Find fd in other processes
+    if (process_find_open_fd(type, major, remote_fd) < 0) {
+
+      // No more fd, close the fd in the driver
+
+      if (major != vfs_major) { // Send close  msg to driver
+
+	msg->msg_id = CLOSE;
+	
+	msg->_u.close_msg.fd = remote_fd;
+
+	struct sockaddr_un driver_addr;
+
+	driver_addr.sun_family = AF_UNIX;
+	strcpy(driver_addr.sun_path, device_get_driver(type, major)->peer);
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "CLOSE send to: %s", driver_addr.sun_path);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+
+	return 1; // Need to wait CLOSE response before closing the other ones
+      }
+      else {
+	
+	vfs_close(remote_fd);
+      }
+    }
+  }
+
+  return 0;
+}
+
+void jobs_init() {
+
+  for (int i=0; i<NB_JOBS_MAX; ++i) {
+
+    jobs[i].type = NO_JOB;
+  }
+}
+
+int get_pending_job(pid_t pid) {
+
+  for (int i=0; i<NB_JOBS_MAX; ++i) {
+
+    if ( (jobs[i].type != NO_JOB) && (jobs[i].pid == pid) ) {
+
+      return jobs[i].type;
+    }
+  }
+  
+  return NO_JOB;
+}
+
+int add_pending_job(int job, pid_t pid, char * buf, size_t size) {
+
+  for (int i=0; i<NB_JOBS_MAX; ++i) {
+
+    if (jobs[i].type == NO_JOB) {
+
+      jobs[i].type = job;
+      jobs[i].pid = pid;
+      jobs[i].size = size;
+
+      if (size > 0)
+	memcpy(jobs[i].buf, buf, size);
+
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+int continue_pending_job(pid_t pid, int sock) {
+
+  for (int i=0; i<NB_JOBS_MAX; ++i) {
+
+    if ( (jobs[i].type != NO_JOB) && (jobs[i].pid == pid) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: !!! continue_pending_job: job=%d pid=%d", jobs[i].type, pid);
+
+      if (jobs[i].size > 0) {
+
+	
+      }
+    }
+  }
+  
+  return NO_JOB;
 }

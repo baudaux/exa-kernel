@@ -138,6 +138,9 @@ struct fcntl_message {
   
   int fd;
   int cmd;
+  int ret;
+  unsigned long len;
+  unsigned char buf[];
 };
 
 struct mount_message {
@@ -242,6 +245,7 @@ struct select_message {
 struct timerfd_create_message {
 
   int clockid;
+  int flags;
   int fd;
 };
 
@@ -328,6 +332,10 @@ struct pipe_message {
   int fd[2];
   int flags;
   int remote_fd[2];
+  char type;
+  unsigned short major;
+  unsigned short minor;
+  unsigned char peer[108];
 };
 
 struct message {

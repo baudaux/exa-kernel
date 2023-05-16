@@ -32,8 +32,7 @@ struct file_desc {
   unsigned char type;       // type for socket
   unsigned short major;     // domain for socket
   unsigned short minor;     // protocol for socket
-
-  //char peer[108];
+  int flags;                // O_CLOEXEC
 };
 
 enum proc_state {
@@ -88,10 +87,13 @@ pid_t create_init_process();
 void process_add_proc_fd_entry(pid_t pid, int fd, char * link);
 void process_del_proc_fd_entry(pid_t pid, int fd);
 
-int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned short major, unsigned short minor);
+int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned short major, unsigned short minor, int flags);
 int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * major, int * remote_fd);
 int process_close_fd(pid_t pid, int fd);
 int process_find_open_fd(unsigned char type, unsigned short major, int remote_fd);
+
+int process_set_fd_flags(pid_t pid, int fd, int flags);
+int process_get_fd_flags(pid_t pid, int fd);
 
 struct sockaddr_un * process_get_peer_addr(pid_t pid);
 
@@ -116,6 +118,8 @@ int process_kill(pid_t pid, int sig, struct sigaction * act);
 void process_signal_delivered(pid_t pid, int signum);
 
 int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec);
+
+int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, int * remote_fd, int flag);
 
 void dump_processes();
 

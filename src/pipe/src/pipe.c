@@ -87,12 +87,12 @@ int main() {
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE, "Starting " PIPE_VERSION "...");
 
-  int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
+  /*int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
   
   if (fd >= 0)
     write(fd, "\n\r[" PIPE_VERSION "]", strlen("\n\r[" PIPE_VERSION "]")+1);
 
-  close(fd);
+    close(fd);*/
 
   init_fds();
   
@@ -119,7 +119,7 @@ int main() {
   struct message * msg = (struct message *)&buf[0];
   
   msg->msg_id = REGISTER_DRIVER;
-  msg->_u.dev_msg.dev_type = FS_DEV;
+  msg->_u.dev_msg.dev_type = CHR_DEV;
   
   memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
   
@@ -153,6 +153,11 @@ int main() {
 
 	msg->_errno = -1;
       }
+
+      msg->_u.pipe_msg.type = CHR_DEV;
+      msg->_u.pipe_msg.major = major;
+      msg->_u.pipe_msg.minor = 0;
+      strcpy(msg->_u.pipe_msg.peer, PIPE_PATH);
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
