@@ -41,7 +41,7 @@
 
 #define NB_JOBS_MAX    16
 
-#define DEBUG 1
+#define DEBUG 0
 
 struct itimer {
 
@@ -52,7 +52,6 @@ struct itimer {
 enum {
 
   NO_JOB = 0,
-  CLOEXEC_JOB,
   EXIT_JOB,
   EXEC_JOB,
 };
@@ -62,7 +61,8 @@ struct job {
   char type;
   pid_t pid;
   int size;
-  char buf[1256];
+  char * buf;
+  struct sockaddr_un addr;
 };
 
 static struct job jobs[NB_JOBS_MAX];
@@ -74,8 +74,9 @@ int close_opened_fd(int job, int sock, char * buf);
 
 void jobs_init();
 int get_pending_job(pid_t pid);
-int add_pending_job(int job, pid_t pid, char * buf, size_t size);
+int add_pending_job(int job, pid_t pid, char * buf, size_t size, struct sockaddr_un * addr);
 int continue_pending_job(pid_t pid, int sock);
+int del_pending_job(int job, pid_t pid);
 
 int main() {
 
@@ -87,9 +88,9 @@ int main() {
   struct message * msg = (struct message *)&buf[0];
 
   // TODO: use jobs
-  int execve_size;
-  int execve_pid;
-  char execve_msg[1256];
+  //int execve_size;
+  //int execve_pid;
+  //char execve_msg[1256];
 
   struct itimer itimers[NB_ITIMERS_MAX];
 
@@ -776,7 +777,7 @@ int main() {
 
       if (msg->_u.execve_msg.args_size == 0xffffffff) {
 
-	if (msg->pid == ((struct message *)execve_msg)->pid) {
+	if (get_pending_job(msg->pid) == EXEC_JOB) {
 
 	  // Close all opened fd with flag O_CLOEXEC
 
@@ -785,25 +786,23 @@ int main() {
 	  int remote_fd;
 
 	  if (process_opened_fd(msg->pid, &type, &major, &remote_fd, O_CLOEXEC) >= 0) {
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: there are O_CLOEXEC opened fd", msg->pid);
+	    
+	    if (close_opened_fd(EXEC_JOB, sock, buf) > 0) {
 
-	    emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: there are O_CLOEXEC opened fd", msg->pid);
-
-	    if (close_opened_fd(CLOEXEC_JOB, sock, buf) > 0) {
-
-	      add_pending_job(CLOEXEC_JOB, msg->pid, buf, 1256);
 	      continue; // Wait CLOSE response before closing the other opened fd
 	    }
 	  }
 	  
-	  ((struct message *)execve_msg)->msg_id |= 0x80;
-
-	  sendto(sock, execve_msg, execve_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	  continue_pending_job(msg->pid, sock);
 	}
       }
       else {
 
-	execve_size = bytes_rec;
-	memcpy(execve_msg, msg, bytes_rec);
+        msg->msg_id |= 0x80;
+
+	add_pending_job(EXEC_JOB, msg->pid, msg, bytes_rec, &remote_addr);
       }
     }
     else if (msg->msg_id == DUP) {
@@ -1278,8 +1277,9 @@ int main() {
       int remote_fd;
 
       if (process_opened_fd(msg->pid, &type, &major, &remote_fd, 0) >= 0) {
-	
-	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
 	//add_pending_job(msg->pid,
       }
 
@@ -1577,7 +1577,7 @@ int close_opened_fd(int job, int sock, char * buf) {
 
   while (1) {
 
-    fd = process_opened_fd(msg->pid, &type, &major, &remote_fd, (job == CLOEXEC_JOB)?O_CLOEXEC:0);
+    fd = process_opened_fd(msg->pid, &type, &major, &remote_fd, (job == EXEC_JOB)?O_CLOEXEC:0);
 
     if (fd < 0)
       break;
@@ -1628,6 +1628,7 @@ void jobs_init() {
   for (int i=0; i<NB_JOBS_MAX; ++i) {
 
     jobs[i].type = NO_JOB;
+    jobs[i].buf = NULL;
   }
 }
 
@@ -1644,7 +1645,7 @@ int get_pending_job(pid_t pid) {
   return NO_JOB;
 }
 
-int add_pending_job(int job, pid_t pid, char * buf, size_t size) {
+int add_pending_job(int job, pid_t pid, char * buf, size_t size, struct sockaddr_un * addr) {
 
   for (int i=0; i<NB_JOBS_MAX; ++i) {
 
@@ -1652,11 +1653,20 @@ int add_pending_job(int job, pid_t pid, char * buf, size_t size) {
 
       jobs[i].type = job;
       jobs[i].pid = pid;
+      memcpy(&jobs[i].addr, addr, sizeof(*addr));
+
       jobs[i].size = size;
 
-      if (size > 0)
+      if (size > 0) {
+
+	jobs[i].buf = malloc(size);
+	
 	memcpy(jobs[i].buf, buf, size);
 
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "resmgr: add_pending_job: size=%d buf=%d", size, ((struct message *)buf)->msg_id);
+      }
+      
       return i;
     }
   }
@@ -1666,18 +1676,49 @@ int add_pending_job(int job, pid_t pid, char * buf, size_t size) {
 
 int continue_pending_job(pid_t pid, int sock) {
 
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "resmgr: continue_pending_job");
+
   for (int i=0; i<NB_JOBS_MAX; ++i) {
 
     if ( (jobs[i].type != NO_JOB) && (jobs[i].pid == pid) ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "resmgr: !!! continue_pending_job: job=%d pid=%d", jobs[i].type, pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "resmgr: continue_pending_job !!!: job=%d pid=%d", jobs[i].type, pid);
 
-      if (jobs[i].size > 0) {
+      if (jobs[i].type == EXEC_JOB) {
 
-	
+	sendto(sock, jobs[i].buf, jobs[i].size, 0, (struct sockaddr *) &jobs[i].addr, sizeof(jobs[i].addr));
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "resmgr: !!! continue_pending_job: buf=%d %s", ((struct message *)jobs[i].buf)->msg_id, jobs[i].addr.sun_path);
       }
+
+      jobs[i].type = NO_JOB;
+
+      if (jobs[i].buf)
+	free(jobs[i].buf);
     }
   }
   
   return NO_JOB;
 }
+
+int del_pending_job(int job, pid_t pid) {
+
+  for (int i=0; i<NB_JOBS_MAX; ++i) {
+
+    if (jobs[i].type == job) {
+
+      jobs[i].type = NO_JOB;
+
+      if (jobs[i].buf)
+	free(jobs[i].buf);
+      
+      return 0;
+    }
+  }
+
+  return -1;
+}
+

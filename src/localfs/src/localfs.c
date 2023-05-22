@@ -31,7 +31,7 @@
 
 #include <emscripten.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define LOCALFS_VERSION "localfs v0.1.0"
 
@@ -447,7 +447,8 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  emscripten_log(EM_LOG_CONSOLE, "Starting " LOCALFS_VERSION "...");
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "Starting " LOCALFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -587,16 +588,19 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     
     else if (msg->msg_id == OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
 
       int remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
 
       if (remote_fd >= 0) {
 
@@ -634,11 +638,13 @@ int main() {
 	reply->_u.io_msg.len = dev->read(msg->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
 	reply->_errno = 0;
 
-	emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
       }
       else {
 
-	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
 	reply->_errno = ENXIO;
       }
       
@@ -695,7 +701,8 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
       struct device_ops * dev = NULL;
 
@@ -717,7 +724,8 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -743,7 +751,8 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -761,7 +770,8 @@ int main() {
 
 	count = dev->getdents(msg->_u.getdents_msg.fd, (char *)(msg->_u.getdents_msg.buf), count);
 
-	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
 	  
@@ -786,7 +796,8 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 
@@ -835,7 +846,8 @@ int main() {
     }
     else if (msg->msg_id == FSTAT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
 
       struct stat stat_buf;
 

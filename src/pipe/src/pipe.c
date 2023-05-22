@@ -25,10 +25,11 @@
 #include <dirent.h>
 
 #include "msg.h"
+#include "circular_buffer.h"
 
 #include <emscripten.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define PIPE_VERSION "pipe v0.1.0"
 
@@ -43,7 +44,7 @@ struct pipe {
   int read_fd;
   int write_fd;
   int flags;
-  char buf[PIPE_SIZE];
+  struct circular_buffer buf;
 };
 
 struct pipe fds[NB_FD_MAX];
@@ -63,13 +64,15 @@ int find_fd(int fd[2], int flags) {
 
   for (int i=0; i<NB_FD_MAX; ++i) {
 
-    if (fds[i].read_fd < 0) {
+    if ( (fds[i].read_fd < 0) && ((fds[i].write_fd < 0)) ) {
 
       fds[i].read_fd = fd[0] = 2*i;
       fds[i].write_fd = fd[1] = 2*i+1;
       fds[i].flags = flags;
 
-      return 0;
+      init_circular_buffer(&fds[i].buf, PIPE_SIZE);
+      
+      return i;
     }
   }
 
@@ -131,7 +134,8 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    emscripten_log(EM_LOG_CONSOLE,"*** pipe: %d", msg->msg_id);
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"*** pipe: %d", msg->msg_id);
 
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -145,7 +149,13 @@ int main() {
     }
     else if (msg->msg_id == PIPE) {
 
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"pipe: PIPE");
+
       if (find_fd(msg->_u.pipe_msg.remote_fd, msg->_u.pipe_msg.flags) >= 0) {
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE,"pipe: PIPE %d %d", msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.remote_fd[1]);
 
 	msg->_errno = 0;
 	
@@ -161,6 +171,87 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == CLOSE) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"pipe: CLOSE %d", msg->_u.close_msg.fd);
+
+      int i = msg->_u.close_msg.fd / 2;
+
+      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+
+	if ((msg->_u.close_msg.fd % 2) == 0) {
+	  fds[i].read_fd = -1;
+
+	  if (fds[i].write_fd == -1) {
+
+	    //TODO
+	  }
+	}
+	else {
+	  fds[i].write_fd = -1;
+
+	  if (fds[i].read_fd == -1) {
+
+	    //TODO
+	  }
+	}
+
+	msg->_errno = 0;
+      }
+      else {
+
+	msg->_errno = -1;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == READ) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE,"pipe: READ %d", msg->_u.io_msg.fd);
+
+      int i = msg->_u.io_msg.fd / 2;
+
+      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+	
+	if ((msg->_u.io_msg.fd % 2) == 0) {
+
+	  int len = read_circular_buffer(&fds[i].buf, msg->_u.io_msg.len, msg->_u.io_msg.buf);
+
+	  if (len > 0) {
+
+	    msg->_u.io_msg.len = len;
+	    msg->_errno = 0;
+	  }
+	  else if (fds[i].write_fd == -1) {
+
+	    msg->_u.io_msg.len = 0;
+	    msg->_errno = 0;
+	  }
+	  else {
+
+	    //TODO: add job
+	  }
+	}
+	else {
+	  msg->_errno = -1;
+	}
+      }
+      else {
+
+	msg->_errno = -1;
+      }
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      
+    }
+    else if (msg->msg_id == WRITE) {
+
+      
     }
     
   }

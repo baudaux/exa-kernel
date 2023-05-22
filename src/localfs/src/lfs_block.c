@@ -16,7 +16,7 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
   
 	return Asyncify.handleSleep(function (wakeUp) {
 
-	    console.log("*** lfs_blk_read: "+block);
+	    //console.log("*** lfs_blk_read: "+block);
 
 	    let do_read = () => {
 
@@ -26,14 +26,14 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 	      
 	      request.onerror = function(event) {
 
-		console.log("*** lfs_blk_read: error");
+		//console.log("*** lfs_blk_read: error");
 		
 		wakeUp(-1);
 	      };
 	      
 	      request.onsuccess = function(event) {
 
-		console.log(request.result);
+		//console.log(request.result);
 
 		if (request.result) {
 
@@ -51,14 +51,14 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 
 	      request.onerror = function(event) {
 
-		console.log("*** Error while opening indexedDB of LocalFS");
+		//console.log("*** Error while opening indexedDB of LocalFS");
 
 		wakeUp(-1);
 	      };
 
 	      request.onupgradeneeded = function(event) {
 
-		console.log("*** Upgrade indexedDB of LocalFS");
+		//console.log("*** Upgrade indexedDB of LocalFS");
 
 		let db = event.target.result;
 
@@ -67,7 +67,7 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 	      
 	      request.onsuccess = function(event) {
 
-		console.log("*** indexedDB of LocalFS opened");
+		//console.log("*** indexedDB of LocalFS opened");
 		
 		Module.lfsDB = event.target.result;
 
@@ -92,7 +92,7 @@ EM_JS(int, lfs_blk_prog, (const struct lfs_config * c, lfs_block_t block,
 
 	return Asyncify.handleSleep(function (wakeUp) {
 
-	    console.log("*** lfs_blk_prog: "+block);
+	    //console.log("*** lfs_blk_prog: "+block);
 
 	    let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
 
@@ -100,7 +100,7 @@ EM_JS(int, lfs_blk_prog, (const struct lfs_config * c, lfs_block_t block,
 	      
 	    request.onerror = function(event) {
 
-	      console.log("*** lfs_blk_prog: error");
+	      //console.log("*** lfs_blk_prog: error");
 		
 	      wakeUp(-1);
 	    };
@@ -152,7 +152,7 @@ EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 
-	console.log("*** lfs_blk_erase: "+block);
+	//console.log("*** lfs_blk_erase: "+block);
 
 	let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
 
@@ -160,7 +160,7 @@ EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
 	      
 	request.onerror = function(event) {
 
-	  console.log("*** lfs_blk_erase: error");
+	  //console.log("*** lfs_blk_erase: error");
 		
 	  wakeUp(-1);
 	};
@@ -204,7 +204,7 @@ EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
 
 int lfs_blk_sync(const struct lfs_config *c) {
 
-  emscripten_log(EM_LOG_CONSOLE,"*** lfs_blk_sync");
+  //emscripten_log(EM_LOG_CONSOLE,"*** lfs_blk_sync");
   
   return 0;
 }

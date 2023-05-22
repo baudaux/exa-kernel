@@ -498,7 +498,7 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
 
   int remote_fd = -1;
 
-  char * trail;
+  char * trail = NULL;
   
   struct vnode * vnode = vfs_find_node(pathname, &trail);
 
@@ -509,9 +509,16 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
 
     if ( (vnode->type == VDEV) || (vnode->type == VMOUNT) ) {
 
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "vfs_open: type=%d trail=%x", vnode->type, trail);
+
       remote_fd = 0;
       fds[remote_fd].vnode = vnode;
-      strcpy(fds[remote_fd].pathname, trail);
+
+      if (trail)
+	strcpy(fds[remote_fd].pathname, trail);
+      else
+	fds[remote_fd].pathname[0] = 0;
     }
     else {
 

@@ -30,6 +30,7 @@
 #include <sys/timerfd.h>
 
 #include "msg.h"
+#include "circular_buffer.h"
 
 #include <emscripten.h>
 
@@ -44,7 +45,7 @@
 
 #define TTY_BUF_SIZE     (16*1024)
 
-#define TTY_TIMEOUT      20
+#define TTY_TIMEOUT      15
 
 //#define TTY_TIMER_COUNT  5
 
@@ -74,13 +75,6 @@ struct select_pending_request {
   int remote_fd;
   int fd;
   struct sockaddr_un client_addr;
-};
-
-struct circular_buffer {
-
-  unsigned char buf[TTY_BUF_SIZE];
-  unsigned long start;
-  unsigned long end;
 };
 
 struct device_desc {
@@ -163,149 +157,14 @@ static void init_ctrl(struct termios * ctrl) {
   ctrl->__c_ospeed = B9600;
 }
 
-static void init_circular_buffer(struct circular_buffer * buf) {
-
-  buf->start = 0;
-  buf->end = 0;
-}
-
-static int count_circular_buffer_index(struct circular_buffer * buf, int index) {
-
-  if (index >= buf->start)
-    return index - buf->start;
-  else
-    return TTY_BUF_SIZE - buf->start + index;
-}
-
-static int count_circular_buffer(struct circular_buffer * buf) {
-
-  return count_circular_buffer_index(buf, buf->end);
-}
-
-static int get_circular_buffer_head(struct circular_buffer * buf, char ** ptr) {
-
-  if (count_circular_buffer(buf) > 0) {
-
-    *ptr = (char *)&(buf->buf[buf->start]);
-
-    if (buf->end >= buf->start)
-      return buf->end-buf->start;
-
-    return TTY_BUF_SIZE - buf->start;
-  }
-
-  return 0;
-}
-
-static int get_circular_buffer_tail(struct circular_buffer * buf, char ** ptr) {
-
-  if (buf->end >= buf->start)
-    return 0;
-
-  *ptr = (char *)&(buf->buf[0]);
-
-  return buf->end;
-}
-
-static void empty_circular_buffer(struct circular_buffer * buf) {
-
-  buf->start = buf->end;
-}
-
-static int find_eol_circular_buffer(struct circular_buffer * buf, int * index) {
-
-  for (int i = buf->start; i != buf->end; i = (i+1)%TTY_BUF_SIZE) {
-
-    if ( (buf->buf[i] == '\r') || (buf->buf[i] == '\n') ) {
-
-      *index = i;
-      return 1;
-    }
-  }
-  
-  return 0;
-}
-
-static int enqueue_circular_buffer(struct circular_buffer * buf, char c) {
-
-  if (count_circular_buffer(buf) < (TTY_BUF_SIZE-1)) {
-
-    buf->buf[buf->end] = c;
-
-    buf->end = (buf->end+1) % TTY_BUF_SIZE;
-
-    return 1;
-  }
-      
-  return 0;
-}
-
-static char undo_enqueue_circular_buffer(struct circular_buffer * buf, char * c) {
-
-  if (count_circular_buffer(buf) > 0) {
-
-    *c = buf->buf[buf->end];
-
-    if (buf->end > 0)
-      --(buf->end);
-    else
-      buf->end = TTY_BUF_SIZE-1;
-
-    return 1;
-  }
-      
-  return 0;
-}
-
-static int dequeue_circular_buffer(struct circular_buffer * buf, char * c) {
-
-  if (count_circular_buffer(buf) > 0) {
-
-    *c = buf->buf[buf->start];
-
-    buf->start = (buf->start+1) % TTY_BUF_SIZE;
-
-    return 1;
-  }
-  
-  return 0;
-}
-
-static int read_circular_buffer(struct circular_buffer * buf, int len, char * dest) {
-
-  if (len == 0)
-    return 0;
-
-  if (count_circular_buffer(buf) < len)
-    len = count_circular_buffer(buf);
-  
-  int end_index = (buf->start+len) % TTY_BUF_SIZE;
-
-  if (end_index > buf->start) {
-
-    memcpy(dest, &(buf->buf[buf->start]), len);
-  }
-  else {
-
-    memcpy(dest, &(buf->buf[buf->start]), TTY_BUF_SIZE - buf->start);
-
-    if ((len - (TTY_BUF_SIZE - buf->start)) > 0)
-      memcpy(dest+(TTY_BUF_SIZE - buf->start), &(buf->buf[0]), len - (TTY_BUF_SIZE - buf->start));
-  }
-
-  buf->start = end_index;
-    
-  return 0;
-}
-
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
 
   devices[minor].ops = dev_ops;
 
   init_ctrl(&devices[minor].ctrl);
 
-  init_circular_buffer(&devices[minor].rx_buf);
-  init_circular_buffer(&devices[minor].tx_buf);
+  init_circular_buffer(&devices[minor].rx_buf, TTY_BUF_SIZE);
+  init_circular_buffer(&devices[minor].tx_buf, TTY_BUF_SIZE);
 
   devices[minor].timer = timerfd_create(CLOCK_MONOTONIC, 0);
   devices[minor].timer_started = 0;
