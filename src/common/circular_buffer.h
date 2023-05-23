@@ -25,6 +25,7 @@ struct circular_buffer {
 };
 
 void init_circular_buffer(struct circular_buffer * buf, size_t size);
+void free_circular_buffer(struct circular_buffer * buf);
 
 int count_circular_buffer_index(struct circular_buffer * buf, int index);
 
@@ -45,5 +46,6 @@ char undo_enqueue_circular_buffer(struct circular_buffer * buf, char * c);
 int dequeue_circular_buffer(struct circular_buffer * buf, char * c);
 
 int read_circular_buffer(struct circular_buffer * buf, int len, char * dest);
+int write_circular_buffer(struct circular_buffer * buf, int len, char * src);
 
 #endif // _CIRCULAR_BUFFER_H

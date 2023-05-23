@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <sys/sysmacros.h>
 #include <sys/ttydefaults.h>
+#include <errno.h>
 
 #include <sys/ioctl.h>
 #include <termios.h>
@@ -1036,6 +1037,14 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == SEEK) {
+
+      //emscripten_log(EM_LOG_CONSOLE, "tty: SEEK from %d", msg->pid);
+
+      msg->msg_id |= 0x80;
+      msg->_errno = -ESPIPE;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == IOCTL) {
 

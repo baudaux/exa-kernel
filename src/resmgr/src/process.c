@@ -640,7 +640,7 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
   processes[ppid].wait_child = 1;
   processes[ppid].wait_pid = pid;
   processes[ppid].wait_options = options;
-
+  
   for (int i = 0; i < nb_processes; ++i) {
 
     if ( (processes[i].ppid == ppid) && (processes[i].proc_state == ZOMBIE_STATE) ) {

@@ -24,6 +24,14 @@ void init_circular_buffer(struct circular_buffer * buf, size_t size) {
   buf->buf = malloc(size);
 }
 
+void free_circular_buffer(struct circular_buffer * buf) {
+
+  if (buf->buf)
+    free(buf->buf);
+
+  buf->size = 0;
+}
+
 int count_circular_buffer_index(struct circular_buffer * buf, int index) {
 
   if (index >= buf->start)
@@ -131,8 +139,10 @@ int read_circular_buffer(struct circular_buffer * buf, int len, char * dest) {
   if (len == 0)
     return 0;
 
-  if (count_circular_buffer(buf) < len)
-    len = count_circular_buffer(buf);
+  int l = count_circular_buffer(buf);
+
+  if (l < len)
+    len = l;
   
   int end_index = (buf->start+len) % buf->size;
 
@@ -150,5 +160,15 @@ int read_circular_buffer(struct circular_buffer * buf, int len, char * dest) {
 
   buf->start = end_index;
     
-  return 0;
+  return len;
+}
+
+int write_circular_buffer(struct circular_buffer * buf, int len, char * src) {
+
+  int i = 0;
+  
+  while ( (i < len) && enqueue_circular_buffer(buf, *src++))
+    ++i;
+
+  return i;
 }
