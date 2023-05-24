@@ -17,7 +17,7 @@
 
 #include <emscripten.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 void jobs_init(struct job * jobs, size_t size) {
 
@@ -25,6 +25,7 @@ void jobs_init(struct job * jobs, size_t size) {
 
     jobs->type = NO_JOB;
     jobs->buf = NULL;
+    jobs->pid = -1;
   }
 
   jobs->type = LAST_JOB;
@@ -151,9 +152,12 @@ unsigned long del_pending_job(struct job * jobs, unsigned long job, pid_t pid) {
     if ( (jobs->type == job) && (jobs->pid == pid) ) {
 
       jobs->type = NO_JOB;
+      jobs->pid = -1;
 
       if (jobs->buf)
 	free(jobs->buf);
+
+      jobs->buf = 0;
       
       return job;
     }

@@ -118,6 +118,7 @@ int process_kill(pid_t pid, int sig, struct sigaction * act);
 void process_signal_delivered(pid_t pid, int signum);
 
 int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec);
+void process_clearitimer(pid_t pid);
 
 int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, int * remote_fd, int flag);
 

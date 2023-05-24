@@ -38,7 +38,7 @@
 #define RESMGR_PATH "/var/resmgr.peer"
 
 #define NB_FD_MAX     32
-#define PIPE_SIZE     1024
+#define PIPE_SIZE     65536
 
 #define NB_JOBS_MAX   64
 
@@ -148,7 +148,7 @@ int main() {
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
     if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"*** pipe: %d", msg->msg_id);
+      emscripten_log(EM_LOG_CONSOLE, "*** pipe: %d from %s", msg->msg_id, remote_addr.sun_path);
 
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -158,17 +158,17 @@ int main() {
       major = msg->_u.dev_msg.major;
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
+	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
     }
     else if (msg->msg_id == PIPE) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"pipe: PIPE");
+	emscripten_log(EM_LOG_CONSOLE, "pipe: PIPE");
 
       if (find_fd(msg->_u.pipe_msg.remote_fd, msg->_u.pipe_msg.flags) >= 0) {
 
 	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE,"pipe: PIPE %d %d", msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.remote_fd[1]);
+	  emscripten_log(EM_LOG_CONSOLE, "pipe: PIPE %d %d", msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.remote_fd[1]);
 
 	msg->_errno = 0;
 	
@@ -188,13 +188,13 @@ int main() {
     else if (msg->msg_id == CLOSE) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"pipe: CLOSE %d", msg->_u.close_msg.fd);
+	emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE %d", msg->_u.close_msg.fd);
 
       int i = msg->_u.close_msg.fd / 2;
 
       if ( (i >= 0) && (i < NB_FD_MAX) ) {
 
-	if ((msg->_u.close_msg.fd % 2) == 0) {
+	if ((msg->_u.close_msg.fd % 2) == 0) { // read end is closed
 	  
 	  fds[i].read_fd = -1;
 
@@ -202,8 +202,50 @@ int main() {
 
 	    free_circular_buffer(&fds[i].buf);
 	  }
+	  else { // Check if pending write or select
+
+	    char * buf2;
+	    int buf2_size;
+	    struct sockaddr_un * addr2;
+
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x3fffffff, &buf2, &buf2_size, &addr2);
+
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
+
+	    if (job) { // a write or select is pending
+	      
+	      if ((job & 0xC0000000) == READ_WRITE_JOB) { // write in this case
+
+		struct message * msg2 = (struct message *)&buf2[0];
+		
+		if (DEBUG)
+		  emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending write job len=%d", msg2->_u.io_msg.len);
+
+		int buf3_size = 8 +12;
+		char * buf3 = (char *)malloc(buf3_size);
+		struct message * msg3 = (struct message *)&buf3[0];
+		
+		msg3->msg_id = (WRITE|0x80);
+		msg3->pid = msg2->pid;
+		msg3->_errno = -EPIPE; //TODO: or send signal
+
+		msg3->_u.io_msg.fd = msg2->_u.io_msg.fd;
+		msg3->_u.io_msg.len = 0;
+		  
+		sendto(sock, buf3, buf3_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		del_pending_job(jobs, job, msg3->pid);
+
+		free(buf3);
+	      }
+	      else if ( (job & 0xC0000000) == SELECT_JOB) {
+
+		//TODO
+	      }
+	    }
+	  }
 	}
-	else {
+	else { // write end is closed
 	  
 	  fds[i].write_fd = -1;
 
@@ -220,7 +262,7 @@ int main() {
 	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x3fffffff, &buf2, &buf2_size, &addr2);
 
 	    if (DEBUG)
-	      emscripten_log(EM_LOG_CONSOLE,"pipe: CLOSE -> pending job = %lu", job);
+	      emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
 
 	    if (job) { // a read or select is pending
 	      
@@ -229,7 +271,7 @@ int main() {
 		struct message * msg2 = (struct message *)&buf2[0];
 		
 		if (DEBUG)
-		  emscripten_log(EM_LOG_CONSOLE,"pipe: CLOSE -> pending job READ_WRITE_JOB len=%d", msg2->_u.io_msg.len);
+		  emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending read job len=%d addr=%s", msg2->_u.io_msg.len, addr2->sun_path);
 
 		int buf3_size = 8 +12;
 		char * buf3 = (char *)malloc(buf3_size);
@@ -243,7 +285,8 @@ int main() {
 		msg3->_u.io_msg.len = 0;
 		  
 		sendto(sock, buf3, buf3_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
-		del_pending_job(jobs, job, msg->pid);
+		
+		del_pending_job(jobs, job, msg3->pid);
 
 		free(buf3);
 	      }
@@ -268,7 +311,7 @@ int main() {
     else if (msg->msg_id == READ) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"pipe: READ from %d: fd=%d", msg->pid, msg->_u.io_msg.fd);
+	emscripten_log(EM_LOG_CONSOLE, "pipe: READ from %d: fd=%d", msg->pid, msg->_u.io_msg.fd);
 
       int i = msg->_u.io_msg.fd / 2;
 
@@ -283,7 +326,58 @@ int main() {
 	    msg->_u.io_msg.len = len;
 	    msg->_errno = 0;
 
-	    //TODO: pending write
+	    char * buf2;
+	    int buf2_size;
+	    struct sockaddr_un * addr2;
+
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x3fffffff, &buf2, &buf2_size, &addr2);
+
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE -> pending job = %lu", job);
+
+	    if (job) { // a write or select is pending
+	      
+	      if ( (job & 0xC0000000) == READ_WRITE_JOB) { // write in this case
+
+		struct message * msg2 = (struct message *)&buf2[0];
+		
+		if (DEBUG)
+		  emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE -> pending write job  len=%d", msg2->_u.io_msg.len);
+
+		int len2 = write_circular_buffer(&fds[i].buf, msg2->_u.io_msg.len, msg2->_u.io_msg.buf);
+
+		if (len2 ==  msg2->_u.io_msg.len) { // all pending write has been  be performed
+		  
+		  int buf3_size = 8 +12;
+		  char * buf3 = (char *)malloc(buf3_size);
+		  struct message * msg3 = (struct message *)&buf3[0];
+		  
+		  msg3->msg_id = (WRITE|0x80);
+		  msg3->pid = msg2->pid;
+		  msg3->_errno = 0;
+
+		  msg3->_u.io_msg.fd = msg2->_u.io_msg.fd;
+		  msg3->_u.io_msg.len = len2;
+		  
+		  sendto(sock, buf3, buf3_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		  del_pending_job(jobs, job, msg3->pid);
+
+		  free(buf3);
+		}
+		else {
+
+		  if (len2 > 0) { // skip the first len bytes already written
+
+		    msg2->_u.io_msg.len -= len2;
+		    memmove(msg2->_u.io_msg.buf, msg2->_u.io_msg.buf+len2, msg2->_u.io_msg.len); // memmove is used as regions can overlap
+		  }
+		}
+	      }
+	      else if ( (job & 0xC0000000) == SELECT_JOB) {
+
+		//TODO
+	      }
+	    }
 	    
 	  }
 	  else if (fds[i].write_fd == -1) {
@@ -293,11 +387,14 @@ int main() {
 	  }
 	  else {
 
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "pipe: READ from %d: add pending job addr=%s", msg->pid, remote_addr.sun_path);
+
 	    msg->msg_id |= 0x80;
 	    
 	    add_pending_job(jobs, READ_WRITE_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
 
-	    continue;
+	    continue; // do not send read ack since write is pending
 	  }
 	}
 	else {
@@ -370,7 +467,7 @@ int main() {
 		  msg3->_u.io_msg.fd = msg2->_u.io_msg.fd;
 		  
 		  sendto(sock, buf3, buf3_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
-		  del_pending_job(jobs, job, msg->pid);
+		  del_pending_job(jobs, job, msg3->pid);
 		}
 
 		free(buf3);
@@ -380,11 +477,20 @@ int main() {
 		//TODO
 	      }
 	    }
+	  }
 
-	    if (len < msg->_u.io_msg.len) { // all buf could not be written
+	  if (len < msg->_u.io_msg.len) { // all buf could not be written
 
-	      //TODO
+	    if (len > 0) {
+	      msg->_u.io_msg.len -= len;
+	      memmove(msg->_u.io_msg.buf, msg->_u.io_msg.buf+len, msg->_u.io_msg.len); // memmove is used as regions can overlap
 	    }
+	    
+	    msg->msg_id |= 0x80;
+	    
+	    add_pending_job(jobs, READ_WRITE_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
+	    
+	    continue; // do not send write ack since write is pending
 	  }
 	}
 	else {

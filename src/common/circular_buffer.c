@@ -15,6 +15,8 @@
 
 #include "circular_buffer.h"
 
+#include <emscripten.h>
+
 void init_circular_buffer(struct circular_buffer * buf, size_t size) {
 
   buf->start = 0;
@@ -22,6 +24,10 @@ void init_circular_buffer(struct circular_buffer * buf, size_t size) {
 
   buf->size = size;
   buf->buf = malloc(size);
+
+  if (!buf->buf) {
+    emscripten_log(EM_LOG_CONSOLE, "circular_buffer: cannot allocate %d bytes", size);
+  }
 }
 
 void free_circular_buffer(struct circular_buffer * buf) {
@@ -140,6 +146,9 @@ int read_circular_buffer(struct circular_buffer * buf, int len, char * dest) {
     return 0;
 
   int l = count_circular_buffer(buf);
+
+  if (l == 0)
+    return 0;
 
   if (l < len)
     len = l;

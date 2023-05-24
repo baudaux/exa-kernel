@@ -62,6 +62,7 @@ static unsigned short vfs_major;
 static unsigned short vfs_minor;
 
 int close_opened_fd(int job, int sock, char * buf);
+int do_exit(int sock, struct message * msg);
 
 int main() {
 
@@ -578,7 +579,19 @@ int main() {
 	if (close_opened_fd(job, sock, buf) > 0)
 	    continue;
 
-	continue_pending_job(jobs, msg->pid, sock);
+	if (job == EXEC_JOB) {
+	  continue_pending_job(jobs, msg->pid, sock);
+	}
+	else if (job == EXIT_JOB) {
+
+	  char * buf2;
+	  int buf2_size;
+	  struct sockaddr_un * addr2;
+
+	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
+
+	  do_exit(sock, (struct message *)&buf2[0]);
+	}
       }
       else {
 
@@ -1255,10 +1268,21 @@ int main() {
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: status=%d", msg->pid, msg->_u.exit_msg.status);
-
-      int exit_status = msg->_u.exit_msg.status;
-
+      
       // Close all opened fd
+
+      // Find if there is already a timer for this pid
+
+      for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+	if (itimers[i].pid == msg->pid) {
+
+	  itimers[i].fd = -1;
+	  break;
+	}
+      }
+      
+      process_clearitimer(msg->pid);
 
       unsigned char type;
       unsigned short major;
@@ -1268,27 +1292,18 @@ int main() {
 
 	if (DEBUG)
 	  emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
-	//add_pending_job(msg->pid,
+
+	if (close_opened_fd(EXIT_JOB, sock, buf) > 0) {
+
+	  msg->msg_id |= 0x80;
+
+	  add_pending_job(jobs, EXIT_JOB, msg->pid, msg, bytes_rec, &remote_addr);
+	
+	  continue; // Wait CLOSE response before closing the other opened fd
+	}
       }
 
-      int pid = msg->pid;
-      int ppid;
-      
-      if (ppid=process_exit(pid, exit_status << 8)) {
-
-	msg->msg_id = WAIT|0x80;
-	msg->pid = ppid;
-	msg->_errno = 0;
-
-	msg->_u.wait_msg.pid = pid;
-	msg->_u.wait_msg.status = exit_status << 8;
-
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d -> status=%d", msg->pid, msg->_u.wait_msg.status);
-	 // Forward response to process
-	
-	 sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
-	}
+      do_exit(sock, msg);
 
     }
     else if (msg->msg_id == SEEK) {
@@ -1390,6 +1405,7 @@ int main() {
 	if (itimers[i].pid == msg->pid) {
 
 	  itimers[i].fd = fd;
+	  break;
 	}
       }
 
@@ -1611,3 +1627,29 @@ int close_opened_fd(int job, int sock, char * buf) {
   return 0;
 }
 
+int do_exit(int sock, struct message * msg) {
+      
+  int exit_status = msg->_u.exit_msg.status;
+  int pid = msg->pid;
+  int ppid;
+      
+  if (ppid=process_exit(pid, exit_status << 8)) {
+
+    msg->msg_id = WAIT|0x80;
+    msg->pid = ppid;
+    msg->_errno = 0;
+
+    msg->_u.wait_msg.pid = pid;
+    msg->_u.wait_msg.status = exit_status << 8;
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d -> status=%d", msg->pid, msg->_u.wait_msg.status);
+    // Forward response to process
+	
+    sendto(sock, (char *)msg, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+
+    return 1;
+  }
+
+  return 0;
+}
