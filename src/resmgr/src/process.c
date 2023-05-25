@@ -311,7 +311,8 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 	processes[pid].fds[i].type = processes[ppid].fds[i].type;
 	processes[pid].fds[i].major = processes[ppid].fds[i].major;
 	processes[pid].fds[i].minor = processes[ppid].fds[i].minor;
-	processes[pid].fds[i].flags = processes[ppid].fds[i].flags;
+	processes[pid].fds[i].fd_flags = processes[ppid].fds[i].fd_flags;
+	processes[pid].fds[i].fs_flags = processes[ppid].fds[i].fs_flags;
 	//strcpy(processes[pid].fds[i].peer, processes[ppid].fds[i].peer);
       }
     }
@@ -376,7 +377,8 @@ int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned sho
   processes[pid].fds[i].type = type;
   processes[pid].fds[i].major = major;
   processes[pid].fds[i].minor = minor;
-  processes[pid].fds[i].flags = flags;
+  processes[pid].fds[i].fs_flags = flags;
+  processes[pid].fds[i].fd_flags = (flags & O_CLOEXEC)?FD_CLOEXEC:0;
 
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE,"process_create_fd: %d, %d, %d", pid, remote_fd, fd);
@@ -457,7 +459,7 @@ int process_set_fd_flags(pid_t pid, int fd, int flags) {
 
     if (processes[pid].fds[i].fd == fd) {
 
-      processes[pid].fds[i].flags = flags;
+      processes[pid].fds[i].fd_flags = flags;
       
       return 0;
     }
@@ -472,7 +474,7 @@ int process_get_fd_flags(pid_t pid, int fd) {
 
     if (processes[pid].fds[i].fd == fd) {
 
-      return processes[pid].fds[i].flags;
+      return processes[pid].fds[i].fd_flags;
     }
   }
 
@@ -596,7 +598,8 @@ int process_dup(pid_t pid, int fd, int new_fd) {
   processes[pid].fds[j].type = processes[pid].fds[i].type;
   processes[pid].fds[j].major = processes[pid].fds[i].major;
   processes[pid].fds[j].minor = processes[pid].fds[i].minor;
-  processes[pid].fds[j].flags = processes[pid].fds[i].flags;
+  processes[pid].fds[j].fd_flags = processes[pid].fds[i].fd_flags;
+  processes[pid].fds[j].fs_flags = processes[pid].fds[i].fs_flags;
 
   processes[pid].fd_map[new_fd/8] |= (1 << (new_fd%8));
   
@@ -825,7 +828,7 @@ int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, i
 
     if (processes[pid].fds[i].fd >= 0) {
 
-      if (!flag || (processes[pid].fds[i].flags & O_CLOEXEC)) {
+      if (!flag || (processes[pid].fds[i].fd_flags & flag)) {
 
 	*type = processes[pid].fds[i].type;
 	*major = processes[pid].fds[i].major;

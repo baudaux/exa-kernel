@@ -48,12 +48,14 @@ struct itimer {
 
   pid_t pid;
   int fd;
+  int once;
 };
 
 enum {
   // NO_JOB=0
   EXIT_JOB = 1,
   EXEC_JOB,
+  DUP_JOB
 };
 
 static struct job jobs[NB_JOBS_MAX];
@@ -118,12 +120,13 @@ int main() {
   while (1) {
 
     fd_set rfds;
-    int retval;
 
     FD_ZERO(&rfds);
     FD_SET(sock, &rfds);
 
     int fd_max = sock;
+
+    int timer_is_set = 0;
 
     for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
       
@@ -131,46 +134,69 @@ int main() {
 
 	FD_SET(itimers[i].fd, &rfds);
 
+	//if (DEBUG)
+	//  emscripten_log(EM_LOG_CONSOLE, "resmgr: itimer fd=%d", itimers[i].fd);
+
 	if (itimers[i].fd > fd_max)
 	  fd_max = itimers[i].fd;
+
+	timer_is_set = 1;
       }
     }
 
-    retval = select(fd_max+1, &rfds, NULL, NULL, NULL);
+    //if (DEBUG)
+    //  emscripten_log(EM_LOG_CONSOLE, "resmgr: timer_is_set=%d fd_max=%d", timer_is_set, fd_max);
 
-    if (retval < 0)
-      continue;
+    int retval = 0;
 
-    if (!FD_ISSET(sock, &rfds)) {
+    if (timer_is_set > 0) {
 
-      for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+      retval = select(fd_max+1, &rfds, NULL, NULL, NULL);
+
+      //if (DEBUG)
+      //emscripten_log(EM_LOG_CONSOLE, "resmgr: retval=%d", retval);
+
+      if (retval < 0)
+	continue;
+
+      if (!FD_ISSET(sock, &rfds)) {
+
+	//if (DEBUG)
+	//  emscripten_log(EM_LOG_CONSOLE, "resmgr: !! timer !!");
+
+	for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
       
-	if ( (itimers[i].fd >= 0) && (FD_ISSET(itimers[i].fd, &rfds)) ) {
+	  if ( (itimers[i].fd >= 0) && (FD_ISSET(itimers[i].fd, &rfds)) ) {
 
-	  uint64_t count = 0;
+	    uint64_t count = 0;
 
-	  read(itimers[i].fd, &count, sizeof(count));
+	    read(itimers[i].fd, &count, sizeof(count));
 
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "resmgr: ITIMER count=%d", count);
+	    if (itimers[i].once)
+	      itimers[i].fd = -1; // Do not automatically listen fd next time 
 
-	  msg->msg_id = KILL;
-	  msg->pid = itimers[i].pid;
-	  msg->_u.kill_msg.pid = itimers[i].pid;
-	  msg->_u.kill_msg.sig = SIGALRM;
+	    //if (DEBUG)
+	    //  emscripten_log(EM_LOG_CONSOLE, "resmgr: ITIMER count=%d", count);
 
-	  int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+	    msg->msg_id = KILL;
+	    msg->pid = itimers[i].pid;
+	    msg->_u.kill_msg.pid = itimers[i].pid;
+	    msg->_u.kill_msg.sig = SIGALRM;
 
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "resmgr: process_kill action=%d", action);
+	    int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
 
-	  if (action == 2) {
-	    sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+	    //if (DEBUG)
+	    //  emscripten_log(EM_LOG_CONSOLE, "resmgr: process_kill action=%d", action);
+
+	    if (action == 2) {
+	      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+	    }
 	  }
 	}
-      }
 
-      continue;
+	continue;
+      }
+      
     }
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
@@ -580,6 +606,7 @@ int main() {
 	    continue;
 
 	if (job == EXEC_JOB) {
+	  
 	  continue_pending_job(jobs, msg->pid, sock);
 	}
 	else if (job == EXIT_JOB) {
@@ -591,6 +618,30 @@ int main() {
 	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
 
 	  do_exit(sock, (struct message *)&buf2[0]);
+
+	  del_pending_job(jobs, job, msg->pid);
+	}
+	else if (job == DUP_JOB) {
+
+	  char * buf2;
+	  int buf2_size;
+	  struct sockaddr_un * addr2;
+
+	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
+
+	  struct message * msg2 = (struct message *)&buf2[0];
+
+	  msg2->_u.dup_msg.new_fd = process_dup(msg->pid, msg2->_u.dup_msg.fd, msg2->_u.dup_msg.new_fd);
+
+	  // Add /proc/<pid>/fd/<fd> entry
+	  process_add_proc_fd_entry(msg->pid, msg2->_u.dup_msg.new_fd, "dup");
+      
+	  msg2->msg_id |= 0x80;
+	  msg2->_errno = 0;
+
+	  sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+	  del_pending_job(jobs, job, msg->pid);
 	}
       }
       else {
@@ -686,20 +737,40 @@ int main() {
       if (msg->_u.fcntl_msg.cmd == F_SETFD) {
 
 	int flags;
-	int flags2 = 0;
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
-
-	if (flags & FD_CLOEXEC) {
-	  
-	  flags2 |= O_CLOEXEC;  
-	}
 	
-	msg->_errno = process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.fd, flags2);
+	msg->_errno = process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.fd, flags);
       }
       else if (msg->_u.fcntl_msg.cmd == F_GETFD) {
 
 	msg->_u.fcntl_msg.ret = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.fd);
+      }
+      else if (msg->_u.fcntl_msg.cmd == F_DUPFD) {
+
+	int fd;
+
+	memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+
+	// Add /proc/<pid>/fd/<fd> entry
+	process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
+      }
+      else if (msg->_u.fcntl_msg.cmd == F_DUPFD_CLOEXEC) {
+
+	int fd;
+
+	memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+
+	// Add /proc/<pid>/fd/<fd> entry
+	process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
+	
+	int flags = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.ret);
+
+	process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.ret, flags|FD_CLOEXEC);
       }
 
       msg->msg_id |= 0x80;
@@ -772,13 +843,13 @@ int main() {
 
 	if (is_pending_job(jobs, msg->pid) == EXEC_JOB) {
 
-	  // Close all opened fd with flag O_CLOEXEC
+	  // Close all opened fd with fd_flag FD_CLOEXEC
 
 	  unsigned char type;
 	  unsigned short major;
 	  int remote_fd;
 
-	  if (process_opened_fd(msg->pid, &type, &major, &remote_fd, O_CLOEXEC) >= 0) {
+	  if (process_opened_fd(msg->pid, &type, &major, &remote_fd, FD_CLOEXEC) >= 0) {
 	    if (DEBUG)
 	      emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: there are O_CLOEXEC opened fd", msg->pid);
 	    
@@ -801,9 +872,90 @@ int main() {
     else if (msg->msg_id == DUP) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "DUP from %d", msg->pid);
+	emscripten_log(EM_LOG_CONSOLE, "DUP from %d: fd=%d new_fd=%d", msg->pid, msg->_u.dup_msg.fd, msg->_u.dup_msg.new_fd);
 
-      msg->_u.dup_msg.new_fd = process_dup(msg->pid, msg->_u.dup_msg.fd, msg->_u.dup_msg.new_fd);
+      {
+
+	unsigned char type;
+	unsigned short major;
+	int remote_fd;
+
+	int res = process_get_fd(msg->pid, msg->_u.dup_msg.fd, &type, &major, &remote_fd);
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "DUP -> fd %d is %d %d %d (%s)", msg->_u.dup_msg.fd, type, major, remote_fd, device_get_driver(type, major)->peer);
+      }
+
+      if (msg->_u.dup_msg.fd != msg->_u.dup_msg.new_fd) { // do nothing if values are equal
+
+	if (msg->_u.dup_msg.new_fd >= 0) { // Check if new_fd already exists and close it
+	  unsigned char type;
+	  unsigned short major;
+	  int remote_fd;
+
+	  int res = process_get_fd(msg->pid, msg->_u.dup_msg.new_fd, &type, &major, &remote_fd);
+
+	  if (res >= 0) { // new_fd exists
+
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "DUP -> new_fd %d exists %d %d %d", msg->_u.dup_msg.new_fd, type, major, remote_fd);
+
+	    // Close the fd for this process
+	    process_close_fd(msg->pid, msg->_u.dup_msg.new_fd);
+
+	    // Remove /proc/<pid>/fd/<fd> entry
+	    process_del_proc_fd_entry(msg->pid, msg->_u.dup_msg.new_fd);
+
+	    // Find fd in other processes
+	    if (process_find_open_fd(type, major, remote_fd) < 0) {
+
+	      if (DEBUG)
+		emscripten_log(EM_LOG_CONSOLE, "DUP -> new_fd has to be fully closed %d %d", major, vfs_major);
+
+	      // No more fd, close the fd in the driver
+
+	      if (major != vfs_major) { // Send close  msg to driver
+
+		add_pending_job(jobs, DUP_JOB, msg->pid, msg, bytes_rec, &remote_addr);
+
+		msg->msg_id = CLOSE;
+	
+		msg->_u.close_msg.fd = remote_fd;
+
+		struct sockaddr_un driver_addr;
+
+		driver_addr.sun_family = AF_UNIX;
+		strcpy(driver_addr.sun_path, device_get_driver(type, major)->peer);
+
+		if (DEBUG)
+		  emscripten_log(EM_LOG_CONSOLE, "CLOSE send to: %s", driver_addr.sun_path);
+
+		sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+
+		continue; // Need to wait CLOSE response before closing the other ones
+	      }
+	      else {
+	
+		vfs_close(remote_fd);
+	      }
+	    }
+	  }
+	}
+
+	msg->_u.dup_msg.new_fd = process_dup(msg->pid, msg->_u.dup_msg.fd, msg->_u.dup_msg.new_fd);
+
+	unsigned char type;
+	unsigned short major;
+	int remote_fd;
+
+	int res = process_get_fd(msg->pid, msg->_u.dup_msg.new_fd, &type, &major, &remote_fd);
+
+	if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "DUP -> new_fd %d is now %d %d %d", msg->_u.dup_msg.new_fd, type, major, remote_fd);
+
+	// Add /proc/<pid>/fd/<fd> entry
+	process_add_proc_fd_entry(msg->pid, msg->_u.dup_msg.new_fd, "dup");
+      }
       
       msg->msg_id |= 0x80;
       msg->_errno = 0;
@@ -1405,6 +1557,7 @@ int main() {
 	if (itimers[i].pid == msg->pid) {
 
 	  itimers[i].fd = fd;
+	  itimers[i].once = (msg->_u.setitimer_msg.it_sec == 0) && (msg->_u.setitimer_msg.it_usec == 0);
 	  break;
 	}
       }
@@ -1419,6 +1572,7 @@ int main() {
 
 	    itimers[i].pid = msg->pid;
 	    itimers[i].fd = fd;
+	    itimers[i].once = (msg->_u.setitimer_msg.it_sec == 0) && (msg->_u.setitimer_msg.it_usec == 0);
 	    break;
 	  }
 	}
@@ -1581,7 +1735,7 @@ int close_opened_fd(int job, int sock, char * buf) {
 
   while (1) {
 
-    fd = process_opened_fd(msg->pid, &type, &major, &remote_fd, (job == EXEC_JOB)?O_CLOEXEC:0);
+    fd = process_opened_fd(msg->pid, &type, &major, &remote_fd, (job == EXEC_JOB)?FD_CLOEXEC:0);
 
     if (fd < 0)
       break;

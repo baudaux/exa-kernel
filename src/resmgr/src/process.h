@@ -32,7 +32,8 @@ struct file_desc {
   unsigned char type;       // type for socket
   unsigned short major;     // domain for socket
   unsigned short minor;     // protocol for socket
-  int flags;                // O_CLOEXEC
+  int fd_flags;             // file desc flags (FD_CLOEXEC)
+  int fs_flags;             // file status flags
 };
 
 enum proc_state {
