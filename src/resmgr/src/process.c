@@ -598,7 +598,7 @@ int process_dup(pid_t pid, int fd, int new_fd) {
   processes[pid].fds[j].type = processes[pid].fds[i].type;
   processes[pid].fds[j].major = processes[pid].fds[i].major;
   processes[pid].fds[j].minor = processes[pid].fds[i].minor;
-  processes[pid].fds[j].fd_flags = processes[pid].fds[i].fd_flags;
+  processes[pid].fds[j].fd_flags = processes[pid].fds[i].fd_flags & ~FD_CLOEXEC; // deactivate FD_CLOEXEC for the copy
   processes[pid].fds[j].fs_flags = processes[pid].fds[i].fs_flags;
 
   processes[pid].fd_map[new_fd/8] |= (1 << (new_fd%8));

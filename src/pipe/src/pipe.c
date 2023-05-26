@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <sys/sysmacros.h>
 #include <dirent.h>
+#include <sys/ioctl.h>
 
 #include "msg.h"
 #include "circular_buffer.h"
@@ -321,6 +322,9 @@ int main() {
 
 	  int len = read_circular_buffer(&fds[i].buf, msg->_u.io_msg.len, msg->_u.io_msg.buf);
 
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "pipe: READ -> len=%d", len);
+
 	  if (len > 0) {
 
 	    msg->_u.io_msg.len = len;
@@ -512,6 +516,21 @@ int main() {
 
       msg->msg_id |= 0x80;
       msg->_errno = -ESPIPE;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == IOCTL) {
+
+      emscripten_log(EM_LOG_CONSOLE, "pipe: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
+
+      msg->_errno = 0;
+      
+      if (msg->_u.ioctl_msg.op == TIOCGWINSZ) {
+
+	msg->_errno = ENOTTY;
+      }
+
+      msg->msg_id |= 0x80;
+      
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     

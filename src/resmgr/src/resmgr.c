@@ -639,9 +639,7 @@ int main() {
 	  msg2->msg_id |= 0x80;
 	  msg2->_errno = 0;
 
-	  sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-
-	  del_pending_job(jobs, job, msg->pid);
+	  continue_pending_job(jobs, msg->pid, sock);
 	}
       }
       else {
@@ -1755,9 +1753,12 @@ int close_opened_fd(int job, int sock, char * buf) {
 
       if (major != vfs_major) { // Send close  msg to driver
 
-	msg->msg_id = CLOSE;
+	struct message * msg2 = malloc(256); // do not change msg
+
+	msg2->msg_id = CLOSE;
+	msg2->pid = msg->pid;
 	
-	msg->_u.close_msg.fd = remote_fd;
+	msg2->_u.close_msg.fd = remote_fd;
 
 	struct sockaddr_un driver_addr;
 
@@ -1767,8 +1768,10 @@ int close_opened_fd(int job, int sock, char * buf) {
 	if (DEBUG)
 	  emscripten_log(EM_LOG_CONSOLE, "CLOSE send to: %s", driver_addr.sun_path);
 
-	sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	sendto(sock, (char *)msg2, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
 
+	free(msg2);
+	
 	return 1; // Need to wait CLOSE response before closing the other ones
       }
       else {
