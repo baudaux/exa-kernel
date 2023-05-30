@@ -35,7 +35,9 @@
 
 #include <emscripten.h>
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 #define TTY_VERSION "[tty v0.1.0]"
 

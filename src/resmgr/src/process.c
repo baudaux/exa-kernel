@@ -20,7 +20,9 @@
 
 #include <emscripten.h>
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 #define NO_PARENT 0
 

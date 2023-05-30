@@ -69,6 +69,7 @@ enum message_id {
   EXA_RELEASE_SIGNAL = 45,
   FACCESSAT,
   PIPE,
+  UNAME,
 };
 
 enum dev_type {
@@ -338,6 +339,12 @@ struct pipe_message {
   unsigned char peer[108];
 };
 
+struct uname_message {
+
+  int len;
+  char buf[];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -384,6 +391,7 @@ struct message {
     struct exa_release_signal_message exa_release_signal_msg;
     struct faccessat_message faccessat_msg;
     struct pipe_message pipe_msg;
+    struct uname_message uname_msg;
     
   } _u;
 };

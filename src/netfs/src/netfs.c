@@ -28,7 +28,9 @@
 
 #include <emscripten.h>
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 #define NETFS_VERSION "netfs v0.1.0"
 

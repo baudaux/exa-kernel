@@ -30,6 +30,17 @@
 
 #include <emscripten.h>
 
+#define UTS_SYSNAME    "EXA"
+#define UTS_NODENAME   "exaequos"
+#define UTS_RELEASE    "0.1.0"
+#define UTS_VERSION    "#1"
+#ifdef __wasm64__
+#define UTS_MACHINE    "wasm64"
+#else
+#define UTS_MACHINE    "wasm32"
+#endif
+#define UTS_DOMAINNAME ""
+
 /* Be careful when changing this path as it may be also used in javascript */
 
 #define RESMGR_ROOT "/var"
@@ -42,7 +53,9 @@
 
 #define NB_JOBS_MAX    16
 
-#define DEBUG 1
+#ifndef DEBUG
+#define DEBUG 0
+#endif
 
 struct itimer {
 
@@ -1716,6 +1729,42 @@ int main() {
        // Forward response to process
 
        sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+     }
+     else if (msg->msg_id == UNAME) {
+      
+       if (DEBUG)
+	 emscripten_log(EM_LOG_CONSOLE, "UNAME from %d", msg->pid);
+
+       msg->msg_id |= 0x80;
+       msg->_errno = 0;
+
+       int len = 0;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_SYSNAME);
+       len += 65;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_NODENAME);
+       len += 65;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_RELEASE);
+       len += 65;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_VERSION);
+       len += 65;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_MACHINE);
+       len += 65;
+
+       strcpy(msg->_u.uname_msg.buf+len, UTS_DOMAINNAME);
+       len += 65;
+      
+       msg->_u.uname_msg.len = len;
+
+       if (DEBUG)
+	 emscripten_log(EM_LOG_CONSOLE, "UNAME: %s %s %s", msg->_u.uname_msg.buf, msg->_u.uname_msg.buf+65, msg->_u.uname_msg.buf+130);
+      
+       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
      }
   }
   

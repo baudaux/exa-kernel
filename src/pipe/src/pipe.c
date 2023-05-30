@@ -31,7 +31,9 @@
 
 #include <emscripten.h>
 
-#define DEBUG 1
+#ifndef DEBUG
+#define DEBUG 0
+#endif
 
 #define PIPE_VERSION "pipe v0.1.0"
 

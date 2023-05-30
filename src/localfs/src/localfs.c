@@ -31,7 +31,9 @@
 
 #include <emscripten.h>
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 #define LOCALFS_VERSION "localfs v0.1.0"
 

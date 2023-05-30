@@ -1,15 +1,7 @@
-/packages
 /doc
-/out
-/tmp.build
-**/node_modules
 *.o
 *.a
 *.wasm
 *.js
 *.DS_Store
 *~
-!root.netfs/startup/term.js
-!root.netfs/startup/xterm/xterm-addon-fit.js
-!root.netfs/startup/xterm/xterm.js
-!server/server.js

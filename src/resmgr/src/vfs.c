@@ -23,7 +23,9 @@
 
 #include "vfs.h"
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 #define NB_FD_MAX 64
 
