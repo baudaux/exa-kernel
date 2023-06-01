@@ -1045,13 +1045,13 @@ int main() {
       //emscripten_log(EM_LOG_CONSOLE, "tty: SEEK from %d", msg->pid);
 
       msg->msg_id |= 0x80;
-      msg->_errno = -ESPIPE;
+      msg->_errno = ESPIPE;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == IOCTL) {
 
       //emscripten_log(EM_LOG_CONSOLE, "tty: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
-
+      
       if (msg->_u.ioctl_msg.op == TIOCSCTTY) {
 
 	// Ask sid to resmsgr
@@ -1131,7 +1131,7 @@ int main() {
       }
       else {
 
-	msg->_errno = -1;
+	msg->_errno = 1;
       }
 
       msg->msg_id |= 0x80;
