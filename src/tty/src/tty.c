@@ -750,7 +750,10 @@ static int local_tty_select(pid_t pid, int remote_fd, int fd, int read_write, in
   }
   else { // stop
 
-    del_read_select_pending_request(pid, remote_fd, fd, sock_addr);
+    if (!read_write) { // read
+      
+      del_read_select_pending_request(pid, remote_fd, fd, sock_addr);
+    }
   }
   
   return 0;
@@ -1015,7 +1018,22 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
       
-      //emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
+
+      char * buf2 = msg->_u.io_msg.buf;
+
+      if (msg->_u.io_msg.len > (bytes_rec - 20)) {
+
+	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+
+	buf2 =(char *)malloc(msg->_u.io_msg.len);
+
+	memcpy(buf2, msg->_u.io_msg.buf, bytes_rec - 20);
+
+	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
+
+	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE %d read", bytes_rec2);
+      }
 
       struct device_desc * dev;
 
@@ -1023,13 +1041,13 @@ int main() {
 
 	dev = get_device(1);
 
-        dev->ops->write(-1, msg->_u.io_msg.buf, msg->_u.io_msg.len);
+        dev->ops->write(-1, buf2, msg->_u.io_msg.len);
       }
       else {
       
 	dev = get_device_from_fd(msg->_u.io_msg.fd);
 
-	dev->ops->write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len);
+	dev->ops->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
       }
 
       if (msg->_u.io_msg.len > 0) {
@@ -1038,7 +1056,12 @@ int main() {
       }
 
       msg->msg_id |= 0x80;
-      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      if (buf2 != msg->_u.io_msg.buf) {
+
+	free(buf2);
+      }
     }
     else if (msg->msg_id == SEEK) {
 

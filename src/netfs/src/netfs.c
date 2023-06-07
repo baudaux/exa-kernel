@@ -479,23 +479,26 @@ static int netfs_seek(int fd, int offset, int whence) {
   if (i < 0)
     return -1;
 
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"netfs_seek: %d %d %d %d", fd, offset, whence, fds[i].offset);
+
   switch(whence) {
 
     case SEEK_SET:
 
-      fds[fd].offset = offset;
+      fds[i].offset = offset;
 
       break;
 
     case SEEK_CUR:
 
-      fds[fd].offset += offset;
+      fds[i].offset += offset;
 
       break;
 
     case SEEK_END:
 
-      fds[fd].offset = fds[fd].size + offset;
+      fds[i].offset = fds[i].size + offset;
       
       break;
 
@@ -504,7 +507,10 @@ static int netfs_seek(int fd, int offset, int whence) {
       break;
     }
 
-  return fds[fd].offset;
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"netfs_seek -> %d", fds[i].offset);
+
+  return fds[i].offset;
 }
 
 static int netfs_faccess(const char * pathname, int amode, int flags) {
@@ -702,7 +708,12 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "netfs: READ (%d) from %d", READ, msg->pid);
+
+      int reply_size = 12+sizeof(struct io_message)+msg->_u.io_msg.len;
+
+      struct message * reply = (struct message *) malloc(reply_size);
 
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
@@ -733,17 +744,17 @@ int main() {
 	reply->_errno = ENXIO;
       }
       
-      sendto(sock, reply, sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, reply, reply_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
       free(reply);
     }
     else if (msg->msg_id == WRITE) {
       
-      
+      //TODO
     }
     else if (msg->msg_id == IOCTL) {
 
-      
+      //TODO
     }
     else if (msg->msg_id == CLOSE) {
 

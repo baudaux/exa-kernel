@@ -70,6 +70,7 @@ enum message_id {
   FACCESSAT,
   PIPE,
   UNAME,
+  FSYNC
 };
 
 enum dev_type {
@@ -345,6 +346,11 @@ struct uname_message {
   char buf[];
 };
 
+struct fsync_message {
+
+  int fd;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -392,6 +398,7 @@ struct message {
     struct faccessat_message faccessat_msg;
     struct pipe_message pipe_msg;
     struct uname_message uname_msg;
+    struct fsync_message fsync_msg;
     
   } _u;
 };

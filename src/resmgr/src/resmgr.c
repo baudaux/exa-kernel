@@ -699,11 +699,24 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
-      //TODO : read remaining bytes if needed (beyond 1256)
+      char * buf2 = msg->_u.io_msg.buf;
+
+      if (msg->_u.io_msg.len > (bytes_rec - 20)) {
+
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+
+	buf2 =(char *)malloc(msg->_u.io_msg.len);
+
+	memcpy(buf2, msg->_u.io_msg.buf, bytes_rec - 20);
+
+	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
+
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+      }
 
       msg->msg_id |= 0x80;
       
-      if (vfs_write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len) >= 0)  {
+      if (vfs_write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len) >= 0)  {
 
 	 if (DEBUG)
 	    emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: done");
@@ -717,6 +730,10 @@ int main() {
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
+      if (buf2 != msg->_u.io_msg.buf) {
+
+	free(buf2);
+      }
     }
     else if (msg->msg_id == IOCTL) {
       
@@ -1723,7 +1740,8 @@ int main() {
 	 // Add /proc/<pid>/fd/<fd> entry
 	 process_add_proc_fd_entry(msg->pid, msg->_u.pipe_msg.fd[1], "pipe");
 
-	 emscripten_log(EM_LOG_CONSOLE, "resmgr: Return of PIPE: (%d,%d), (%d,%d)", msg->_u.pipe_msg.fd[0], msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.fd[1], msg->_u.pipe_msg.remote_fd[1]);
+	 if (DEBUG)
+	   emscripten_log(EM_LOG_CONSOLE, "resmgr: Return of PIPE: (%d,%d), (%d,%d)", msg->_u.pipe_msg.fd[0], msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.fd[1], msg->_u.pipe_msg.remote_fd[1]);
        }
 
        // Forward response to process
@@ -1766,6 +1784,17 @@ int main() {
        sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
      }
+    else if (msg->msg_id == FSYNC) {
+      
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "resmgr: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
+      
+      msg->_errno = 0;
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
   }
   
   return 0;

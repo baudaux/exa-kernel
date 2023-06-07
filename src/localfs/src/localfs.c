@@ -620,6 +620,9 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+
       struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
 
       reply->msg_id = READ|0x80;
@@ -655,6 +658,24 @@ int main() {
       free(reply);
     }
     else if (msg->msg_id == WRITE) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+
+      char * buf2 = msg->_u.io_msg.buf;
+
+      if (msg->_u.io_msg.len > (bytes_rec - 20)) {
+
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+
+	buf2 =(char *)malloc(msg->_u.io_msg.len);
+
+	memcpy(buf2, msg->_u.io_msg.buf, bytes_rec - 20);
+
+	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
+
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+      }
       
       struct device_ops * dev = NULL;
 
@@ -667,7 +688,7 @@ int main() {
       
       if (dev) {
 	
-	msg->_u.io_msg.len = dev->write(msg->_u.io_msg.fd, msg->_u.io_msg.buf, msg->_u.io_msg.len);
+	msg->_u.io_msg.len = dev->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
 	msg->_errno = 0;
       }
       else {
@@ -677,6 +698,10 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      if (buf2 != msg->_u.io_msg.buf) {
+
+	free(buf2);
+      }
     }
     else if (msg->msg_id == IOCTL) {
 
@@ -883,6 +908,17 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
+    else if (msg->msg_id == FSYNC) {
+      
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "localfs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
+      
+      msg->_errno = 0;
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
     }
     

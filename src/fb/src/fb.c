@@ -180,11 +180,23 @@ int main() {
 	    return window.devicePixelRatio;
 	  });
 
-	vinfo->xres = (uint32_t) scale*800;
-	vinfo->yres = (uint32_t) scale*600;
+	vinfo->xres = vinfo->xres_virtual = vinfo->width = (uint32_t) scale*800;
+	vinfo->yres = vinfo->yres_virtual = vinfo->height = (uint32_t) scale*600;
 	vinfo->bits_per_pixel = 32;
 	
-
+	vinfo->red.offset = 0;
+	vinfo->red.length = 8;
+	vinfo->red.msb_right = 0;
+	vinfo->green.offset = 8;
+	vinfo->green.length = 8;
+	vinfo->green.msb_right = 0;
+	vinfo->blue.offset = 16;
+	vinfo->blue.length = 8;
+	vinfo->blue.msb_right = 0;
+	vinfo->transp.offset = 24;
+	vinfo->transp.length = 8;
+	vinfo->transp.msb_right = 0;
+	
 	msg->_errno = 0;
       }
       else if (msg->_u.ioctl_msg.op == FBIOGET_FSCREENINFO) {
