@@ -214,7 +214,7 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -1;
+    return EBADF;
 
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d %d %d %d", fd, count, fds[i].offset, fds[i].size);
@@ -237,7 +237,7 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
     return size;
   }
   
-  return -1;
+  return ENOENT;
 }
 
 static ssize_t netfs_write(int fd, const void * buf, size_t count) {
@@ -280,7 +280,7 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
 
   int size = do_fetch(buf, 0, buf, 1256);
   
-  int _errno = -1;
+  int _errno = ENOENT;
   
   if (size > 0) {
 
@@ -300,7 +300,7 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
       
       if (strncmp(ptr, "errno", 5) == 0) {
 
-	_errno = atoi(ptr2+1);
+	_errno = -atoi(ptr2+1); // Return the positive value
       }
       else if (strncmp(ptr, "mode", 4) == 0) {
 
@@ -316,9 +316,10 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
       
       ptr = strtok(NULL, delim);
     }
-  
-    return _errno;
   }
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "<-- netfs_stat: errno=%d", _errno);
 
   return _errno;
 }
@@ -333,10 +334,18 @@ static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, 
 
   if ((_errno=netfs_stat(pathname, &stat)) == 0) {
     
-    return add_fd_entry(pid, minor, pathname, flags, mode, stat.st_size);
+    int remote_fd =  add_fd_entry(pid, minor, pathname, flags, mode, stat.st_size);
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: remote_fd=%d", remote_fd);
+
+    return remote_fd;
   }
 
-  return _errno;
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: errno=%d", _errno);
+
+  return -_errno; // Return the negative value
 }
 
 struct __dirent {
@@ -349,7 +358,7 @@ struct __dirent {
 
 static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 
-  char buf2[2256];
+  char buf2[2048];
 
   int i = find_fd_entry(fd);
 
@@ -357,14 +366,16 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
     return -1;
 
   if (!fds[i].data) {
-
-    fds[i].data_size = 4096;
-    fds[i].data = (char *)malloc(fds[i].data_size);
+    
+    fds[i].data_size = 8192;
+    fds[i].data = (char *)malloc(fds[i].data_size+1);
     
     sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
   
-    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, 4096);
+    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, 8192);
 
+    fds[i].data[fds[i].data_size] = 0;
+    
     fds[i].offset = 0;
   }
 
@@ -375,7 +386,7 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
     return 0;
   
   if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d count=%d", fd, fds[i].offset, count);
+    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d count=%d data_size=%d", fd, fds[i].offset, count, fds[i].data_size);
 
   char delim[] = "\n";
 
@@ -415,8 +426,8 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 
 	if ((len+sizeof(struct __dirent)+strlen(dirent_ptr->d_name)) < count) {  // there is space for this entry
 
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
+	  //if (DEBUG)
+	  //  emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
 	  
 	  ptr = ptr2+1;
 	
@@ -466,8 +477,8 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
     fds[i].offset = strlen(fds[i].data);
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "*** len=%d remains: %s", len, ptr);
+  //if (DEBUG)
+  //  emscripten_log(EM_LOG_CONSOLE, "*** len=%d remains: %s", len, ptr);
     
   return len;
 }
@@ -477,7 +488,7 @@ static int netfs_seek(int fd, int offset, int whence) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -1;
+    return -EBADF;
 
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE,"netfs_seek: %d %d %d %d", fd, offset, whence, fds[i].offset);
@@ -700,7 +711,7 @@ int main() {
       else {
 
 	msg->_u.open_msg.remote_fd = -1;
-	msg->_errno = ENOENT;
+	msg->_errno = -remote_fd;
       }
       
       msg->msg_id |= 0x80;
@@ -800,7 +811,7 @@ int main() {
       }
       else {
 
-	msg->_errno = -_errno;
+	msg->_errno = _errno;
       }
 
       msg->msg_id |= 0x80;
@@ -820,36 +831,58 @@ int main() {
 	dev = get_device(fds[i].minor);
 	
       }
+
+      char * buf2 = buf;
+      struct message * msg2 = msg;
       
       if (dev) {
 
-	ssize_t count = (msg->_u.getdents_msg.len < 1024)?msg->_u.getdents_msg.len:1024;
+	ssize_t count;
+	
+	if (msg->_u.getdents_msg.len < 1024) {
+	  
+	  count = dev->getdents(msg->_u.getdents_msg.fd, (char *)&(msg->_u.getdents_msg.buf[0]), msg->_u.getdents_msg.len);
+	}
+	else {
 
-	count = dev->getdents(msg->_u.getdents_msg.fd, (char *)(msg->_u.getdents_msg.buf), count);
+	  buf2 = malloc(12+sizeof(struct getdents_message)+msg->_u.getdents_msg.len);
+	  msg2 = (struct message *)&buf2[0];
+
+	  msg2->msg_id = msg->msg_id;
+	  msg2->pid = msg->pid;
+	  msg2->_u.getdents_msg.fd = msg->_u.getdents_msg.fd;
+	  msg2->_u.getdents_msg.len = msg->_u.getdents_msg.len;
+
+	  count = dev->getdents(msg2->_u.getdents_msg.fd, (char *)&(msg2->_u.getdents_msg.buf[0]), msg2->_u.getdents_msg.len);
+	  
+	}
 
 	if (DEBUG)
 	  emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
 	  
-	  msg->_u.getdents_msg.len = count;
-	  msg->_errno = 0;
+	  msg2->_u.getdents_msg.len = count;
+	  msg2->_errno = 0;
 	}
 	else {
 
-	  msg->_u.getdents_msg.len = 0;
-	  msg->_errno = EBADF;
+	  msg2->_u.getdents_msg.len = 0;
+	  msg2->_errno = -count;
 	}
       }
       else {
 	
-	msg->_u.getdents_msg.len = 0;
-	msg->_errno = EBADF;
+	msg2->_u.getdents_msg.len = 0;
+	msg2->_errno = EBADF;
       }
 
-      msg->msg_id |= 0x80;
+      msg2->msg_id |= 0x80;
 
-      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, buf2, 12+sizeof(struct getdents_message)+msg2->_u.getdents_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      if (buf2 != buf)
+	free(buf2);
     }
     else if (msg->msg_id == CHDIR) {
 
@@ -927,17 +960,31 @@ int main() {
 	}
 	else {
 
-	  msg->_errno = -_errno;
+	  msg->_errno = _errno;
 	}
       }
       else {
 
-	msg->_errno = -EBADF;
+	msg->_errno = EBADF;
       }
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
+    }
+    else if (msg->msg_id == UNLINKAT) {
+
+      msg->_errno = EPERM;
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == RENAMEAT) {
+
+      msg->_errno = EPERM;
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     
   }

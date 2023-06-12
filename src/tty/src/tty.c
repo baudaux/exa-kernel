@@ -1018,13 +1018,15 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
       
-      emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 
-	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "tty: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 =(char *)malloc(msg->_u.io_msg.len);
 
@@ -1032,7 +1034,8 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE %d read", bytes_rec2);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "tty: WRITE %d read", bytes_rec2);
       }
 
       struct device_desc * dev;

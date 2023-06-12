@@ -3,11 +3,11 @@
  *
  * This file is part of EXA.
  *
- * EXA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+ * EXA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundationt, either version 3 of the License, or (at your option) any later version.
  *
  * EXA is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along with EXA. If not, see <https://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU General Public License along with EXA. If not, sees <https://www.gnu.org/licenses/>.
  */
 
 #include <string.h>
@@ -46,14 +46,16 @@
 struct device_ops {
 
   int (*open)(const char *pathname, int flags, mode_t mode, pid_t pid, unsigned short minor);
-  ssize_t (*read)(int fd, void *buf, size_t count);
-  ssize_t (*write)(int fildes, const void *buf, size_t nbyte);
+  ssize_t (*read)(int fd, void * buf, size_t count);
+  ssize_t (*write)(int fildes, const void * buf, size_t nbyte);
   int (*ioctl)(int fildes, int request, ... /* arg */);
   int (*close)(int fd);
-  int (*stat)(const char *pathname, struct stat * stat);
+  int (*stat)(const char * pathname, struct stat * stat);
   ssize_t (*getdents)(int fd, char * buf, ssize_t count);
   int (*seek)(int fd, int offset, int whence);
-  int (*faccess)(const char *pathname, int amode, int flags);
+  int (*faccess)(const char * pathname, int amode, int flags);
+  int (*unlink)(const char * path, int flags);
+  int (*rename)(const char * oldpath, const char * newpath);
 };
 
 struct fd_entry {
@@ -140,7 +142,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
     }
   }
 
-  return -1;
+  return -ENOMEM;
 }
 
 int del_fd_entry(int index) {
@@ -211,7 +213,7 @@ static int localfs_close(int fd) {
   if (res == LFS_ERR_OK)
     del_fd_entry(i);
   
-  return res;
+  return -res;  // return the positive value
 }
 
 static int localfs_stat(const char * pathname, struct stat * stat) {
@@ -251,9 +253,9 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
   }
 
   if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", res, stat->st_mode);
+    emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
   
-  return res;
+  return -res;  // return the positive value
 }
 
 static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
@@ -264,7 +266,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
   int _errno;
   struct stat stat;
 
-  _errno = localfs_stat(pathname, &stat);
+  _errno = -localfs_stat(pathname, &stat);
 
   if ( (_errno == LFS_ERR_OK) || (flags & O_CREAT) ) {
 
@@ -295,7 +297,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     if (stat.st_mode & S_IFREG) {
 
       if (flags & O_DIRECTORY)   // Error pathname is not a directory
-	return -1;
+	return -ENOTDIR;
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_file: %x %x", flags, lfs_flags);
@@ -315,14 +317,16 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     }
 
     if (res == LFS_ERR_OK) {
+      
       return add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
+      
     }
     else {
 
       if (lfs_handle)
 	free(lfs_handle);
       
-      _errno = res;
+      _errno = res; // return the negative value
     }
   }
 
@@ -346,7 +350,7 @@ static ssize_t localfs_getdents(int fd, char * buf, ssize_t count) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -1;
+    return -EBADF;
   
   int res = 1;
   int len = 0;
@@ -396,14 +400,32 @@ static int localfs_seek(int fd, int offset, int whence) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -1;
+    return -EBADF;
 
   return lfs_file_seek(&lfs, fds[i].lfs_handle, offset, whence);
 }
 
 static int localfs_faccess(const char * pathname, int amode, int flags) {
 
-  return 0;
+  struct stat stat;
+
+  int _errno = localfs_stat(pathname, &stat);
+  
+  return -_errno; // Return the positive value
+}
+
+static int localfs_unlink(const char * path, int flags) {
+
+  int _errno = lfs_remove(&lfs, path);
+  
+  return -_errno;  // Return the positive value
+}
+
+static int localfs_rename(const char * oldpath, const char * newpath) {
+
+  int _errno = lfs_rename(&lfs, oldpath, newpath);
+  
+  return -_errno;  // Return the positive value
 }
 
 static struct device_ops localfs_ops = {
@@ -417,6 +439,8 @@ static struct device_ops localfs_ops = {
   .getdents = localfs_getdents,
   .seek = localfs_seek,
   .faccess = localfs_faccess,
+  .unlink = localfs_unlink,
+  .rename = localfs_rename,
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -593,9 +617,8 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
-    
     else if (msg->msg_id == OPEN) {
-
+      
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
 
@@ -612,7 +635,7 @@ int main() {
       else {
 
 	msg->_u.open_msg.remote_fd = -1;
-	msg->_errno = ENOENT;
+	msg->_errno = -remote_fd;
       }
       
       msg->msg_id |= 0x80;
@@ -623,7 +646,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
-      struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
+      struct message * reply = (struct message *) malloc(sizeof(struct io_message)+msg->_u.io_msg.len);
 
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
@@ -770,7 +793,7 @@ int main() {
       }
       else {
 
-	msg->_errno = -_errno;
+	msg->_errno = _errno;
       }
 
       msg->msg_id |= 0x80;
@@ -808,7 +831,7 @@ int main() {
 	else {
 
 	  msg->_u.getdents_msg.len = 0;
-	  msg->_errno = EBADF;
+	  msg->_errno = -count;
 	}
       }
       else {
@@ -898,12 +921,12 @@ int main() {
 	}
 	else {
 
-	  msg->_errno = -_errno;
+	  msg->_errno = _errno;
 	}
       }
       else {
 
-	msg->_errno = -EBADF;
+	msg->_errno = EBADF;
       }
 
       msg->msg_id |= 0x80;
@@ -920,6 +943,46 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
+    }
+    else if (msg->msg_id == UNLINKAT) {
+
+      msg->_errno = get_device(msg->_u.unlinkat_msg.minor)->unlink((const char *)msg->_u.unlinkat_msg.path, msg->_u.unlinkat_msg.flags);
+
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == RENAMEAT) {
+
+      // struct renameat_message is longer than 1256, read remaining bytes
+
+      char * buf2 = malloc(12+sizeof(struct renameat_message));
+
+      memmove(buf2, buf, bytes_rec);
+
+      int rem_bytes_rec = recvfrom(sock, buf2+bytes_rec, 12+sizeof(struct renameat_message)-bytes_rec, 0, (struct sockaddr *) &remote_addr, &len);
+
+      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT bytes_rec=%d rem=%d (%d)", bytes_rec, rem_bytes_rec, sizeof(struct renameat_message));
+
+      struct message * msg2 = (struct message *)&buf2[0];
+
+      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT from %d: (%d %d %d) %s %s", msg2->pid, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor, msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath);
+
+      char newpath[1024];
+
+      sprintf(newpath, "/home%s", (const char *)msg2->_u.renameat_msg.newpath);
+
+      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT: newpath=%s", newpath);
+      
+      msg2->_errno = get_device(msg2->_u.renameat_msg.minor)->rename((const char *)msg2->_u.renameat_msg.oldpath, (const char *)&newpath[0]);
+      
+      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT from %d: errno=%d", msg2->pid, msg2->_errno);
+
+      msg2->msg_id |= 0x80;
+      
+      sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      free(buf2);
     }
     
   }

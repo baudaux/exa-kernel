@@ -512,7 +512,7 @@ int main() {
     else if (msg->msg_id == (OPEN|0x80)) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: %d %x %x %s %d %d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
+	emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: errno=%d flags=%x mode=%x %s pid=%d remote_fd=%d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
 
       if (msg->_errno == 0) {
 
@@ -668,7 +668,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
-      struct message * reply = (struct message *) malloc(sizeof(struct message)+msg->_u.io_msg.len);
+      struct message * reply = (struct message *) malloc(sizeof(struct io_message)+msg->_u.io_msg.len);
 
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
@@ -690,7 +690,7 @@ int main() {
 	reply->_errno = EBADF;
       }
       
-      sendto(sock, reply, sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, reply, sizeof(struct io_message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
       free(reply);
     }
@@ -1188,8 +1188,8 @@ int main() {
     else if (msg->msg_id == (STAT|0x80)) {
 
       if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "Response from STAT from %d", msg->pid);
-
+	emscripten_log(EM_LOG_CONSOLE, "Response from STAT from %d: errno=%d", msg->pid, msg->_errno);
+      
       // Forward response to process
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
@@ -1636,8 +1636,7 @@ int main() {
 
 	path = &new_path[0];
       }
-
-      struct stat stat_buf;
+      
       char * trail;
       
       struct vnode * vnode = vfs_find_node((const char *)path, &trail);
@@ -1794,6 +1793,206 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
+    }
+    else if (msg->msg_id == UNLINKAT) {
+
+      char * path;
+      char new_path[1024];
+
+      if (msg->_u.unlinkat_msg.path[0] == '/') {
+
+	path = msg->_u.unlinkat_msg.path;
+      }
+      else {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(new_path, "%s%s", cwd, msg->_u.unlinkat_msg.path);
+	else
+	  sprintf(new_path, "%s/%s", cwd, msg->_u.unlinkat_msg.path);
+
+	path = &new_path[0];
+      }
+      
+      char * trail;
+      
+      struct vnode * vnode = vfs_find_node((const char *)path, &trail);
+
+      if (vnode == NULL) {
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %s not found", msg->pid, path);
+
+	msg->msg_id |= 0x80;
+	msg->_errno = ENOENT;
+
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else if (vnode->type == VMOUNT) {
+
+	struct sockaddr_un driver_addr;
+
+	msg->_u.unlinkat_msg.type = vnode->_u.dev.type;
+	msg->_u.unlinkat_msg.major = vnode->_u.dev.major;
+	msg->_u.unlinkat_msg.minor = vnode->_u.dev.minor;
+
+	char node_path[1024];
+	
+	vfs_get_path(vnode, node_path);
+
+	strcat(node_path, trail);
+
+	strcpy(msg->_u.unlinkat_msg.path, node_path);
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "UNLINKAT: VMOUNT %s %s %s", node_path, trail, msg->_u.unlinkat_msg.path);
+
+	driver_addr.sun_family = AF_UNIX;
+	strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
+
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	}
+      else {
+
+	if (vfs_del_node(vnode) == 0)
+	  msg->_errno = 0;
+	else
+	  msg->_errno = EACCES;
+
+	msg->msg_id |= 0x80;
+	
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	
+      }
+    }
+    else if (msg->msg_id == (UNLINKAT|0x80)) {
+
+      // Forward response to process
+
+       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+    }
+    else if (msg->msg_id == RENAMEAT) {
+
+      // struct renameat_message is longer than 1256, read remaining bytes
+
+      char * buf2 = malloc(12+sizeof(struct renameat_message));
+
+      memmove(buf2, buf, bytes_rec);
+
+      int rem_bytes_rec = recvfrom(sock, buf2+bytes_rec, 12+sizeof(struct renameat_message)-bytes_rec, 0, (struct sockaddr *) &remote_addr, &len);
+
+      struct message * msg2 = (struct message *)&buf2[0];
+      
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "RENAMEAT from %d: %d %s %d %s", msg2->pid, msg2->_u.renameat_msg.olddirfd, msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newdirfd, msg2->_u.renameat_msg.newpath);
+
+      char * oldpath;
+      char oldpath2[1024];
+
+      if (msg2->_u.renameat_msg.oldpath[0] == '/') {
+
+	oldpath = msg2->_u.renameat_msg.oldpath;
+      }
+      else {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(oldpath2, "%s%s", cwd, msg2->_u.renameat_msg.oldpath);
+	else
+	  sprintf(oldpath2, "%s/%s", cwd, msg2->_u.renameat_msg.oldpath);
+
+	oldpath = &oldpath2[0];
+      }
+      
+      char * oldtrail;
+      
+      struct vnode * oldvnode = vfs_find_node((const char *)oldpath, &oldtrail);
+      
+      char * newpath;
+      char newpath2[1024];
+
+      if (msg2->_u.renameat_msg.newpath[0] == '/') {
+
+	newpath = msg2->_u.renameat_msg.newpath;
+      }
+      else {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(newpath2, "%s%s", cwd, msg2->_u.renameat_msg.newpath);
+	else
+	  sprintf(newpath2, "%s/%s", cwd, msg2->_u.renameat_msg.newpath);
+	
+	newpath = &newpath2[0];
+      }
+      
+      char * newtrail;
+      
+      struct vnode * newvnode = vfs_find_node((const char *)newpath, &newtrail);
+
+      if (oldvnode->type == NULL) {
+
+	msg2->msg_id |= 0x80;
+	msg2->_errno = ENOENT;
+
+	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else if (oldvnode->type == VMOUNT) {
+
+	if ( (newvnode->type == VMOUNT) && (oldvnode->_u.dev.type == newvnode->_u.dev.type) && (oldvnode->_u.dev.major == newvnode->_u.dev.major) && (oldvnode->_u.dev.minor == newvnode->_u.dev.minor) ) {
+
+	  struct sockaddr_un driver_addr;
+	  
+	  char node_path[1024];
+	
+	  vfs_get_path(oldvnode, node_path);
+
+	  strcat(node_path, oldtrail);
+
+	  strncpy(msg2->_u.renameat_msg.oldpath, node_path, 1024);
+
+	  strncpy(msg2->_u.renameat_msg.newpath, newtrail, 1024);
+
+	  msg2->_u.renameat_msg.type = oldvnode->_u.dev.type;
+	  msg2->_u.renameat_msg.major = oldvnode->_u.dev.major;
+	  msg2->_u.renameat_msg.minor = oldvnode->_u.dev.minor;
+
+	  //if (DEBUG)
+	  //emscripten_log(EM_LOG_CONSOLE, "RENAMEAT: VMOUNT %s %s (%d %d %d)", msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor);
+
+	  driver_addr.sun_family = AF_UNIX;
+	  strcpy(driver_addr.sun_path, device_get_driver(oldvnode->_u.dev.type, oldvnode->_u.dev.major)->peer);
+
+	  sendto(sock, buf2, 12+sizeof(struct renameat_message), 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	  
+	}
+	else {
+
+	  msg2->msg_id |= 0x80;
+	  msg2->_errno = EACCES;
+
+	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}
+      }
+      else {
+
+	// TODO
+      }
+
+      free(buf2);
+    }
+    else if (msg->msg_id == (RENAMEAT|0x80)) {
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "Return of RENAMEAT: pid=%d errno=%d", msg->pid, msg->_errno);
+
+      // Forward response to process
+
+       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
     }
   }
   

@@ -70,7 +70,9 @@ enum message_id {
   FACCESSAT,
   PIPE,
   UNAME,
-  FSYNC
+  FSYNC,
+  UNLINKAT = 50,
+  RENAMEAT
 };
 
 enum dev_type {
@@ -351,6 +353,30 @@ struct fsync_message {
   int fd;
 };
 
+struct unlinkat_message {
+
+  int dirfd;
+  int flags;
+  int len;
+  char path[1024];
+  unsigned char type;
+  unsigned short major;
+  unsigned short minor;
+};
+
+struct renameat_message {
+
+  int olddirfd;
+  int oldlen;
+  char oldpath[1024];
+  int newdirfd;
+  int newlen;
+  char newpath[1024];
+  unsigned char type;
+  unsigned short major;
+  unsigned short minor;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -399,6 +425,8 @@ struct message {
     struct pipe_message pipe_msg;
     struct uname_message uname_msg;
     struct fsync_message fsync_msg;
+    struct unlinkat_message unlinkat_msg;
+    struct renameat_message renameat_msg;
     
   } _u;
 };

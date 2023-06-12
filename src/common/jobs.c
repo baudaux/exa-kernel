@@ -17,7 +17,9 @@
 
 #include <emscripten.h>
 
+#ifndef DEBUG
 #define DEBUG 0
+#endif
 
 void jobs_init(struct job * jobs, size_t size) {
 
