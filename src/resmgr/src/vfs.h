@@ -99,6 +99,8 @@ int vfs_fstat(int fd, struct stat * stat_buf);
 
 int vfs_seek(int fd, int offset, int whence);
 
+int vfs_unlink(struct vnode * vnode);
+
 void vfs_dump();
 
 

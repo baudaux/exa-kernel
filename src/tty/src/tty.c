@@ -33,10 +33,15 @@
 #include "msg.h"
 #include "circular_buffer.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#include <emscripten.h>
+
+#if DEBUG
+#else
+#define emscripten_log(...)
 #endif
 
 #define TTY_VERSION "[tty v0.1.0]"
@@ -1059,6 +1064,7 @@ int main() {
       }
 
       msg->msg_id |= 0x80;
+      msg->_errno = 0;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
       if (buf2 != msg->_u.io_msg.buf) {
@@ -1128,6 +1134,7 @@ int main() {
       clients[msg->_u.close_msg.fd].pid = -1;
 
       msg->msg_id |= 0x80;
+      msg->_errno = 0;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));     
       
     }
@@ -1157,7 +1164,7 @@ int main() {
       }
       else {
 
-	msg->_errno = 1;
+	msg->_errno = ENOENT;
       }
 
       msg->msg_id |= 0x80;
@@ -1191,7 +1198,7 @@ int main() {
       }
       else {
 
-	msg->_errno = -1;
+	msg->_errno = ENOENT;
       }
 
       msg->msg_id |= 0x80;

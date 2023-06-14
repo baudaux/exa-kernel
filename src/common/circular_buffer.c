@@ -15,7 +15,15 @@
 
 #include "circular_buffer.h"
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
 #include <emscripten.h>
+#else
+#define emscripten_log(...)
+#endif
 
 void init_circular_buffer(struct circular_buffer * buf, size_t size) {
 

@@ -24,6 +24,11 @@
 #define DEBUG 0
 #endif
 
+#if DEBUG
+#else
+#define emscripten_log(...)
+#endif
+
 #define NO_PARENT 0
 
 #define RESMGR_ID 1

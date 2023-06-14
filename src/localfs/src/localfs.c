@@ -29,10 +29,14 @@
 #include "lfs.h"
 #include "lfs_block.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#if DEBUG
+#include <emscripten.h>
+#else
+#define emscripten_log(...)
 #endif
 
 #define LOCALFS_VERSION "localfs v0.1.0"
@@ -170,6 +174,44 @@ int find_fd_entry(int fd) {
   return -1;
 }
 
+static int localfs_errno(int lfs_errno) {
+
+  switch(lfs_errno) {
+    
+  case LFS_ERR_OK:
+    return 0;
+  case LFS_ERR_IO:
+    return EIO;
+  case LFS_ERR_CORRUPT:
+    return EFAULT;
+  case LFS_ERR_NOENT:
+    return ENOENT;
+  case LFS_ERR_EXIST:
+    return EEXIST;
+  case LFS_ERR_NOTDIR:
+    return ENOTDIR;
+  case LFS_ERR_ISDIR:
+    return EISDIR;
+  case LFS_ERR_NOTEMPTY:
+    return ENOTEMPTY;
+  case LFS_ERR_BADF:
+    return EBADF;
+  case LFS_ERR_FBIG:
+    return EFBIG;
+  case LFS_ERR_INVAL:
+    return EINVAL;
+  case LFS_ERR_NOSPC:
+    return ENOSPC;
+  case LFS_ERR_NOMEM:
+    return ENOMEM;
+  case LFS_ERR_NOATTR:
+    return ENODATA;
+  case LFS_ERR_NAMETOOLONG:
+    return ENAMETOOLONG;
+  default:
+    return EFAULT;
+  }
+}
 
 static ssize_t localfs_read(int fd, void * buf, size_t count) {
 
@@ -178,7 +220,12 @@ static ssize_t localfs_read(int fd, void * buf, size_t count) {
   if (i < 0)
     return -1;
 
-  return lfs_file_read(&lfs, fds[i].lfs_handle, buf, count);
+  ssize_t ret = lfs_file_read(&lfs, fds[i].lfs_handle, buf, count);
+
+  if (ret < 0)
+    ret = -localfs_errno(ret); // Negative value if error
+  
+  return ret;
 }
 
 static ssize_t localfs_write(int fd, const void * buf, size_t count) {
@@ -188,7 +235,12 @@ static ssize_t localfs_write(int fd, const void * buf, size_t count) {
   if (i < 0)
     return -1;
 
-  return lfs_file_write(&lfs, fds[i].lfs_handle, buf, count);
+  ssize_t ret = lfs_file_write(&lfs, fds[i].lfs_handle, buf, count);
+  
+  if (ret < 0)
+    ret = -localfs_errno(ret); // Negative value if error
+
+  return ret;
 }
 
 static int localfs_ioctl(int fildes, int request, ... /* arg */) {
@@ -213,7 +265,7 @@ static int localfs_close(int fd) {
   if (res == LFS_ERR_OK)
     del_fd_entry(i);
   
-  return -res;  // return the positive value
+  return localfs_errno(res);
 }
 
 static int localfs_stat(const char * pathname, struct stat * stat) {
@@ -255,7 +307,7 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
   
-  return -res;  // return the positive value
+  return localfs_errno(res);
 }
 
 static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
@@ -266,15 +318,14 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
   int _errno;
   struct stat stat;
 
-  _errno = -localfs_stat(pathname, &stat);
+  _errno = localfs_stat(pathname, &stat);
 
-  if ( (_errno == LFS_ERR_OK) || (flags & O_CREAT) ) {
+  if ( (_errno == 0) || (flags & O_CREAT) ) {
 
     int lfs_flags = 0;
-    int res = -1;
     void * lfs_handle = NULL;
 
-    if (_errno != LFS_ERR_OK) {
+    if (_errno != 0) {
 
       stat.st_mode = S_IFREG; // Create a regular file if it does not exist
     }
@@ -304,7 +355,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
 
       lfs_handle = malloc(sizeof(lfs_file_t));
       
-      res = lfs_file_open(&lfs, (lfs_file_t *)lfs_handle, pathname, lfs_flags);
+      _errno = localfs_errno(lfs_file_open(&lfs, (lfs_file_t *)lfs_handle, pathname, lfs_flags));
     }
     else if (stat.st_mode & S_IFDIR) {
 
@@ -313,27 +364,29 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
 
       lfs_handle = malloc(sizeof(lfs_dir_t));
 
-      res = lfs_dir_open(&lfs, lfs_handle, pathname);
+      _errno = localfs_errno(lfs_dir_open(&lfs, lfs_handle, pathname));
     }
 
-    if (res == LFS_ERR_OK) {
+    if (_errno == 0) {
       
-      return add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
+      int fd = add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
+
+      if (fd >= 0)
+	return fd;
       
+      _errno = ENOMEM;
     }
     else {
 
       if (lfs_handle)
 	free(lfs_handle);
-      
-      _errno = res; // return the negative value
     }
   }
 
   if (DEBUG)
       emscripten_log(EM_LOG_CONSOLE,"<-- localfs_open : errno=%d", _errno);
 
-  return _errno;
+  return -_errno; // Negative value if error
   
 }
 
@@ -388,6 +441,8 @@ static ssize_t localfs_getdents(int fd, char * buf, ssize_t count) {
 
 	lfs_soff_t off = lfs_dir_tell(&lfs, fds[i].lfs_handle);
 	lfs_dir_seek(&lfs, fds[i].lfs_handle, off-1);
+	
+	res = 0;
       }
     }
   }
@@ -400,7 +455,7 @@ static int localfs_seek(int fd, int offset, int whence) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -EBADF;
+    return EBADF;
 
   return lfs_file_seek(&lfs, fds[i].lfs_handle, offset, whence);
 }
@@ -408,24 +463,20 @@ static int localfs_seek(int fd, int offset, int whence) {
 static int localfs_faccess(const char * pathname, int amode, int flags) {
 
   struct stat stat;
-
-  int _errno = localfs_stat(pathname, &stat);
   
-  return -_errno; // Return the positive value
+  return localfs_stat(pathname, &stat);
 }
 
 static int localfs_unlink(const char * path, int flags) {
 
-  int _errno = lfs_remove(&lfs, path);
+  //TODO check if already opened, unlink when closed
   
-  return -_errno;  // Return the positive value
+  return localfs_errno(lfs_remove(&lfs, path));
 }
 
 static int localfs_rename(const char * oldpath, const char * newpath) {
 
-  int _errno = lfs_rename(&lfs, oldpath, newpath);
-  
-  return -_errno;  // Return the positive value
+  return localfs_errno(lfs_rename(&lfs, oldpath, newpath));
 }
 
 static struct device_ops localfs_ops = {
@@ -635,7 +686,7 @@ int main() {
       else {
 
 	msg->_u.open_msg.remote_fd = -1;
-	msg->_errno = -remote_fd;
+	msg->_errno = -remote_fd; // to positive value
       }
       
       msg->msg_id |= 0x80;
@@ -646,7 +697,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
-      struct message * reply = (struct message *) malloc(sizeof(struct io_message)+msg->_u.io_msg.len);
+      struct message * reply = (struct message *) malloc(12+sizeof(struct io_message)+msg->_u.io_msg.len);
 
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
@@ -664,10 +715,17 @@ int main() {
       if (dev) {
 	
 	reply->_u.io_msg.len = dev->read(msg->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
-	reply->_errno = 0;
+
+	if (reply->_u.io_msg.len >= 0) {
+	  reply->_errno = 0;
+	}
+	else {
+	  reply->_errno = -reply->_u.io_msg.len; // to positive value;
+	  reply->_u.io_msg.len = 0;
+	}
 
 	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
+	  emscripten_log(EM_LOG_CONSOLE, "READ: errno=%d %d bytes", reply->_errno, reply->_u.io_msg.len);
       }
       else {
 
@@ -676,7 +734,7 @@ int main() {
 	reply->_errno = ENXIO;
       }
       
-      sendto(sock, reply, sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, reply, 12+sizeof(struct message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
       free(reply);
     }
@@ -689,15 +747,17 @@ int main() {
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
-	buf2 =(char *)malloc(msg->_u.io_msg.len);
+	buf2 = (char *)malloc(msg->_u.io_msg.len);
 
 	memcpy(buf2, msg->_u.io_msg.buf, bytes_rec - 20);
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
       }
       
       struct device_ops * dev = NULL;
@@ -712,7 +772,13 @@ int main() {
       if (dev) {
 	
 	msg->_u.io_msg.len = dev->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
-	msg->_errno = 0;
+	if (msg->_u.io_msg.len >= 0) {
+	  msg->_errno = 0;
+	}
+	else {
+	  msg->_errno = -msg->_u.io_msg.len; // to positive value;
+	  msg->_u.io_msg.len = 0;
+	}
       }
       else {
 
@@ -788,13 +854,9 @@ int main() {
 	
 	msg->_u.stat_msg.len = sizeof(struct stat);
 	memcpy(msg->_u.stat_msg.pathname_or_buf, &stat_buf, sizeof(struct stat));
-
-	msg->_errno = 0;
       }
-      else {
 
-	msg->_errno = _errno;
-      }
+      msg->_errno = _errno;
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
@@ -831,7 +893,7 @@ int main() {
 	else {
 
 	  msg->_u.getdents_msg.len = 0;
-	  msg->_errno = -count;
+	  msg->_errno = -count; // To positive value
 	}
       }
       else {
@@ -873,7 +935,7 @@ int main() {
 	msg->_u.seek_msg.offset = dev->seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 
 	if (msg->_u.seek_msg.offset < 0)
-	  msg->_errno = EBADF;
+	  msg->_errno = localfs_errno(msg->_u.seek_msg.offset);
 	else
 	  msg->_errno = 0;
 
@@ -915,14 +977,10 @@ int main() {
 	if ((_errno=get_device(min)->stat((const char *)fds[i].pathname, &stat_buf)) == 0) {
 	
 	  msg->_u.fstat_msg.len = sizeof(struct stat);
-	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat));
-
-	  msg->_errno = 0;
+	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat)); 
 	}
-	else {
-
-	  msg->_errno = _errno;
-	}
+	
+	msg->_errno = _errno;
       }
       else {
 

@@ -15,10 +15,14 @@
 
 #include "jobs.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#if DEBUG
+#include <emscripten.h>
+#else
+#define emscripten_log(...)
 #endif
 
 void jobs_init(struct job * jobs, size_t size) {

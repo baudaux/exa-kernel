@@ -17,7 +17,15 @@
 #include "msg.h"
 #include "vfs.h"
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
 #include <emscripten.h>
+#else
+#define emscripten_log(...)
+#endif
 
 static unsigned short majors[3];
 

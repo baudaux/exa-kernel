@@ -26,10 +26,15 @@
 
 #include "msg.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#include <emscripten.h>
+
+#if DEBUG
+#else
+#define emscripten_log(...)
 #endif
 
 #define NETFS_VERSION "netfs v0.1.0"
@@ -91,6 +96,8 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].flags = flags;
       fds[i].mode = mode;
       fds[i].size = size;
+      fds[i].data = NULL;
+      fds[i].data_size = 0;
       fds[i].offset = 0;
 
       return last_fd;
@@ -262,8 +269,13 @@ static int netfs_close(int fd) {
 
   if (fds[i].data) {
 
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: FREE fds[i].data=%x", fds[i].data);
+
     free(fds[i].data);
+    
     fds[i].data = NULL;
+    fds[i].data_size = 0;
   }
   
   return 0;
@@ -369,11 +381,14 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
     
     fds[i].data_size = 8192;
     fds[i].data = (char *)malloc(fds[i].data_size+1);
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fds[i].data=%x", fds[i].data);
     
     sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
   
-    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, 8192);
-
+    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, fds[i].data_size);
+    
     fds[i].data[fds[i].data_size] = 0;
     
     fds[i].offset = 0;
@@ -382,7 +397,7 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
   if (fds[i].data_size < 0)
     return -1;
 
-  if (fds[i].data_size == 0)
+  if ( (fds[i].data_size == 0) || (fds[i].offset >= fds[i].data_size) )
     return 0;
   
   if (DEBUG)
@@ -394,13 +409,13 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
   
   char * savePtr = fds[i].data+fds[i].offset;
   
-  char * ptr = strtok(savePtr, delim);
+  char * ptr = /*strtok(savePtr, delim);*/savePtr;
   
   while (ptr != NULL) {
 
     if (DEBUG)
       emscripten_log(EM_LOG_CONSOLE, "**** len=%d ptr: %s", len, ptr);
-
+    
     char * ptr2 = strchr(ptr, '=');
 
     if (ptr2) {
@@ -421,13 +436,13 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 
       if (ptr2) {
 
-	strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
-	dirent_ptr->d_name[ptr2-ptr] = 0;
+	if ((len+sizeof(struct __dirent)+ptr2-ptr+1) < count) {  // there is space for this entry
 
-	if ((len+sizeof(struct __dirent)+strlen(dirent_ptr->d_name)) < count) {  // there is space for this entry
+	  strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
+	  dirent_ptr->d_name[ptr2-ptr] = 0;
 
-	  //if (DEBUG)
-	  //  emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
 	  
 	  ptr = ptr2+1;
 	
@@ -436,8 +451,12 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 	  char str_mode[8];
 
 	  strncpy(str_mode, ptr, ptr2-ptr);
+	  str_mode[ptr2-ptr] = 0;
 
 	  int mode = atoi(str_mode);
+
+	  if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "*** %d: mode=%s %d", len, str_mode, mode);
 
 	  if (S_ISDIR(mode)) {
 
@@ -460,25 +479,34 @@ static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
 	}
 	else {
 
-	  ptr[strlen(ptr)] = '\n';
+	  //ptr[strlen(ptr)] = '\n';
 	  
 	  break;
 	}
       }
     }
 
-    ptr = strtok(NULL, delim);
+    //if (DEBUG)
+    //  emscripten_log(EM_LOG_CONSOLE, "*** %d: strtok", len);
+
+    ptr = strchr(ptr, '\n');
+    
+    if (ptr)
+      ptr += 1;
+         
+    //ptr = strtok(NULL, delim);
   }
   
   if (ptr) {
     fds[i].offset = ptr-fds[i].data;
   }
   else {
-    fds[i].offset = strlen(fds[i].data);
-  }
+    fds[i].offset = fds[i].data_size;
+    }
+  
 
-  //if (DEBUG)
-  //  emscripten_log(EM_LOG_CONSOLE, "*** len=%d remains: %s", len, ptr);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "*** len=%d offset=%d remains: %s", len, fds[i].offset, ptr);
     
   return len;
 }
@@ -726,6 +754,14 @@ int main() {
 
       struct message * reply = (struct message *) malloc(reply_size);
 
+      if (!reply) {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = ENOMEM;
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+	continue;
+      }
+
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
       reply->_u.io_msg.fd = msg->_u.io_msg.fd;
@@ -829,7 +865,6 @@ int main() {
       if (i >= 0) {
         
 	dev = get_device(fds[i].minor);
-	
       }
 
       char * buf2 = buf;
@@ -837,7 +872,7 @@ int main() {
       
       if (dev) {
 
-	ssize_t count;
+	ssize_t count = 0;
 	
 	if (msg->_u.getdents_msg.len < 1024) {
 	  
@@ -846,14 +881,23 @@ int main() {
 	else {
 
 	  buf2 = malloc(12+sizeof(struct getdents_message)+msg->_u.getdents_msg.len);
-	  msg2 = (struct message *)&buf2[0];
 
-	  msg2->msg_id = msg->msg_id;
-	  msg2->pid = msg->pid;
-	  msg2->_u.getdents_msg.fd = msg->_u.getdents_msg.fd;
-	  msg2->_u.getdents_msg.len = msg->_u.getdents_msg.len;
+	  if (!buf2) {
 
-	  count = dev->getdents(msg2->_u.getdents_msg.fd, (char *)&(msg2->_u.getdents_msg.buf[0]), msg2->_u.getdents_msg.len);
+	    if (DEBUG)
+	      emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: no mem", msg->pid);
+	  }
+	  else {
+	  
+	    msg2 = (struct message *)&buf2[0];
+
+	    msg2->msg_id = msg->msg_id;
+	    msg2->pid = msg->pid;
+	    msg2->_u.getdents_msg.fd = msg->_u.getdents_msg.fd;
+	    msg2->_u.getdents_msg.len = msg->_u.getdents_msg.len;
+
+	    count = dev->getdents(msg2->_u.getdents_msg.fd, (char *)&(msg2->_u.getdents_msg.buf[0]), msg2->_u.getdents_msg.len);
+	  }
 	  
 	}
 
@@ -881,7 +925,7 @@ int main() {
 
       sendto(sock, buf2, 12+sizeof(struct getdents_message)+msg2->_u.getdents_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
-      if (buf2 != buf)
+      if (buf2 && (buf2 != buf))
 	free(buf2);
     }
     else if (msg->msg_id == CHDIR) {

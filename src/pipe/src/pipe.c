@@ -29,10 +29,14 @@
 #include "circular_buffer.h"
 #include "jobs.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#if DEBUG
+#include <emscripten.h>
+#else
+#define emscripten_log(...)
 #endif
 
 #define PIPE_VERSION "pipe v0.1.0"

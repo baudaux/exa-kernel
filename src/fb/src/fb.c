@@ -30,10 +30,15 @@
 
 #include "msg.h"
 
-#include <emscripten.h>
-
 #ifndef DEBUG
 #define DEBUG 0
+#endif
+
+#include <emscripten.h>
+
+#if DEBUG
+#else
+#define emscripten_log(...)
 #endif
 
 #define FB_VERSION "[fb v0.1.0]"

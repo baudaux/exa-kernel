@@ -19,15 +19,23 @@
 
 #include <sys/sysmacros.h>
 
-#include <emscripten.h>
-
-#include "vfs.h"
+#include <errno.h>
 
 #ifndef DEBUG
 #define DEBUG 0
 #endif
 
-#define NB_FD_MAX 64
+#if DEBUG
+#include <emscripten.h>
+#else
+#define emscripten_log(...)
+#endif
+
+#include "vfs.h"
+
+
+
+#define NB_FD_MAX 128
 
 static char vfs_debug = 0;
 		
@@ -35,6 +43,7 @@ static struct vnode * vfs_root;
 
 struct fd_entry {
 
+  int fd;
   pid_t pid;
   unsigned short minor;
   char pathname[1024];
@@ -42,9 +51,12 @@ struct fd_entry {
   unsigned short mode;
   unsigned int offset;
   struct vnode * vnode;
+  int unlink_pending;
 };
 
-static int last_fd = 0; // keep 0 for latest open of dev type is dev or mount
+// keep 0 for latest open of dev type is dev or mount
+
+static int last_fd = 0;
 
 static struct fd_entry fds[NB_FD_MAX];
 
@@ -58,6 +70,11 @@ int vfs_init() {
   vfs_root = NULL;
 
   vfs_root = vfs_add_dir(NULL, "/");
+
+  for (int i = 0; i < NB_FD_MAX; ++i) {
+    
+    fds[i].fd = -1;
+  }
     
   return 0;
 }
@@ -480,20 +497,47 @@ void vfs_dump_node(struct vnode * vnode, int indent) {
   }
 }
 
+int get_fd_entry(int fd) {
+
+  if (fd == 0)
+    return 0;
+
+  for (int i = 1; i < NB_FD_MAX; ++i) { // 0 is reserved
+
+    if (fds[i].fd == fd)
+      return i;
+  }
+
+  return -1;
+}
+
 int add_fd_entry(int fd, pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, unsigned int size, struct vnode * vnode) {
 
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE, "add_fd_entry: fd=%d pid=%d pathname=%s vnode=%x", fd, pid, pathname, vnode);
+
+  int i = 1;
   
-  fds[fd].pid = pid;
-  fds[fd].minor = minor;
-  strcpy(fds[fd].pathname, pathname);
-  fds[fd].flags = flags;
-  fds[fd].mode = mode;
-  fds[fd].offset = 0;
-  fds[fd].vnode = vnode;
+  for (; i < NB_FD_MAX; ++i) { // 0 is reserved
+
+    if (fds[i].fd < 0)
+      break;
+  }
+
+  if (i == NB_FD_MAX)
+    return -1;
+
+  fds[i].fd = fd;
+  fds[i].pid = pid;
+  fds[i].minor = minor;
+  strcpy(fds[i].pathname, pathname);
+  fds[i].flags = flags;
+  fds[i].mode = mode;
+  fds[i].offset = 0;
+  fds[i].vnode = vnode;
+  fds[i].unlink_pending = 0;
   
-  return fd;
+  return i;
 }
 
 int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
@@ -527,7 +571,7 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
       ++last_fd;
 
       add_fd_entry(last_fd, pid, minor, pathname, flags, mode, 0, vnode);
-
+      
       remote_fd = last_fd;
     }
   }
@@ -537,7 +581,7 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
       emscripten_log(EM_LOG_CONSOLE, "vfs_open: create file");
 
     struct vnode * vfile = vfs_create_file(pathname);
-
+    
     if (vfile) {
 
       if (DEBUG)
@@ -556,36 +600,68 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
 
 struct vnode * vfs_get_vnode(int fd) {
 
-  return fds[fd].vnode;
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return NULL;
+  
+  return fds[i].vnode;
 }
 
 const char * vfs_get_pathname(int fd) {
 
-  return (const char *)&fds[fd].pathname[0];
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return NULL;
+  
+  return (const char *)&fds[i].pathname[0];
 }
 
 int vfs_close(int fd) {
 
-  return 0;
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return -1;
+  
+  fds[i].fd = -1;
+
+  if (fds[i].pathname)
+    free(fds[i].pathname);
+
+  if (fds[i].unlink_pending) {
+
+    vfs_unlink(fds[i].vnode);
+  }
+  
+  fds[i].vnode = NULL;
+  
+  return i;
 }
 
 ssize_t vfs_read(int fd, void * buf, size_t len) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d off=%d", fd, len, fds[fd].offset);
+  int i = get_fd_entry(fd);
 
-  struct vnode * vnode = vfs_get_vnode(fd);
+  if (i < 0)
+    return -ENOENT;
+  
+  struct vnode * vnode = fds[i].vnode;
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d off=%d", fd, len, fds[i].offset);
 
   if (vnode && (vnode->type == VFILE)) {
 
-    if (fds[fd].offset >= vnode->_u.file.file_size)
+    if (fds[i].offset >= vnode->_u.file.file_size)
       return 0;
 
-    ssize_t bytes_read = ((fds[fd].offset+len) <= vnode->_u.file.file_size)?len:vnode->_u.file.file_size-fds[fd].offset;
+    ssize_t bytes_read = ((fds[i].offset+len) <= vnode->_u.file.file_size)?len:vnode->_u.file.file_size-fds[i].offset;
 
-    memcpy(buf, vnode->_u.file.buffer+fds[fd].offset, bytes_read);
+    memcpy(buf, vnode->_u.file.buffer+fds[i].offset, bytes_read);
 
-    fds[fd].offset += bytes_read;
+    fds[i].offset += bytes_read;
 
     if (DEBUG) {
       for (int i=0; i < bytes_read; ++i) {
@@ -601,8 +677,15 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
 
 ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return -ENOENT;
+  
+  struct vnode * vnode = fds[i].vnode;
+
   if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[fd].offset);
+    emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[i].offset);
 
   for (int i=0; i < len; ++i) {
 
@@ -610,11 +693,15 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
       emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
   }
 
-  struct vnode * vnode = vfs_get_vnode(fd);
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode = %x", vnode);
 
   if (vnode && (vnode->type == VFILE)) {
 
-    int min_size = fds[fd].offset+len;
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode is VFILE");
+
+    int min_size = fds[i].offset+len;
 
     if (!vnode->_u.file.buffer) { // buffer does not exist
 
@@ -628,27 +715,32 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
       vnode->_u.file.buffer = (unsigned char *)realloc(vnode->_u.file.buffer, vnode->_u.file.buffer_size);
 
-      if (fds[fd].offset > vnode->_u.file.file_size) {
+      if (fds[i].offset > vnode->_u.file.file_size) {
 
-	memset(vnode->_u.file.buffer+vnode->_u.file.file_size, 0, fds[fd].offset - vnode->_u.file.file_size);
+	memset(vnode->_u.file.buffer+vnode->_u.file.file_size, 0, fds[i].offset - vnode->_u.file.file_size);
       }
     }
 
     if (vnode->_u.file.buffer) {
 
-      memcpy(vnode->_u.file.buffer+fds[fd].offset, buf, len);
+      memcpy(vnode->_u.file.buffer+fds[i].offset, buf, len);
 
-      fds[fd].offset += len;
+      fds[i].offset += len;
 
       // Update file size if offset is greater
-      if (vnode->_u.file.file_size < fds[fd].offset)
-	vnode->_u.file.file_size = fds[fd].offset;
+      if (vnode->_u.file.file_size < fds[i].offset)
+	vnode->_u.file.file_size = fds[i].offset;
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d bytes written", len);
 
       return len;
     }
+  }
+  else if (vnode) {
+
+    if (DEBUG)
+      emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode %s is of type %d", vnode->name, vnode->type);
   }
   
   return -1;
@@ -659,10 +751,12 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE, "vfs_getdents: sizeof off_t=%d", sizeof(off_t));
   
-  struct vnode * vnode = vfs_get_vnode(fd);
+  int i = get_fd_entry(fd);
 
-  if (!vnode)
-    return -1;
+  if (i < 0)
+    return -ENOENT;
+  
+  struct vnode * vnode = fds[i].vnode;
   
   struct vnode * child = vnode->_u.link.vnode;
 
@@ -677,7 +771,7 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
   
   int off;
   
-  for (off = 0; off < fds[fd].offset; ++off) {
+  for (off = 0; off < fds[i].offset; ++off) {
 
     child = child->next;
   }
@@ -685,7 +779,7 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
   ssize_t count;
   struct __dirent * ptr;
 
-  for (count = 0; count < len; ++fds[fd].offset) {
+  for (count = 0; count < len; ++fds[i].offset) {
 
     if (child && ((count+sizeof(struct __dirent)+strlen(child->name)) < len) ) {
 
@@ -913,7 +1007,12 @@ int vfs_fstat(int fd, struct stat * buf) {
 
 int vfs_seek(int fd, int offset, int whence) {
 
-  struct vnode * vnode = vfs_get_vnode(fd);
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return -ENOENT;
+  
+  struct vnode * vnode = fds[i].vnode;
 
   if (vnode && (vnode->type == VFILE)) {
 
@@ -921,19 +1020,19 @@ int vfs_seek(int fd, int offset, int whence) {
 
     case SEEK_SET:
 
-      fds[fd].offset = offset;
+      fds[i].offset = offset;
 
       break;
 
     case SEEK_CUR:
 
-      fds[fd].offset += offset;
+      fds[i].offset += offset;
 
       break;
 
     case SEEK_END:
 
-      fds[fd].offset = vnode->_u.file.file_size + offset;
+      fds[i].offset = vnode->_u.file.file_size + offset;
       
       break;
 
@@ -943,12 +1042,39 @@ int vfs_seek(int fd, int offset, int whence) {
     }
 
     if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_seek: offset=%d", fds[fd].offset);
+      emscripten_log(EM_LOG_CONSOLE, "vfs_seek: offset=%d", fds[i].offset);
 
-    return fds[fd].offset;
+    return fds[i].offset;
   }
   
   return -1;
+}
+
+int vfs_unlink(struct vnode * vnode) {
+
+  if (!vnode)
+    return ENOENT;
+  
+  int i = 1;
+  
+  for (; i < NB_FD_MAX; ++i) { // 0 is reserved
+
+    if ( (fds[i].fd >= 0) && (fds[i].vnode == vnode) )
+      break;
+  }
+
+  if (i == NB_FD_MAX) { // vnode is not opened
+    
+    vfs_del_node(vnode);
+    return 0;
+  }
+
+  if (DEBUG)
+    emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
+  
+  fds[i].unlink_pending = 1;
+
+  return EBUSY;
 }
 
 void vfs_dump() {

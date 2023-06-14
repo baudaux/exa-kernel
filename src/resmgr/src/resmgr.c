@@ -28,7 +28,15 @@
 
 #include "msg.h"
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
 #include <emscripten.h>
+#else
+#define emscripten_log(...)
+#endif
 
 #define UTS_SYSNAME    "EXA"
 #define UTS_NODENAME   "exaequos"
@@ -52,10 +60,6 @@
 #define NB_ITIMERS_MAX 64
 
 #define NB_JOBS_MAX    16
-
-#ifndef DEBUG
-#define DEBUG 0
-#endif
 
 struct itimer {
 
@@ -442,7 +446,7 @@ int main() {
 	vfs_get_path(vfs_get_vnode(remote_fd), new_path);
 
 	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "vfs_get_path: %s", new_path);
+	  emscripten_log(EM_LOG_CONSOLE, "vfs_get_path: new_path=%s remote_fd=%d", new_path, remote_fd);
 	
 	if (remote_fd == 0) {
 
@@ -668,7 +672,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
-      struct message * reply = (struct message *) malloc(sizeof(struct io_message)+msg->_u.io_msg.len);
+      struct message * reply = (struct message *) malloc(12+sizeof(struct io_message)+msg->_u.io_msg.len);
 
       reply->msg_id = READ|0x80;
       reply->pid = msg->pid;
@@ -690,7 +694,7 @@ int main() {
 	reply->_errno = EBADF;
       }
       
-      sendto(sock, reply, sizeof(struct io_message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      sendto(sock, reply, 12+sizeof(struct io_message)+reply->_u.io_msg.len, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
       free(reply);
     }
@@ -719,11 +723,14 @@ int main() {
       if (vfs_write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len) >= 0)  {
 
 	 if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "WRITE from %d: done");
+	    emscripten_log(EM_LOG_CONSOLE, "WRITE done");
 	      
 	msg->_errno = 0;
       }
       else {
+
+	if (DEBUG)
+	    emscripten_log(EM_LOG_CONSOLE, "WRITE  KO");
 
 	msg->_errno = EBADF;
       }
@@ -1814,6 +1821,9 @@ int main() {
 
 	path = &new_path[0];
       }
+
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %s %s", msg->pid, msg->_u.unlinkat_msg.path, path);
       
       char * trail;
       
@@ -1852,16 +1862,12 @@ int main() {
 	strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
 
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
-	}
+      }
       else {
 
-	if (vfs_del_node(vnode) == 0)
-	  msg->_errno = 0;
-	else
-	  msg->_errno = EACCES;
+	msg->_errno = vfs_unlink(vnode);
 
 	msg->msg_id |= 0x80;
-	
 
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 	
