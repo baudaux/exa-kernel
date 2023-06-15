@@ -76,6 +76,7 @@ struct fd_entry {
   char * data;
   unsigned int data_size;
   void * lfs_handle;
+  int unlink_pending;
 };
 
 static unsigned short major;
@@ -138,6 +139,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].size = size;
       fds[i].offset = 0;
       fds[i].lfs_handle = lfs_handle;
+      fds[i].unlink_pending = 0;
 
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE,"<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
@@ -248,6 +250,24 @@ static int localfs_ioctl(int fildes, int request, ... /* arg */) {
   return 0;
 }
 
+static int localfs_unlink(const char * path, int flags) {
+
+  int unlink_pending_set = 0;
+  
+  for (int i = 0; i < NB_FD_MAX; ++i) {
+
+    if ( (fds[i].fd >= 0) && (strcmp(path, fds[i].pathname) == 0) ) {
+
+      fds[i].unlink_pending = 1;
+      unlink_pending_set = 1;
+    }
+  }
+
+  if (unlink_pending_set)
+    return EBUSY;
+  
+  return localfs_errno(lfs_remove(&lfs, path));
+}
 static int localfs_close(int fd) {
 
   int i = find_fd_entry(fd);
@@ -262,6 +282,13 @@ static int localfs_close(int fd) {
   else
     res = lfs_file_close(&lfs, fds[i].lfs_handle);
 
+  if (fds[i].unlink_pending) {
+
+    fds[i].fd = -1; // not to take this entry during unlink
+    localfs_unlink(fds[i].pathname, 0);
+    fds[i].fd = fd;
+  }
+  
   if (res == LFS_ERR_OK)
     del_fd_entry(i);
   
@@ -465,13 +492,6 @@ static int localfs_faccess(const char * pathname, int amode, int flags) {
   struct stat stat;
   
   return localfs_stat(pathname, &stat);
-}
-
-static int localfs_unlink(const char * path, int flags) {
-
-  //TODO check if already opened, unlink when closed
-  
-  return localfs_errno(lfs_remove(&lfs, path));
 }
 
 static int localfs_rename(const char * oldpath, const char * newpath) {
@@ -933,7 +953,7 @@ int main() {
       if (dev) {
 
 	msg->_u.seek_msg.offset = dev->seek(msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
-
+	
 	if (msg->_u.seek_msg.offset < 0)
 	  msg->_errno = localfs_errno(msg->_u.seek_msg.offset);
 	else

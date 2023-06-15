@@ -1056,25 +1056,26 @@ int vfs_unlink(struct vnode * vnode) {
     return ENOENT;
   
   int i = 1;
+  int unlink_pending_set = 0;
   
   for (; i < NB_FD_MAX; ++i) { // 0 is reserved
 
-    if ( (fds[i].fd >= 0) && (fds[i].vnode == vnode) )
-      break;
-  }
+    if ( (fds[i].fd >= 0) && (fds[i].vnode == vnode) ) {
 
-  if (i == NB_FD_MAX) { // vnode is not opened
-    
-    vfs_del_node(vnode);
-    return 0;
-  }
+      if (DEBUG)
+	emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
+      fds[i].unlink_pending = 1;
+      unlink_pending_set = 1;
+    }
+  }
   
-  fds[i].unlink_pending = 1;
+  if (unlink_pending_set)
+    return EBUSY;
 
-  return EBUSY;
+  vfs_del_node(vnode);
+
+  return 0;
 }
 
 void vfs_dump() {

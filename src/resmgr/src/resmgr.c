@@ -1138,7 +1138,7 @@ int main() {
 
       struct stat stat_buf;
       struct vnode * vnode;
-      char * trail;
+      char * trail = NULL;
 
       int res = vfs_stat((const char *)path, &stat_buf, &vnode, &trail);
 
@@ -1164,8 +1164,8 @@ int main() {
 	  char node_path[1024];
 	
 	  vfs_get_path(vnode, node_path);
-
-	  if (vnode->type == VMOUNT)
+	  
+	  if ( (vnode->type == VMOUNT) && trail )
 	    strcat(node_path, trail);
 
 	  strcpy(msg->_u.stat_msg.pathname_or_buf, node_path);
@@ -1228,7 +1228,7 @@ int main() {
 
       struct stat stat_buf;
       struct vnode * vnode;
-      char * trail;
+      char * trail = NULL;
 
       int res = vfs_lstat((const char *)path, &stat_buf, &vnode, &trail);
 
@@ -1252,7 +1252,7 @@ int main() {
 	
 	  vfs_get_path(vnode, node_path);
 
-	  if (vnode->type == VMOUNT)
+	  if ( (vnode->type == VMOUNT) && trail)
 	    strcat(node_path, trail);
 
 	  strcpy(msg->_u.stat_msg.pathname_or_buf, node_path);
@@ -1340,7 +1340,7 @@ int main() {
 	dir = &new_dir[0];
       }
 
-      char * trail= 0;
+      char * trail = NULL;
 
       struct vnode * vnode = vfs_find_node(dir, &trail);
   
@@ -1644,7 +1644,7 @@ int main() {
 	path = &new_path[0];
       }
       
-      char * trail;
+      char * trail = NULL;
       
       struct vnode * vnode = vfs_find_node((const char *)path, &trail);
 
@@ -1670,7 +1670,8 @@ int main() {
 	
 	vfs_get_path(vnode, node_path);
 
-	strcat(node_path, trail);
+	if (trail)
+	  strcat(node_path, trail);
 
 	strcpy(msg->_u.faccessat_msg.pathname, node_path);
 
@@ -1825,7 +1826,7 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %s %s", msg->pid, msg->_u.unlinkat_msg.path, path);
       
-      char * trail;
+      char * trail = NULL;
       
       struct vnode * vnode = vfs_find_node((const char *)path, &trail);
 
@@ -1851,7 +1852,8 @@ int main() {
 	
 	vfs_get_path(vnode, node_path);
 
-	strcat(node_path, trail);
+	if (trail)
+	  strcat(node_path, trail);
 
 	strcpy(msg->_u.unlinkat_msg.path, node_path);
 
@@ -1913,7 +1915,7 @@ int main() {
 	oldpath = &oldpath2[0];
       }
       
-      char * oldtrail;
+      char * oldtrail = NULL;
       
       struct vnode * oldvnode = vfs_find_node((const char *)oldpath, &oldtrail);
       
@@ -1936,7 +1938,7 @@ int main() {
 	newpath = &newpath2[0];
       }
       
-      char * newtrail;
+      char * newtrail = NULL;
       
       struct vnode * newvnode = vfs_find_node((const char *)newpath, &newtrail);
 
@@ -1957,11 +1959,13 @@ int main() {
 	
 	  vfs_get_path(oldvnode, node_path);
 
-	  strcat(node_path, oldtrail);
+	  if (oldtrail)
+	    strcat(node_path, oldtrail);
 
 	  strncpy(msg2->_u.renameat_msg.oldpath, node_path, 1024);
 
-	  strncpy(msg2->_u.renameat_msg.newpath, newtrail, 1024);
+	  if (newtrail)
+	    strncpy(msg2->_u.renameat_msg.newpath, newtrail, 1024);
 
 	  msg2->_u.renameat_msg.type = oldvnode->_u.dev.type;
 	  msg2->_u.renameat_msg.major = oldvnode->_u.dev.major;

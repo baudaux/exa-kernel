@@ -26,6 +26,8 @@
 
 #include "msg.h"
 
+#include "netcache.h"
+
 #ifndef DEBUG
 #define DEBUG 0
 #endif
@@ -68,8 +70,6 @@ struct fd_entry {
   unsigned short mode;
   unsigned int size;
   unsigned int offset;
-  char * data;
-  unsigned int data_size;
 };
 
 static unsigned short major;
@@ -96,8 +96,6 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].flags = flags;
       fds[i].mode = mode;
       fds[i].size = size;
-      fds[i].data = NULL;
-      fds[i].data_size = 0;
       fds[i].offset = 0;
 
       return last_fd;
@@ -221,21 +219,55 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return EBADF;
+    return -EBADF;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d %d %d %d", fd, count, fds[i].offset, fds[i].size);
-
-
+  emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d %d %d %d", fd, count, fds[i].offset, fds[i].size);
+  
   if (fds[i].offset >= fds[i].size) {
 
     return 0;
   }
-  
-  int size = do_fetch(fds[i].pathname, fds[i].offset, buf, count);
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes", size);
+  int size = netcache_read(fds[i].pathname, fds[i].offset, buf, count);
+
+  if (size < 0) {
+
+    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %s not cached", fds[i].pathname);
+
+    char * data = (char *)malloc(fds[i].size);
+
+    if (!data) {
+
+      return -ENOMEM;
+    }
+    
+    size = do_fetch(fds[i].pathname, 0, data, fds[i].size);
+
+    emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes fetched (/%d)", size, fds[i].size);
+
+    if (size != fds[i].size) {
+
+      free(data);
+      
+      return -EIO;
+    }
+
+    if (size >= 0) {
+      
+      netcache_write(fds[i].pathname, data, size);
+
+      int count2 = (count <= (size-fds[i].offset))?count:size-fds[i].offset;
+      
+      memmove(buf, data+fds[i].offset, count2);
+    }
+
+    if (size <= 0)
+      free(data);
+
+    size = (count <= (fds[i].size-fds[i].offset))?count:fds[i].size-fds[i].offset;    
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "netfs_read: %d bytes", size);
 
   if (size >= 0) {
 
@@ -244,7 +276,7 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
     return size;
   }
   
-  return ENOENT;
+  return -EIO;
 }
 
 static ssize_t netfs_write(int fd, const void * buf, size_t count) {
@@ -263,20 +295,9 @@ static int netfs_close(int fd) {
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return -1;
+    return EBADFD;
 
   fds[i].fd = -1;
-
-  if (fds[i].data) {
-
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: FREE fds[i].data=%x", fds[i].data);
-
-    free(fds[i].data);
-    
-    fds[i].data = NULL;
-    fds[i].data_size = 0;
-  }
   
   return 0;
 }
@@ -286,13 +307,25 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
 
-  char buf[1256];
+  int _errno = ENOENT;
 
+  _errno = netcache_get_stat(pathname, stat);
+
+  if (_errno != ENOTCACHED) {
+
+    emscripten_log(EM_LOG_CONSOLE, "netfs_stat: found in cache");
+    return _errno;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "netfs_stat: NOT found in cache");
+  
+  _errno = ENOENT;
+
+  char buf[1256];
+  
   sprintf(buf, "../query?stat=%s", pathname);
 
   int size = do_fetch(buf, 0, buf, 1256);
-  
-  int _errno = ENOENT;
   
   if (size > 0) {
 
@@ -329,6 +362,8 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
       ptr = strtok(NULL, delim);
     }
   }
+  
+  netcache_set_stat(pathname, stat, _errno);
 
   if (DEBUG)
     emscripten_log(EM_LOG_CONSOLE, "<-- netfs_stat: errno=%d", _errno);
@@ -368,145 +403,207 @@ struct __dirent {
     char d_name[1];
   };
 
-static ssize_t netfs_getdents(int fd, char * buf, ssize_t count) {
-
-  char buf2[2048];
+static ssize_t netfs_getdents(int fd, char * data_buf, ssize_t count) {
 
   int i = find_fd_entry(fd);
 
   if (i < 0)
     return -1;
 
-  if (!fds[i].data) {
-    
-    fds[i].data_size = 8192;
-    fds[i].data = (char *)malloc(fds[i].data_size+1);
+  int dents_size = 0;
+  int _errno = 0;
+  
+  char * dents = netcache_get_dents(fds[i].pathname, &dents_size, &_errno);
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fds[i].data=%x", fds[i].data);
+  if (_errno == ENOTCACHED) {
+
+    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: not cached");
+
+    char buf2[2048];
     
     sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
-  
-    fds[i].data_size = do_fetch(buf2, 0, fds[i].data, fds[i].data_size);
-    
-    fds[i].data[fds[i].data_size] = 0;
-    
-    fds[i].offset = 0;
-  }
 
-  if (fds[i].data_size < 0)
-    return -1;
-
-  if ( (fds[i].data_size == 0) || (fds[i].offset >= fds[i].data_size) )
-    return 0;
-  
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "netfs_getdents: fd=%d offset=%d count=%d data_size=%d", fd, fds[i].offset, count, fds[i].data_size);
-
-  char delim[] = "\n";
-
-  int len = 0;
-  
-  char * savePtr = fds[i].data+fds[i].offset;
-  
-  char * ptr = /*strtok(savePtr, delim);*/savePtr;
-  
-  while (ptr != NULL) {
-
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "**** len=%d ptr: %s", len, ptr);
-    
-    char * ptr2 = strchr(ptr, '=');
-
-    if (ptr2) {
+    int tmp_size = 8192;
+    char * tmp = (char *)malloc(tmp_size+1);
+    tmp_size = do_fetch(buf2, 0, tmp, tmp_size);
       
-      if (strncmp(ptr, "errno", 5) == 0) {
+    tmp[tmp_size] = 0;
 
-	int _errno = atoi(ptr2+1);
+    int buf_size = 8192;
+    char * buf = (char *)malloc(8192);
+    int buf_offset = 0;
+
+    emscripten_log(EM_LOG_CONSOLE, "**** tmp_size=%d tmp: %s", tmp_size, tmp);
+    
+    char * ptr = tmp;
+    
+    _errno = 0;
+  
+    while (ptr != NULL) {
+    
+	char * ptr2 = strchr(ptr, '=');
+
+	if (ptr2) {
+      
+	  if (strncmp(ptr, "errno", 5) == 0) {
+	    
+	    _errno = atoi(ptr2+1);
 	  
-	if (_errno)
-	  return _errno;
-      }
-    }
-    else {
+	    if (_errno) {
 
-      struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
-
-      ptr2 = strchr(ptr, ';');
-
-      if (ptr2) {
-
-	if ((len+sizeof(struct __dirent)+ptr2-ptr+1) < count) {  // there is space for this entry
-
-	  strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
-	  dirent_ptr->d_name[ptr2-ptr] = 0;
-
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", len, dirent_ptr->d_name);
-	  
-	  ptr = ptr2+1;
-	
-	  ptr2 = strchr(ptr, ';');
-
-	  char str_mode[8];
-
-	  strncpy(str_mode, ptr, ptr2-ptr);
-	  str_mode[ptr2-ptr] = 0;
-
-	  int mode = atoi(str_mode);
-
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "*** %d: mode=%s %d", len, str_mode, mode);
-
-	  if (S_ISDIR(mode)) {
-
-	    dirent_ptr->d_type = DT_DIR;
+	      netcache_set_dents(fds[i].pathname, NULL, 0, _errno);
+	      break;
+	    }
 	  }
-	  else if (S_ISREG(mode)) {
-
-	    dirent_ptr->d_type = DT_REG;
-	  }
-	  else {
-
-	    dirent_ptr->d_type = DT_REG;
-	  }
-	  
-	  dirent_ptr->d_reclen = sizeof(struct __dirent) + strlen(dirent_ptr->d_name);
-	  
-	  len += dirent_ptr->d_reclen;
-
-	  dirent_ptr->d_off = len;
 	}
 	else {
 
-	  //ptr[strlen(ptr)] = '\n';
+	  struct __dirent * dirent_ptr = (struct __dirent *)(buf+buf_offset);
+
+	  ptr2 = strchr(ptr, ';');
+
+	  if (ptr2) {
+
+	    if ((buf_offset+sizeof(struct __dirent)+ptr2-ptr+1) < buf_size) {  // there is space for this entry
+
+	      strncpy(dirent_ptr->d_name, ptr, ptr2-ptr);
+	      dirent_ptr->d_name[ptr2-ptr] = 0;
+	      
+	      emscripten_log(EM_LOG_CONSOLE, "*** %d: %s", buf_offset, dirent_ptr->d_name);
 	  
-	  break;
+	      ptr = ptr2+1;
+	
+	      ptr2 = strchr(ptr, ';');
+
+	      char str_mode[8];
+
+	      strncpy(str_mode, ptr, ptr2-ptr);
+	      str_mode[ptr2-ptr] = 0;
+
+	      int mode = atoi(str_mode);
+
+	      emscripten_log(EM_LOG_CONSOLE, "*** %d: mode=%s %d", buf_offset, str_mode, mode);
+
+	      if (S_ISDIR(mode)) {
+
+		dirent_ptr->d_type = DT_DIR;
+	      }
+	      else if (S_ISREG(mode)) {
+
+		dirent_ptr->d_type = DT_REG;
+	      }
+	      else {
+
+		dirent_ptr->d_type = DT_REG;
+	      }
+
+	      ptr = ptr2+1;
+	
+	      ptr2 = strchr(ptr, '\n');
+
+	      char str_size[16];
+
+	      strncpy(str_size, ptr, ptr2-ptr);
+	      str_size[ptr2-ptr] = 0;
+
+	      int size = atoi(str_size);
+	  
+	      dirent_ptr->d_reclen = sizeof(struct __dirent) + strlen(dirent_ptr->d_name);
+	  
+	      buf_offset += dirent_ptr->d_reclen;
+
+	      dirent_ptr->d_off = buf_offset;
+
+	      // add stat in cache for each entry
+
+	      struct stat stat_buf;
+	      char pathname[1024];
+
+	      strcpy(pathname, fds[i].pathname);
+
+	      int str_len = strlen(pathname);
+
+	      if ( (str_len > 1) && (pathname[str_len-1] == '.') && (pathname[str_len-2] == '/') ) {
+
+		pathname[str_len-1] = 0;
+	      }
+	      else if ( (str_len > 2) && (pathname[str_len-1] == '/') && (pathname[str_len-2] == '.') && (pathname[str_len-3] == '/') ) {
+
+		pathname[str_len-1] = 0;
+		pathname[str_len-2] = 0;
+	      }
+	      else if ( (str_len > 0) && (pathname[str_len-1] != '/') ) {
+
+		pathname[str_len] = '/';
+		pathname[str_len+1] = 0;
+	      }
+
+	      strcat(pathname, dirent_ptr->d_name);
+
+	      emscripten_log(EM_LOG_CONSOLE, "Add stat in cache for: %s", pathname);
+
+	      stat_buf.st_dev = makedev(major, fds[i].minor);
+	      stat_buf.st_ino = 1;
+	      stat_buf.st_mode = mode;
+	      stat_buf.st_size = size;
+
+	      netcache_set_stat(pathname, &stat_buf, 0);
+	    }
+	  }
+	  else {
+
+	    break;
+	  }
 	}
-      }
-    }
 
-    //if (DEBUG)
-    //  emscripten_log(EM_LOG_CONSOLE, "*** %d: strtok", len);
-
-    ptr = strchr(ptr, '\n');
+	ptr = strchr(ptr, '\n');
     
-    if (ptr)
-      ptr += 1;
-         
-    //ptr = strtok(NULL, delim);
-  }
-  
-  if (ptr) {
-    fds[i].offset = ptr-fds[i].data;
-  }
-  else {
-    fds[i].offset = fds[i].data_size;
+	if (ptr)
+	  ptr += 1;
     }
-  
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "*** len=%d offset=%d remains: %s", len, fds[i].offset, ptr);
+    if (_errno == 0) {
+      
+      netcache_set_dents(fds[i].pathname, buf, buf_offset, _errno);
+
+      dents = buf;
+      dents_size = buf_offset;
+    }
+    else {
+      
+      free(buf);
+    }
+
+    free(tmp);
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "*** _errno=%d dents_size=%d fds[i].offset=%d", _errno, dents_size, fds[i].offset);
+
+  if (_errno)
+    return -_errno;
+
+  if (!dents || fds[i].offset >= dents_size)
+    return 0;
+  
+  char * start = dents+fds[i].offset;
+  int len = 0;
+
+  while ((fds[i].offset+len) < dents_size) {
+
+    struct __dirent * dirent_ptr = (struct __dirent *)(start+len);
+
+    if ((len+dirent_ptr->d_reclen) > count)
+      break;
+
+    len += dirent_ptr->d_reclen;
+  }
+
+  if (len > 0) {
+    memmove(data_buf, start, len);
+    fds[i].offset += len;
+  }
+  
+  emscripten_log(EM_LOG_CONSOLE, "*** start=%d len=%d", start, len);
     
   return len;
 }
@@ -612,7 +709,6 @@ int main() {
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
     fds[i].fd = -1;
-    fds[i].data = NULL;
   }
 
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
@@ -652,6 +748,8 @@ int main() {
   strcpy((char *)&msg->_u.dev_msg.dev_name[0], "netfs");
   
   sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+
+  netcache_init();
 
   while (1) {
     
@@ -750,6 +848,8 @@ int main() {
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "netfs: READ (%d) from %d", READ, msg->pid);
 
+      //TODO: no malloc if buffer is large enough
+
       int reply_size = 12+sizeof(struct io_message)+msg->_u.io_msg.len;
 
       struct message * reply = (struct message *) malloc(reply_size);
@@ -778,7 +878,15 @@ int main() {
       if (dev) {
 	
 	reply->_u.io_msg.len = dev->read(msg->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
-	reply->_errno = 0;
+
+	if (reply->_u.io_msg.len >= 0) {
+	  reply->_errno = 0;
+	}
+	else {
+
+	  reply->_errno = -reply->_u.io_msg.len;
+	  reply->_u.io_msg.len = 0;
+	}
 
 	if (DEBUG)
 	  emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
