@@ -56,6 +56,7 @@
 #define RESMGR_PATH RESMGR_ROOT "/" RESMGR_FILE
 
 #define PIPE_PATH "/var/pipe.peer"
+#define IP_PATH "/var/ip.peer"
 
 #define NB_ITIMERS_MAX 64
 
@@ -351,31 +352,58 @@ int main() {
     }
     else if (msg->msg_id == SOCKET) {
 
-      msg->msg_id |= 0x80;
-      msg->_errno = 0;
+      emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
-
-      msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
-
-      // Add /proc/<pid>/fd/<fd> entry
-      process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
-
-      if (msg->_u.socket_msg.type & SOCK_CLOEXEC) {
-
-	// TODO
+      if ( (msg->_u.socket_msg.domain == AF_INET) || (msg->_u.socket_msg.domain == AF_INET6) ) {
+	
+	struct sockaddr_un ip_addr;
+	
+	memset(&ip_addr, 0, sizeof(ip_addr));
+	ip_addr.sun_family = AF_UNIX;
+	strcpy(ip_addr.sun_path, IP_PATH);
+	
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &ip_addr, sizeof(ip_addr));
       }
+      else {
 
-      if (msg->_u.socket_msg.type & SOCK_NONBLOCK) {
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
 
-	// TODO
+	msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
+
+	// Add /proc/<pid>/fd/<fd> entry
+	process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
+
+	if (msg->_u.socket_msg.type & SOCK_CLOEXEC) {
+
+	  // TODO
+	}
+
+	if (msg->_u.socket_msg.type & SOCK_NONBLOCK) {
+
+	  // TODO
+	}
+
+	if (DEBUG)
+	  emscripten_log(EM_LOG_CONSOLE, "SOCKET created %d", msg->_u.socket_msg.fd);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
+      
+    }
+    else if (msg->msg_id == (SOCKET|0x80)) {
 
-      if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "SOCKET created %d", msg->_u.socket_msg.fd);
+      if (msg->_errno == 0) {
 
-      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
+
+	// Add /proc/<pid>/fd/<fd> entry
+	process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
+      }
+      
+      // Forward response to process
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == BIND) {
 
@@ -514,7 +542,7 @@ int main() {
       }
     }
     else if (msg->msg_id == (OPEN|0x80)) {
-
+      
       if (DEBUG)
 	emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: errno=%d flags=%x mode=%x %s pid=%d remote_fd=%d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
 

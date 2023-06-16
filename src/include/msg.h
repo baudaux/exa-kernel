@@ -96,6 +96,10 @@ struct socket_message {
   int domain;
   int type;
   int protocol;
+  unsigned char dev_type;
+  unsigned short major;
+  unsigned short minor;
+  unsigned char peer[108];
 };
 
 struct bind_message {
