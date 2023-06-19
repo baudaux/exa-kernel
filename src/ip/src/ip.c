@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <errno.h>
 
-
 #include "msg.h"
 
 #ifndef DEBUG
@@ -56,36 +55,59 @@ EM_JS(int, do_connect_websocket, (), {
 
     console.log("Connecting to " + url);
 
-    let socket = new WebSocket(url);
+    Module.websocket = new WebSocket(url);
 
-    socket.onopen = function(e) {
+    Module.websocket.binaryType = "arraybuffer";
+
+    Module.websocket.onopen = function(e) {
       
       console.log("[open] Connection established");
       
-      socket.send("My name is John");
+      Module.websocket.send("Hello, exaequos !");
     };
 
-    socket.onmessage = function(event) {
+    Module.websocket.onmessage = function(event) {
 
-      console.log("[message] Data received from server: " + event.data);
-    };
+      console.log("[message] Data received from server:");
 
-    socket.onclose = function(event) {
+      let buf = new Uint8Array(event.data);
+
+      let msg = {
+		    
+        from: "websocket",
+	buf: buf,
+	len: buf.length
+      };
+
+      let sock = Module['fd_table'][Module.mySock];
+
+      sock.recv_queue.push(msg);
       
-      if (event.wasClean) {
+      if (sock.notif_select) {
+
+	sock.notif_select(sock.select_fd, sock.select_rw);
+      }
+      else if (sock.notif) {
+	
+	sock.notif();
+	}
+    };
+
+    Module.websocket.onclose = function(event) {
+      
+      /*if (event.wasClean) {
 	
 	console.log("[close] Connection closed cleanly, code="+event.code + " reason="+event.reason);
       } else {
-	// par exemple : processus serveur arrêté ou réseau en panne
-	// event.code est généralement 1006 dans ce cas
+	
 	console.log("[close] Connection died");
-      }
+	}*/
     };
   });
 
-EM_JS(int, do_send_websocket, (), {
+EM_JS(int, do_send_websocket, (char * buf, int len), {
 
-    //socket.send("My name is John");
+    Module.websocket.send(Module.HEAPU8.slice(buf, buf+len));
   });
 
 int main() {
@@ -97,14 +119,21 @@ int main() {
   char buf[1256];
   int fb_opened = 0;
   
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "Starting " IP_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " IP_VERSION "...");
   
   /* Create the server local socket */
   sock = socket (AF_UNIX, SOCK_DGRAM, 0);
   if (sock < 0) {
     return -1;
   }
+
+  emscripten_log(EM_LOG_CONSOLE, "Socket: %d", sock);
+
+  EM_ASM({
+
+      Module.mySock = $0;
+      
+    }, sock);
 
   /* Bind server socket to TTY_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
@@ -139,16 +168,17 @@ int main() {
 
       continue;
     }
+    
+    emscripten_log(EM_LOG_CONSOLE, "ip: recvfrom %d bytes (%d)", bytes_rec, buf[0]);
 
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
       if (msg->_errno)
 	continue;
-
+      
       major = msg->_u.dev_msg.major;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
       msg->msg_id = REGISTER_DEVICE;
 
@@ -174,14 +204,64 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "ip: SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);
 
+      do_send_websocket(msg, 12+16); //header + first part of seocket message
+    }
+    else if (msg->msg_id == (SOCKET|0x80)) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: Return of SOCKET -> fd=%d ", msg->_u.socket_msg.fd);
+      
+      msg->_u.socket_msg.remote_fd = msg->_u.socket_msg.fd;
+
       msg->_u.socket_msg.dev_type = CHR_DEV;
       msg->_u.socket_msg.major = major;
       msg->_u.socket_msg.minor = minor;
       strcpy((char *)msg->_u.socket_msg.peer, IP_PATH);
 
-      do_send_websocket();
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
-    
+    else if (msg->msg_id == BIND) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: BIND %d %d", msg->pid, msg->_u.bind_msg.fd);
+
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (BIND|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == SENDTO) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: SENDTO %d %d (%d bytes)", msg->pid, msg->_u.sendto_msg.fd, msg->_u.sendto_msg.len);
+
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (SENDTO|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == READ_SOCKET) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET %d %d (%d bytes)", msg->pid, msg->_u.readsocket_msg.fd, msg->_u.readsocket_msg.len);
+
+      
+    }
+    else if (msg->msg_id == SELECT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: SELECT from %d: %d %d %d", msg->pid, msg->_u.select_msg.fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop);
+
+      
   }
   
   return 0;

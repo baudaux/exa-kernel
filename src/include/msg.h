@@ -72,7 +72,10 @@ enum message_id {
   UNAME,
   FSYNC,
   UNLINKAT = 50,
-  RENAMEAT
+  RENAMEAT,
+  SENDTO,
+  READ_SOCKET,
+  RECVFROM,
 };
 
 enum dev_type {
@@ -96,6 +99,7 @@ struct socket_message {
   int domain;
   int type;
   int protocol;
+  int remote_fd;
   unsigned char dev_type;
   unsigned short major;
   unsigned short minor;
@@ -381,6 +385,36 @@ struct renameat_message {
   unsigned short minor;
 };
 
+struct sendto_message {
+
+  int fd;
+  int flags;
+  int addr_len;
+  char addr[128];
+  int len;
+  char message[];
+};
+
+struct readsocket_message {
+
+  int fd;
+  int addr_len;
+  char addr[128];
+  int len;
+  char message[];
+};
+
+struct recvfrom_message {
+  
+  int fd;
+  int flags;
+  unsigned long len;
+  int addr_len;
+  char addr[128];
+  
+  unsigned char buf[];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -431,7 +465,9 @@ struct message {
     struct fsync_message fsync_msg;
     struct unlinkat_message unlinkat_msg;
     struct renameat_message renameat_msg;
-    
+    struct sendto_message sendto_msg;
+    struct readsocket_message readsocket_msg;
+    struct recvfrom_message recvfrom_msg;
   } _u;
 };
 

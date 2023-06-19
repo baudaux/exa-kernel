@@ -395,7 +395,7 @@ int main() {
 
       if (msg->_errno == 0) {
 
-	msg->_u.socket_msg.fd = process_create_fd(msg->pid, -2, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
+	msg->_u.socket_msg.fd = process_create_fd(msg->pid, msg->_u.socket_msg.remote_fd, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
 
 	// Add /proc/<pid>/fd/<fd> entry
 	process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
