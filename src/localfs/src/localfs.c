@@ -120,8 +120,7 @@ static struct lfs_config lfs_config = {
 
 int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
+  emscripten_log(EM_LOG_CONSOLE,"localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
   
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
@@ -141,8 +140,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].lfs_handle = lfs_handle;
       fds[i].unlink_pending = 0;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
+      emscripten_log(EM_LOG_CONSOLE,"<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
 
       return last_fd;
     }
@@ -297,8 +295,7 @@ static int localfs_close(int fd) {
 
 static int localfs_stat(const char * pathname, struct stat * stat) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"localfs_stat: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"localfs_stat: %s", pathname);
   
   struct lfs_info info;
 
@@ -306,8 +303,7 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
 
   if (res == LFS_ERR_OK) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"localfs_stat -> %d %d %s", info.type, info.size, info.name);
+    emscripten_log(EM_LOG_CONSOLE,"localfs_stat -> %d %d %s", info.type, info.size, info.name);
   }
 
   if ((res == LFS_ERR_OK) && stat) {
@@ -331,16 +327,14 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
     }
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
+  emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
   
   return localfs_errno(res);
 }
 
 static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"localfs_open: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"localfs_open: %s", pathname);
 
   int _errno;
   struct stat stat;
@@ -377,8 +371,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
       if (flags & O_DIRECTORY)   // Error pathname is not a directory
 	return -ENOTDIR;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_file: %x %x", flags, lfs_flags);
+      emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_file: %x %x", flags, lfs_flags);
 
       lfs_handle = malloc(sizeof(lfs_file_t));
       
@@ -386,8 +379,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     }
     else if (stat.st_mode & S_IFDIR) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
+      emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
 
       lfs_handle = malloc(sizeof(lfs_dir_t));
 
@@ -410,8 +402,7 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     }
   }
 
-  if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"<-- localfs_open : errno=%d", _errno);
+  emscripten_log(EM_LOG_CONSOLE,"<-- localfs_open : errno=%d", _errno);
 
   return -_errno; // Negative value if error
   
@@ -544,8 +535,7 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "Starting " LOCALFS_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " LOCALFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -595,8 +585,7 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "*** localfs: %d", msg->msg_id);
+    emscripten_log(EM_LOG_CONSOLE, "*** localfs: %d", msg->msg_id);
     
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -605,27 +594,23 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
       int res = lfs_mount(&lfs, &lfs_config);
 
-      if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
+      emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
 
       if (res < 0) {
 
 	res = lfs_format(&lfs, &lfs_config);
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
+	emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
 
 	if (res == 0) {
 
 	  res = lfs_mount(&lfs, &lfs_config);
 	  
-	  if (DEBUG)
-	    emscripten_log(EM_LOG_CONSOLE, "second lfs_mount: res=%d", res);
+	  emscripten_log(EM_LOG_CONSOLE, "second lfs_mount: res=%d", res);
 	}
       }
 
@@ -649,8 +634,7 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
       unsigned short minor = msg->_u.dev_msg.minor;
 
@@ -665,8 +649,7 @@ int main() {
 
 	int res = lfs_mkdir(&lfs, "/home");
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "mkdir /home: res=%d", res);
+	emscripten_log(EM_LOG_CONSOLE, "mkdir /home: res=%d", res);
 
 	if (res == LFS_ERR_EXIST) {
 	  res = 0;
@@ -685,18 +668,15 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     else if (msg->msg_id == OPEN) {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname);
 
       int remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
 
       if (remote_fd >= 0) {
 
@@ -714,8 +694,7 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
       struct message * reply = (struct message *) malloc(12+sizeof(struct io_message)+msg->_u.io_msg.len);
 
@@ -744,13 +723,11 @@ int main() {
 	  reply->_u.io_msg.len = 0;
 	}
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "READ: errno=%d %d bytes", reply->_errno, reply->_u.io_msg.len);
+	emscripten_log(EM_LOG_CONSOLE, "READ: errno=%d %d bytes", reply->_errno, reply->_u.io_msg.len);
       }
       else {
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
 	reply->_errno = ENXIO;
       }
       
@@ -760,15 +737,13 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 = (char *)malloc(msg->_u.io_msg.len);
 
@@ -776,8 +751,7 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
       }
       
       struct device_ops * dev = NULL;
@@ -837,8 +811,7 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
       struct device_ops * dev = NULL;
 
@@ -860,8 +833,7 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -883,8 +855,7 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -902,8 +873,7 @@ int main() {
 
 	count = dev->getdents(msg->_u.getdents_msg.fd, (char *)(msg->_u.getdents_msg.buf), count);
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
+	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
 	  
@@ -928,8 +898,7 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 
@@ -978,8 +947,7 @@ int main() {
     }
     else if (msg->msg_id == FSTAT) {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
 
       struct stat stat_buf;
 
@@ -1013,8 +981,7 @@ int main() {
     }
     else if (msg->msg_id == FSYNC) {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "localfs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
       
       msg->_errno = 0;
       msg->msg_id |= 0x80;

@@ -401,7 +401,7 @@ struct readsocket_message {
   int addr_len;
   char addr[128];
   int len;
-  char message[];
+  char buf[];
 };
 
 struct recvfrom_message {

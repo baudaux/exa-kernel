@@ -39,8 +39,212 @@
 #define IP_PATH "/var/ip.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
+#define NB_QUEUES_MAX 64
+
+struct packet {
+
+  int addr_len;
+  char addr[128];
+  int len;
+  char * buf;
+  int offset;
+  struct packet * next;
+};
+
+struct queue {
+
+  int fd;
+  int flags;
+  int pending_read_select; // 0: none, 1: read, 2: select
+  int pending_process_fd;
+  int pending_pid;
+  int pending_len;
+  struct packet * first_packet;
+  struct packet * last_packet;
+};
+
 static int major = 0;
 static int minor = 0;
+
+static struct queue queues[NB_QUEUES_MAX];
+
+static void init_queues() {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    queues[i].fd = -1;
+  }
+}
+
+static int queue_alloc(int fd, int flags) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd < 0) {
+
+      queues[i].fd = fd;
+      queues[i].flags = flags;
+      queues[i].pending_read_select = 0;
+      queues[i].pending_pid = -1;
+      queues[i].pending_process_fd = -1;
+      queues[i].first_packet = NULL;
+      queues[i].last_packet = NULL;
+      
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+static int queue_add_packet(struct readsocket_message * msg) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == msg->fd) {
+
+      struct packet * packet = malloc(sizeof(struct packet));
+
+      packet->addr_len = msg->addr_len;
+      memmove(packet->addr, msg->addr, msg->addr_len);
+
+      packet->len = msg->len;
+      memmove(packet->buf, msg->buf, msg->len);
+
+      packet->offset = 0;
+      packet->next = NULL;
+      
+      if (queues[i].last_packet)
+	queues[i].last_packet->next = packet;
+
+      queues[i].last_packet = packet;
+
+      if (!queues[i].first_packet)
+	queues[i].first_packet = packet;
+
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+static int queue_not_empty(int fd) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+
+      return (queues[i].first_packet != NULL);
+    }
+  }
+
+  return 0;
+}
+
+static int queue_is_nonblock(int fd) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+
+      return (queues[i].flags & O_NONBLOCK);
+    }
+  }
+
+  return 0;
+}
+
+static int queue_set_pending(int fd, int read_select, int pid, int arg) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+      
+      queues[i].pending_read_select = read_select;
+      queues[i].pending_pid = pid;
+
+      if (read_select == 1) { // read
+
+	queues[i].pending_len = arg;
+      }
+      else { // select
+	
+	queues[i].pending_process_fd = arg;
+      }
+	
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+static int queue_pending(int fd, int * pid, int * arg) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+      
+      if (queues[i].pending_read_select) {
+
+	*pid = queues[i].pending_pid;
+
+	if (queues[i].pending_read_select == 1)
+	  *arg = queues[i].pending_len;
+	else
+	  *arg = queues[i].pending_process_fd;
+	
+	return queues[i].pending_read_select;
+      }
+      else {
+
+	return 0;
+      }
+	
+      return i;
+    }
+  }
+
+  return 0;
+}
+
+int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+
+      memmove(addr, queues[i].first_packet->addr, queues[i].first_packet->addr_len);
+      *addr_len = queues[i].first_packet->addr_len;
+
+      int read_len = ((queues[i].first_packet->len-queues[i].first_packet->offset)<=len)?queues[i].first_packet->len-queues[i].first_packet->offset:len;
+
+      memmove(buf, queues[i].first_packet->buf, read_len);
+
+      if (read_len < (queues[i].first_packet->len-queues[i].first_packet->offset)) {
+	queues[i].first_packet->offset += read_len;
+      }
+      else {
+
+	free(queues[i].first_packet->buf);
+
+	struct packet * p = queues[i].first_packet;
+
+	queues[i].first_packet = p->next;
+	
+	free(p);
+
+	if (queues[i].last_packet == p)
+	  queues[i].last_packet = NULL;
+      }
+
+      return read_len;
+    }
+  }
+
+  return -1;
+}
 
 EM_JS(int, do_connect_websocket, (), {
 
@@ -116,7 +320,7 @@ int main() {
   struct sockaddr_un local_addr, resmgr_addr, remote_addr, ioctl_addr;
   int bytes_rec;
   socklen_t len;
-  char buf[1256];
+  char buf[1500];
   int fb_opened = 0;
   
   emscripten_log(EM_LOG_CONSOLE, "Starting " IP_VERSION "...");
@@ -134,6 +338,8 @@ int main() {
       Module.mySock = $0;
       
     }, sock);
+
+  init_queues();
 
   /* Bind server socket to TTY_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
@@ -162,7 +368,7 @@ int main() {
 
   while (1) {
     
-    bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
+    bytes_rec = recvfrom(sock, buf, 1500, 0, (struct sockaddr *) &remote_addr, &len);
 
     if (bytes_rec <= 0) {
 
@@ -208,7 +414,17 @@ int main() {
     }
     else if (msg->msg_id == (SOCKET|0x80)) {
       
-      emscripten_log(EM_LOG_CONSOLE, "ip: Return of SOCKET -> fd=%d ", msg->_u.socket_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "ip: Return of SOCKET -> fd=%d type=%x", msg->_u.socket_msg.fd, msg->_u.socket_msg.type);
+
+      if (msg->_errno == 0) {
+
+	if (queue_alloc(msg->_u.socket_msg.fd, msg->_u.socket_msg.type) < 0) {
+
+	  emscripten_log(EM_LOG_CONSOLE, "ip: Cannot allocate queue for %d", msg->_u.socket_msg.fd);
+	  
+	  msg->_errno = ENOMEM;
+	}
+      }
       
       msg->_u.socket_msg.remote_fd = msg->_u.socket_msg.fd;
 
@@ -239,6 +455,11 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "ip: SENDTO %d %d (%d bytes)", msg->pid, msg->_u.sendto_msg.fd, msg->_u.sendto_msg.len);
 
+      /*for (int i=0; i < msg->_u.sendto_msg.addr_len; ++i) {
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: addr %d -> %d", i, msg->_u.sendto_msg.addr[i]);
+	}*/
+
       do_send_websocket(msg, bytes_rec);
     }
     else if (msg->msg_id == (SENDTO|0x80)) {
@@ -255,13 +476,147 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET %d %d (%d bytes)", msg->pid, msg->_u.readsocket_msg.fd, msg->_u.readsocket_msg.len);
 
+      queue_add_packet(&msg->_u.readsocket_msg);
+
+      int pid, arg;
+
+      int read_select = queue_pending(msg->_u.readsocket_msg.fd, &pid, &arg);
+      queue_set_pending(msg->_u.readsocket_msg.fd, 0, 0, 0);
       
+      if (read_select == 1) { // read pending
+
+	int len = arg; // len bytes to read
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> read pending !!!!! %d bytes", len);
+
+	int buf2_size = 12+sizeof(struct recvfrom_message)+len;
+	
+	char * buf2 = malloc(buf2_size);
+	struct message * msg2 = (struct message *)&buf2[0];
+
+	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.readsocket_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, len);
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d --> %d bytes read", pid, msg2->_u.recvfrom_msg.len);
+
+	msg2->msg_id = RECVFROM|0x80;
+	msg2->pid = pid;
+	msg2->_errno = 0;
+	
+	msg2->_u.recvfrom_msg.fd = msg->_u.readsocket_msg.fd;
+
+	struct sockaddr_un s_addr;
+	
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sun_family = AF_UNIX;
+	sprintf(s_addr.sun_path, "channel.process.%d", pid);
+
+	sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+
+	free(buf2);
+      }
+      else if (read_select == 2) { // select pending
+
+	int process_fd = arg;
+	
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> select pending !!!!! %d %d", pid, process_fd);
+
+	msg->msg_id = SELECT|0x80;
+	msg->pid = pid;
+	msg->_errno = 0;
+
+	msg->_u.select_msg.fd = process_fd;
+	msg->_u.select_msg.remote_fd = msg->_u.readsocket_msg.fd;
+	msg->_u.select_msg.read_write = 0;
+	msg->_u.select_msg.start_stop = 1;
+
+	struct sockaddr_un s_addr;
+	
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sun_family = AF_UNIX;
+	sprintf(s_addr.sun_path, "channel.process.%d", pid);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+      }
     }
     else if (msg->msg_id == SELECT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "ip: SELECT from %d: %d %d %d", msg->pid, msg->_u.select_msg.fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop);
+      emscripten_log(EM_LOG_CONSOLE, "ip: SELECT from %d: %d %d %d", msg->pid, msg->_u.select_msg.remote_fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop);
 
+      if (msg->_u.select_msg.read_write == 0) { // read
+
+	if (msg->_u.select_msg.start_stop) { //start
+
+	  if (queue_not_empty(msg->_u.select_msg.remote_fd)) {
+
+	    emscripten_log(EM_LOG_CONSOLE, "ip: SELECT --> queue not empty !!!!!");
+	    
+	    queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0);
+
+	    msg->msg_id |= 0x80;
+
+	    msg->_errno = 0;
+	    sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	  }
+	  else { // set select pending
+
+	    queue_set_pending(msg->_u.select_msg.remote_fd, 2, msg->pid, msg->_u.select_msg.fd);
+	  }
+	}
+	else { // stop
+
+	  queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0);
+	}
+      }
+      else { // write
+
+	if (msg->_u.select_msg.start_stop) { // start
+
+	  msg->msg_id |= 0x80;
+
+	  msg->_errno = 0;
+	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}
+      }
+    }
+    else if (msg->msg_id == RECVFROM) {
       
+      emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d: %d %d", msg->pid, msg->_u.recvfrom_msg.fd, msg->_u.recvfrom_msg.len);
+
+      if (queue_not_empty(msg->_u.recvfrom_msg.fd)) {
+
+	int buf2_size = 12+sizeof(struct recvfrom_message)+msg->_u.recvfrom_msg.len;
+	char * buf2 = malloc(buf2_size);
+	struct message * msg2 = (struct message *)&buf2[0];
+
+	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.recvfrom_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, msg->_u.recvfrom_msg.len);
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d --> %d bytes read", msg->pid, msg2->_u.recvfrom_msg.len);
+
+	msg2->msg_id = RECVFROM|0x80;
+	msg2->pid = msg->pid;
+	msg2->_errno = 0;
+	
+	msg2->_u.recvfrom_msg.fd = msg->_u.recvfrom_msg.fd;
+
+	sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+	free(buf2);
+      }
+      else if (queue_is_nonblock(msg->_u.recvfrom_msg.fd)) {
+
+	msg->msg_id |= 0x80;
+
+	msg->_errno = 0;
+
+	msg->_u.recvfrom_msg.len = 0; // no data in queue
+	
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else { // set read pending
+
+	queue_set_pending(msg->_u.recvfrom_msg.fd, 1, msg->pid, msg->_u.recvfrom_msg.len);
+      }
+    }
   }
   
   return 0;

@@ -482,8 +482,7 @@ struct vnode * vfs_create_file(const char * pathname) {
 
 void vfs_dump_node(struct vnode * vnode, int indent) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "%*s * %s (%d)", (2*indent), "", vnode->name, vnode->type);
+  emscripten_log(EM_LOG_CONSOLE, "%*s * %s (%d)", (2*indent), "", vnode->name, vnode->type);
 
   if (vnode->type == VDIR) {
     struct vnode * link = vnode->_u.link.vnode;
@@ -513,8 +512,7 @@ int get_fd_entry(int fd) {
 
 int add_fd_entry(int fd, pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, unsigned int size, struct vnode * vnode) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "add_fd_entry: fd=%d pid=%d pathname=%s vnode=%x", fd, pid, pathname, vnode);
+  emscripten_log(EM_LOG_CONSOLE, "add_fd_entry: fd=%d pid=%d pathname=%s vnode=%x", fd, pid, pathname, vnode);
 
   int i = 1;
   
@@ -548,15 +546,13 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
   
   struct vnode * vnode = vfs_find_node(pathname, &trail);
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x", pathname, flags, mode);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x", pathname, flags, mode);
 
   if (vnode) {
 
     if ( (vnode->type == VDEV) || (vnode->type == VMOUNT) ) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "vfs_open: type=%d trail=%x", vnode->type, trail);
+      emscripten_log(EM_LOG_CONSOLE, "vfs_open: type=%d trail=%x", vnode->type, trail);
 
       remote_fd = 0;
       fds[remote_fd].vnode = vnode;
@@ -577,15 +573,13 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
   }
   else if (flags & O_CREAT) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_open: create file");
+    emscripten_log(EM_LOG_CONSOLE, "vfs_open: create file");
 
     struct vnode * vfile = vfs_create_file(pathname);
     
     if (vfile) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "vfs_open: file created");
+      emscripten_log(EM_LOG_CONSOLE, "vfs_open: file created");
 
       ++last_fd;
 
@@ -649,8 +643,7 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
   
   struct vnode * vnode = fds[i].vnode;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d off=%d", fd, len, fds[i].offset);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_read: %d %d off=%d", fd, len, fds[i].offset);
 
   if (vnode && (vnode->type == VFILE)) {
 
@@ -684,22 +677,18 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
   
   struct vnode * vnode = fds[i].vnode;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[i].offset);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[i].offset);
 
   for (int i=0; i < len; ++i) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
+    emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode = %x", vnode);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode = %x", vnode);
 
   if (vnode && (vnode->type == VFILE)) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode is VFILE");
+    emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode is VFILE");
 
     int min_size = fds[i].offset+len;
 
@@ -731,16 +720,14 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
       if (vnode->_u.file.file_size < fds[i].offset)
 	vnode->_u.file.file_size = fds[i].offset;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d bytes written", len);
+      emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d bytes written", len);
 
       return len;
     }
   }
   else if (vnode) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode %s is of type %d", vnode->name, vnode->type);
+    emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode %s is of type %d", vnode->name, vnode->type);
   }
   
   return -1;
@@ -748,8 +735,7 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
 ssize_t vfs_getdents(int fd, void * buf, size_t len) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_getdents: sizeof off_t=%d", sizeof(off_t));
+  emscripten_log(EM_LOG_CONSOLE, "vfs_getdents: sizeof off_t=%d", sizeof(off_t));
   
   int i = get_fd_entry(fd);
 
@@ -845,21 +831,18 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
 
 int vfs_ioctl(int fd, int op) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: %d %d", fd, op);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: %d %d", fd, op);
 
   struct vnode * vnode = vfs_get_vnode(fd);
 
   if (vnode) {
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd found");
+    emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd found");
 
     return 0;
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd not found");
+  emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd not found");
 
   return -1;
 }
@@ -1041,8 +1024,7 @@ int vfs_seek(int fd, int offset, int whence) {
       break;
     }
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "vfs_seek: offset=%d", fds[i].offset);
+    emscripten_log(EM_LOG_CONSOLE, "vfs_seek: offset=%d", fds[i].offset);
 
     return fds[i].offset;
   }
@@ -1062,8 +1044,7 @@ int vfs_unlink(struct vnode * vnode) {
 
     if ( (fds[i].fd >= 0) && (fds[i].vnode == vnode) ) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
+      emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
 
       fds[i].unlink_pending = 1;
       unlink_pending_set = 1;

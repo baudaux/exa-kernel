@@ -119,22 +119,19 @@ pid_t create_tty_process() {
   
   if (pid == -1) { // Error
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"Error while creating tty process ...");
+    emscripten_log(EM_LOG_CONSOLE,"Error while creating tty process ...");
     
     return -1;
     
   } else if (pid == 0) { // Child process
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"starting tty process...");
+    emscripten_log(EM_LOG_CONSOLE,"starting tty process...");
 
     execl ("/bin/tty", "/bin/tty", (void*)0);
     
   } else { // Parent process
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"tty process created: %d",pid);
+    emscripten_log(EM_LOG_CONSOLE,"tty process created: %d",pid);
 
     return pid;
   }
@@ -150,22 +147,19 @@ pid_t create_netfs_process() {
   
   if (pid == -1) { // Error
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"Error while creating netfs process ...");
+    emscripten_log(EM_LOG_CONSOLE,"Error while creating netfs process ...");
     
     return -1;
     
   } else if (pid == 0) { // Child process
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"starting netfs process...");
+    emscripten_log(EM_LOG_CONSOLE,"starting netfs process...");
 
     execl ("/bin/netfs", "/bin/netfs", (void*)0);
     
   } else { // Parent process
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"netfs process created: %d",pid);
+    emscripten_log(EM_LOG_CONSOLE,"netfs process created: %d",pid);
 
     return pid;
   }
@@ -181,22 +175,19 @@ pid_t create_pipe_process() {
   
   if (pid == -1) { // Error
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"Error while creating pipe process ...");
+    emscripten_log(EM_LOG_CONSOLE,"Error while creating pipe process ...");
     
     return -1;
     
   } else if (pid == 0) { // Child process
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"starting pipe process...");
+    emscripten_log(EM_LOG_CONSOLE,"starting pipe process...");
 
     execl ("/bin/pipe", "/bin/pipe", (void*)0);
     
   } else { // Parent process
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"pipe process created: %d",pid);
+    emscripten_log(EM_LOG_CONSOLE,"pipe process created: %d",pid);
 
     return pid;
   }
@@ -212,22 +203,19 @@ pid_t create_init_process() {
   
   if (pid == -1) { // Error
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"Error while creating init process ...");
+    emscripten_log(EM_LOG_CONSOLE,"Error while creating init process ...");
     
     return -1;
     
   } else if (pid == 0) { // Child process
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"starting init process...");
+    emscripten_log(EM_LOG_CONSOLE,"starting init process...");
 
     execl ("/bin/sysvinit", "/bin/sysvinit", "--init", (void*)0);
     
   } else { // Parent process
     
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "init process created: %d", pid);
+    emscripten_log(EM_LOG_CONSOLE, "init process created: %d", pid);
 
     return pid;
   }
@@ -237,8 +225,7 @@ pid_t create_init_process() {
 
 pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"process_fork: %d %d", pid, ppid);
+  emscripten_log(EM_LOG_CONSOLE,"process_fork: %d %d", pid, ppid);
   
   if (pid < 0)
     pid = nb_processes;
@@ -257,8 +244,7 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 
   if (ppid >= 0) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"(2) process_fork: %d %d %d %d", pid, ppid, processes[ppid].pgid, processes[ppid].sid);
+    emscripten_log(EM_LOG_CONSOLE,"(2) process_fork: %d %d %d %d", pid, ppid, processes[ppid].pgid, processes[ppid].sid);
 
     processes[pid].pgid =  processes[ppid].pgid;
     processes[pid].sid =  processes[ppid].sid;
@@ -339,13 +325,11 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 
 void dump_processes() {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"**** processes ****");
+  emscripten_log(EM_LOG_CONSOLE,"**** processes ****");
 
   for (int i = 0; i < nb_processes; ++i) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "* %d %d %d %d %s %d", processes[i].pid, processes[i].ppid, processes[i].pgid, processes[i].sid, processes[i].name, processes[i].proc_state);
+    emscripten_log(EM_LOG_CONSOLE, "* %d %d %d %d %s %d", processes[i].pid, processes[i].ppid, processes[i].pgid, processes[i].sid, processes[i].name, processes[i].proc_state);
   }
 }
 
@@ -387,8 +371,7 @@ int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned sho
   processes[pid].fds[i].fs_flags = flags;
   processes[pid].fds[i].fd_flags = (flags & O_CLOEXEC)?FD_CLOEXEC:0;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"process_create_fd: %d, %d, %d", pid, remote_fd, fd);
+  emscripten_log(EM_LOG_CONSOLE,"process_create_fd: %d, %d, %d", pid, remote_fd, fd);
 
   return fd;
 }
@@ -403,15 +386,13 @@ int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * maj
       *major = processes[pid].fds[i].major;
       *remote_fd = processes[pid].fds[i].remote_fd;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d, %d (%d)", pid, *remote_fd, fd, i);
+      emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d, %d (%d)", pid, *remote_fd, fd, i);
 
       return 0;
     }
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d not found", pid, fd);
+  emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d not found", pid, fd);
 
   return -1;
 }
@@ -426,15 +407,13 @@ int process_close_fd(pid_t pid, int fd) {
       
       processes[pid].fd_map[fd/8] &= ~(1 << (fd%8));
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"process_close_fd: %d, %d (%i)", pid, fd, i);
+      emscripten_log(EM_LOG_CONSOLE,"process_close_fd: %d, %d (%i)", pid, fd, i);
       
       return 0;
     }
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"process_close_fd: %d, %d not found", pid, fd);
+  emscripten_log(EM_LOG_CONSOLE,"process_close_fd: %d, %d not found", pid, fd);
 
   return -1;
 }
@@ -508,8 +487,7 @@ pid_t process_setsid(pid_t pid) {
 
   if (!process_group_exists(pid)) { // process is not process group leader
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"process_setsid: successful -> %d", pid);
+    emscripten_log(EM_LOG_CONSOLE,"process_setsid: successful -> %d", pid);
      
     processes[pid].pgid = pid;
     processes[pid].sid = pid;
@@ -658,8 +636,7 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
 
 	// TODO: add other conditions (group)
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "process_wait: found child pid %d", i);
+	emscripten_log(EM_LOG_CONSOLE, "process_wait: found child pid %d", i);
 	
 	*status = processes[i].status;
 
@@ -689,8 +666,7 @@ pid_t process_exit(pid_t pid, int status) {
 
     // TODO: add other conditions (group)
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "process_exit: found parent pid %d", ppid);
+    emscripten_log(EM_LOG_CONSOLE, "process_exit: found parent pid %d", ppid);
     
     process_terminate(pid);
       

@@ -69,8 +69,7 @@ unsigned long get_pending_job(struct job * jobs, pid_t pid, char ** buf, int * s
 
 unsigned long get_pending_job_by_type(struct job * jobs, unsigned long job, unsigned long mask, char ** buf, int * size, struct sockaddr_un ** addr) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "jobs: get_pending_job_by_type: find job=%lu mask=%lu", job, mask);
+  emscripten_log(EM_LOG_CONSOLE, "jobs: get_pending_job_by_type: find job=%lu mask=%lu", job, mask);
 
   for (; jobs->type != LAST_JOB; ++jobs) {
 
@@ -89,8 +88,7 @@ unsigned long get_pending_job_by_type(struct job * jobs, unsigned long job, unsi
 
 unsigned long add_pending_job(struct job * jobs, unsigned long job, pid_t pid, char * buf, size_t size, struct sockaddr_un * addr) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "jobs: add_pending_job: job=%d pid=%d", job, pid);
+  emscripten_log(EM_LOG_CONSOLE, "jobs: add_pending_job: job=%d pid=%d", job, pid);
 
   for (; jobs->type != LAST_JOB; ++jobs) {
 
@@ -126,15 +124,13 @@ unsigned long add_pending_job(struct job * jobs, unsigned long job, pid_t pid, c
 
 unsigned long continue_pending_job(struct job * jobs, pid_t pid, int sock) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "jobs: continue_pending_job");
+  emscripten_log(EM_LOG_CONSOLE, "jobs: continue_pending_job");
 
   for (; jobs->type != LAST_JOB; ++jobs) {
 
     if ( (jobs->type != NO_JOB) && (jobs->pid == pid) ) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "jobs: continue_pending_job !!!: job=%d pid=%d", jobs->type, pid);
+      emscripten_log(EM_LOG_CONSOLE, "jobs: continue_pending_job !!!: job=%d pid=%d", jobs->type, pid);
 
       sendto(sock, jobs->buf, jobs->size, 0, (struct sockaddr *) &(jobs->addr), sizeof(jobs->addr));
       
@@ -150,8 +146,7 @@ unsigned long continue_pending_job(struct job * jobs, pid_t pid, int sock) {
 
 unsigned long del_pending_job(struct job * jobs, unsigned long job, pid_t pid) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "jobs: del_pending_job");
+  emscripten_log(EM_LOG_CONSOLE, "jobs: del_pending_job");
   
   for (; jobs->type != LAST_JOB; ++jobs) {
 

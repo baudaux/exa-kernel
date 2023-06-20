@@ -273,8 +273,7 @@ static void local_tty_start_timer(int fd) {
 
 static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigned short minor, pid_t pid, pid_t sid) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d", last_fd);
+  emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d", last_fd);
 
   ++last_fd;
 
@@ -287,8 +286,7 @@ static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigne
 
 static ssize_t local_tty_read(int fd, void * buf, size_t len) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "local_tty_read: len=%d", len);
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_read: len=%d", len);
   
   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
   
@@ -389,8 +387,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
   unsigned char * data = (unsigned char *)buf;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
 
   for (int i = 0; i < count; ++i) {
 
@@ -411,8 +408,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
 static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_t pid, pid_t sid, pid_t pgid) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: fd=%d op=%d", fd, op);
+  emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: fd=%d op=%d", fd, op);
   
   switch(op) {
 
@@ -513,8 +509,7 @@ static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct messag
 
   unsigned char echo_buf[1024];
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
   int j = 0;
 
@@ -730,8 +725,7 @@ static void del_read_select_pending_request(pid_t pid, int remote_fd, int fd, st
 
 static int local_tty_select(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, struct sockaddr_un * sock_addr) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "local_tty_select");
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_select");
 
   struct device_desc * dev = get_device_from_fd(remote_fd);
 
@@ -796,8 +790,7 @@ int main() {
   char ioctl_buf[1256];
   
   // Use console.log as tty is not yet started
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "Starting " TTY_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " TTY_VERSION "...");
   
   /* Create the server local socket */
   sock = socket (AF_UNIX, SOCK_DGRAM, 0);
@@ -879,15 +872,13 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
       // Probe terminal
       probe_terminal();
     }
     else if (msg->msg_id == (PROBE_TTY|0x80)) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "PROBE_TTY successful: rows=%d cols=%d",msg->_u.probe_tty_msg.rows, msg->_u.probe_tty_msg.cols);
+      emscripten_log(EM_LOG_CONSOLE, "PROBE_TTY successful: rows=%d cols=%d",msg->_u.probe_tty_msg.rows, msg->_u.probe_tty_msg.cols);
 
       minor += 1;
       
@@ -956,8 +947,7 @@ int main() {
 
       if (msg->_u.open_msg.minor == 0) { // /dev/tty
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session = %d", msg->_u.open_msg.sid);
+	emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session = %d", msg->_u.open_msg.sid);
 
 	unsigned short min;
 	
@@ -975,8 +965,7 @@ int main() {
 	  continue;
 	}
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session -> min=%d", min);
+	emscripten_log(EM_LOG_CONSOLE, "tty: OPEN /dev/tty from session -> min=%d", min);
 
 	msg->_u.open_msg.minor = min;
       }
@@ -1023,15 +1012,13 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "tty: WRITE from %d, length=%d", msg->pid, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "tty: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 =(char *)malloc(msg->_u.io_msg.len);
 
@@ -1039,8 +1026,7 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "tty: WRITE %d read", bytes_rec2);
+	emscripten_log(EM_LOG_CONSOLE, "tty: WRITE %d read", bytes_rec2);
       }
 
       struct device_desc * dev;

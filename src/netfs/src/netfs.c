@@ -304,8 +304,7 @@ static int netfs_close(int fd) {
 
 static int netfs_stat(const char * pathname, struct stat * stat) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
 
   int _errno = ENOENT;
 
@@ -329,8 +328,7 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
   
   if (size > 0) {
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE, "netfs_stat result\n%s", buf);
+    emscripten_log(EM_LOG_CONSOLE, "netfs_stat result\n%s", buf);
 
     char delim[] = "\n";
 
@@ -351,8 +349,7 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
 
 	stat->st_mode = atoi(ptr2+1);
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "netfs_stat mode=%d %d %d", stat->st_mode, S_ISDIR(stat->st_mode), S_ISREG(stat->st_mode));
+	emscripten_log(EM_LOG_CONSOLE, "netfs_stat mode=%d %d %d", stat->st_mode, S_ISDIR(stat->st_mode), S_ISREG(stat->st_mode));
       }
       else if (strncmp(ptr, "size", 4) == 0) {
 
@@ -365,16 +362,14 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
   
   netcache_set_stat(pathname, stat, _errno);
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "<-- netfs_stat: errno=%d", _errno);
+  emscripten_log(EM_LOG_CONSOLE, "<-- netfs_stat: errno=%d", _errno);
 
   return _errno;
 }
 
 static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"netfs_open: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"netfs_open: %s", pathname);
 
   int _errno;
   struct stat stat;
@@ -383,14 +378,12 @@ static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, 
     
     int remote_fd =  add_fd_entry(pid, minor, pathname, flags, mode, stat.st_size);
 
-    if (DEBUG)
-      emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: remote_fd=%d", remote_fd);
+    emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: remote_fd=%d", remote_fd);
 
     return remote_fd;
   }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: errno=%d", _errno);
+  emscripten_log(EM_LOG_CONSOLE,"<-- netfs_open: errno=%d", _errno);
 
   return -_errno; // Return the negative value
 }
@@ -615,8 +608,7 @@ static int netfs_seek(int fd, int offset, int whence) {
   if (i < 0)
     return -EBADF;
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"netfs_seek: %d %d %d %d", fd, offset, whence, fds[i].offset);
+  emscripten_log(EM_LOG_CONSOLE,"netfs_seek: %d %d %d %d", fd, offset, whence, fds[i].offset);
 
   switch(whence) {
 
@@ -643,8 +635,7 @@ static int netfs_seek(int fd, int offset, int whence) {
       break;
     }
 
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE,"netfs_seek -> %d", fds[i].offset);
+  emscripten_log(EM_LOG_CONSOLE,"netfs_seek -> %d", fds[i].offset);
 
   return fds[i].offset;
 }
@@ -703,8 +694,7 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "Starting " NETFS_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " NETFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -764,8 +754,7 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
+      emscripten_log(EM_LOG_CONSOLE,"REGISTER_DRIVER successful: major=%d", major);
 
       minor += 1;
 	
@@ -784,8 +773,7 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
       unsigned short minor = msg->_u.dev_msg.minor;
 
@@ -845,8 +833,7 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "netfs: READ (%d) from %d", READ, msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: READ (%d) from %d", READ, msg->pid);
 
       //TODO: no malloc if buffer is large enough
 
@@ -888,13 +875,11 @@ int main() {
 	  reply->_u.io_msg.len = 0;
 	}
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
+	emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
       }
       else {
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
 	
 	reply->_errno = ENXIO;
       }
@@ -913,8 +898,7 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "netfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
       struct device_ops * dev = NULL;
 
@@ -936,8 +920,7 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "netfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -963,8 +946,7 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -992,8 +974,7 @@ int main() {
 
 	  if (!buf2) {
 
-	    if (DEBUG)
-	      emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: no mem", msg->pid);
+	    emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: no mem", msg->pid);
 	  }
 	  else {
 	  
@@ -1009,8 +990,7 @@ int main() {
 	  
 	}
 
-	if (DEBUG)
-	  emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
+	emscripten_log(EM_LOG_CONSOLE, "GETDENTS from %d: --> count=%d", msg->pid, count);
 
 	if (count >= 0) {
 	  
@@ -1038,8 +1018,7 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "netfs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "netfs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 

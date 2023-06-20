@@ -59,8 +59,7 @@ int main() {
   char buf[1256];
   int fb_opened = 0;
   
-  if (DEBUG)
-    emscripten_log(EM_LOG_CONSOLE, "Starting " FB_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " FB_VERSION "...");
   
   /* Create the server local socket */
   sock = socket (AF_UNIX, SOCK_DGRAM, 0);
@@ -111,8 +110,7 @@ int main() {
 
       major = msg->_u.dev_msg.major;
 
-      if (DEBUG)
-	emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
       msg->msg_id = REGISTER_DEVICE;
 
