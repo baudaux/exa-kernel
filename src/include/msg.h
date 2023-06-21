@@ -76,6 +76,7 @@ enum message_id {
   SENDTO,
   READ_SOCKET,
   RECVFROM,
+  CONNECT = 55,
 };
 
 enum dev_type {
@@ -390,7 +391,7 @@ struct sendto_message {
   int fd;
   int flags;
   int addr_len;
-  char addr[128];
+  char addr[40];
   int len;
   char message[];
 };
@@ -399,7 +400,7 @@ struct readsocket_message {
 
   int fd;
   int addr_len;
-  char addr[128];
+  char addr[40];
   int len;
   char buf[];
 };
@@ -410,9 +411,16 @@ struct recvfrom_message {
   int flags;
   unsigned long len;
   int addr_len;
-  char addr[128];
+  char addr[40];
   
   unsigned char buf[];
+};
+
+struct connect_message {
+  
+  int fd;
+  int addr_len;
+  char addr[40];
 };
 
 struct message {
@@ -468,6 +476,7 @@ struct message {
     struct sendto_message sendto_msg;
     struct readsocket_message readsocket_msg;
     struct recvfrom_message recvfrom_msg;
+    struct connect_message connect_msg;
   } _u;
 };
 

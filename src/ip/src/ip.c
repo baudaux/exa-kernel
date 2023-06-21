@@ -55,7 +55,7 @@ struct queue {
 
   int fd;
   int flags;
-  int pending_read_select; // 0: none, 1: read, 2: select
+  int pending_read_select; // 0: none, 1: recv, 2: select, 3: read
   int pending_process_fd;
   int pending_pid;
   int pending_len;
@@ -106,10 +106,14 @@ static int queue_add_packet(struct readsocket_message * msg) {
       struct packet * packet = malloc(sizeof(struct packet));
 
       packet->addr_len = msg->addr_len;
-      memmove(packet->addr, msg->addr, msg->addr_len);
 
+      if (msg->addr_len > 0)
+	memmove(packet->addr, msg->addr, msg->addr_len);
+      
       packet->len = msg->len;
-      memmove(packet->buf, msg->buf, msg->len);
+
+      if (msg->len > 0)
+	memmove(packet->buf, msg->buf, msg->len);
 
       packet->offset = 0;
       packet->next = NULL;
@@ -164,7 +168,7 @@ static int queue_set_pending(int fd, int read_select, int pid, int arg) {
       queues[i].pending_read_select = read_select;
       queues[i].pending_pid = pid;
 
-      if (read_select == 1) { // read
+      if ( (read_select == 1) || (read_select == 3) ){ // recv/read
 
 	queues[i].pending_len = arg;
       }
@@ -190,7 +194,7 @@ static int queue_pending(int fd, int * pid, int * arg) {
 
 	*pid = queues[i].pending_pid;
 
-	if (queues[i].pending_read_select == 1)
+	if ( (queues[i].pending_read_select == 1) || (queues[i].pending_read_select == 3) )
 	  *arg = queues[i].pending_len;
 	else
 	  *arg = queues[i].pending_process_fd;
@@ -215,12 +219,15 @@ int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
 
     if (queues[i].fd == fd) {
 
-      memmove(addr, queues[i].first_packet->addr, queues[i].first_packet->addr_len);
-      *addr_len = queues[i].first_packet->addr_len;
+      if (addr && (queues[i].first_packet->addr_len > 0))
+	memmove(addr, queues[i].first_packet->addr, queues[i].first_packet->addr_len);
+      if (addr_len)
+	*addr_len = queues[i].first_packet->addr_len;
 
       int read_len = ((queues[i].first_packet->len-queues[i].first_packet->offset)<=len)?queues[i].first_packet->len-queues[i].first_packet->offset:len;
-
-      memmove(buf, queues[i].first_packet->buf, read_len);
+      
+      if (buf && (read_len > 0))
+	memmove(buf, queues[i].first_packet->buf, read_len);
 
       if (read_len < (queues[i].first_packet->len-queues[i].first_packet->offset)) {
 	queues[i].first_packet->offset += read_len;
@@ -272,9 +279,9 @@ EM_JS(int, do_connect_websocket, (), {
 
     Module.websocket.onmessage = function(event) {
 
-      console.log("[message] Data received from server:");
-
       let buf = new Uint8Array(event.data);
+
+      console.log("[message] Data received from server: "+buf.length+" bytes");
 
       let msg = {
 		    
@@ -460,7 +467,21 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "ip: addr %d -> %d", i, msg->_u.sendto_msg.addr[i]);
 	}*/
 
-      do_send_websocket(msg, bytes_rec);
+      struct message * msg2 = msg;
+
+      if (msg->_u.sendto_msg.len > (bytes_rec - 68)) {
+
+	msg2 = (struct message *)malloc(68+msg->_u.sendto_msg.len);
+
+	memcpy(msg2, msg, bytes_rec);
+
+	int bytes_rec2 = recvfrom(sock, msg2->_u.sendto_msg.message+bytes_rec, msg->_u.sendto_msg.len - (bytes_rec - 68), 0, (struct sockaddr *) &remote_addr, &len);
+      }
+
+      do_send_websocket(msg2, bytes_rec);
+
+      if (msg2 != msg)
+	free(msg2);
     }
     else if (msg->msg_id == (SENDTO|0x80)) {
 
@@ -476,18 +497,37 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET %d %d (%d bytes)", msg->pid, msg->_u.readsocket_msg.fd, msg->_u.readsocket_msg.len);
 
-      queue_add_packet(&msg->_u.readsocket_msg);
+      struct readsocket_message * msg2 = &msg->_u.readsocket_msg;
+
+      if (msg->_u.readsocket_msg.len > (bytes_rec - 64)) {
+
+	msg2 = (struct readsocket_message *)malloc(52+msg->_u.readsocket_msg.len);
+
+	memcpy(msg2, &msg->_u.readsocket_msg, bytes_rec - 12);
+
+	int bytes_rec2 = recvfrom(sock, msg2->buf+bytes_rec - 12, msg->_u.readsocket_msg.len - (bytes_rec - 64), 0, (struct sockaddr *) &remote_addr, &len);
+
+	emscripten_log(EM_LOG_CONSOLE, "and additional %d bytes", bytes_rec2);
+      }
+
+      queue_add_packet(msg2);
+
+      if (msg2 != &msg->_u.readsocket_msg) {
+
+	free(msg2);
+      }
 
       int pid, arg;
-
+      
       int read_select = queue_pending(msg->_u.readsocket_msg.fd, &pid, &arg);
+      
       queue_set_pending(msg->_u.readsocket_msg.fd, 0, 0, 0);
       
-      if (read_select == 1) { // read pending
-
+      if (read_select == 1) { // recv pending
+	
 	int len = arg; // len bytes to read
 
-	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> read pending !!!!! %d bytes", len);
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> recv pending !!!!! %d bytes", len);
 
 	int buf2_size = 12+sizeof(struct recvfrom_message)+len;
 	
@@ -503,6 +543,37 @@ int main() {
 	msg2->_errno = 0;
 	
 	msg2->_u.recvfrom_msg.fd = msg->_u.readsocket_msg.fd;
+
+	struct sockaddr_un s_addr;
+	
+	memset(&s_addr, 0, sizeof(s_addr));
+	s_addr.sun_family = AF_UNIX;
+	sprintf(s_addr.sun_path, "channel.process.%d", pid);
+
+	sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+
+	free(buf2);
+      }
+      else if (read_select == 3) { // read pending
+	
+	int len = arg; // len bytes to read
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> read pending !!!!! %d bytes", len);
+
+	int buf2_size = 12+sizeof(struct io_message)+len;
+	
+	char * buf2 = malloc(buf2_size);
+	struct message * msg2 = (struct message *)&buf2[0];
+
+	msg2->_u.io_msg.len = queue_read(msg->_u.readsocket_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, len);
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d --> %d bytes read", pid, msg2->_u.io_msg.len);
+
+	msg2->msg_id = READ|0x80;
+	msg2->pid = pid;
+	msg2->_errno = 0;
+	
+	msg2->_u.io_msg.fd = msg->_u.readsocket_msg.fd;
 
 	struct sockaddr_un s_addr;
 	
@@ -616,6 +687,94 @@ int main() {
 
 	queue_set_pending(msg->_u.recvfrom_msg.fd, 1, msg->pid, msg->_u.recvfrom_msg.len);
       }
+    }
+    else if (msg->msg_id == CONNECT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: CONNECT %d %d", msg->pid, msg->_u.sendto_msg.fd);
+
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (CONNECT|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == WRITE) {
+
+      struct message * msg2 = msg;
+
+      if (msg->_u.io_msg.len > (bytes_rec - 20)) {
+
+	msg2 = (struct message *)malloc(20+msg->_u.io_msg.len);
+
+	memcpy(msg2, msg, bytes_rec);
+
+	int bytes_rec2 = recvfrom(sock, msg2->_u.io_msg.buf+bytes_rec, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
+      }
+      
+      do_send_websocket(msg, bytes_rec);
+
+      if (msg2 != msg)
+	free(msg2);
+    }
+    else if (msg->msg_id == (WRITE|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == READ) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+
+      if (queue_not_empty(msg->_u.io_msg.fd)) {
+
+	int buf2_size = 12+sizeof(struct io_message)+msg->_u.io_msg.len;
+	char * buf2 = malloc(buf2_size);
+	struct message * msg2 = (struct message *)&buf2[0];
+
+	msg2->_u.io_msg.len = queue_read(msg->_u.io_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, msg->_u.io_msg.len);
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d --> %d bytes read", msg->pid, msg2->_u.io_msg.len);
+
+	msg2->msg_id = READ|0x80;
+	msg2->pid = msg->pid;
+	msg2->_errno = 0;
+	
+	msg2->_u.io_msg.fd = msg->_u.io_msg.fd;
+	
+	sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+	free(buf2);
+      }
+      else if (queue_is_nonblock(msg->_u.io_msg.fd)) {
+
+	msg->msg_id |= 0x80;
+
+	msg->_errno = 0;
+	
+	msg->_u.io_msg.len = 0; // no data in queue
+	
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else { // set read pending
+
+	queue_set_pending(msg->_u.io_msg.fd, 3, msg->pid, msg->_u.io_msg.len);
+      }
+    }
+    else if (msg->msg_id == CLOSE) {
+
+      emscripten_log(EM_LOG_CONSOLE, "ip: CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
+
     }
   }
   
