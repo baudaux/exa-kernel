@@ -130,6 +130,8 @@ int main() {
 
   device_register_device(FS_DEV, vfs_major, vfs_minor, "vfs1");
 
+  emscripten_log(EM_LOG_CONSOLE, "vfs device registered: major=%d minor=%d", vfs_major, vfs_minor);
+
   // First, we create tty process
   
   create_tty_process();
@@ -555,7 +557,7 @@ int main() {
 
 	  msg->_u.close_msg.fd = remote_fd;
 
-	  if (major != vfs_major) {
+	  if ( !( (type == FS_DEV) && (major == vfs_major) ) ) {
 
 	    struct sockaddr_un driver_addr;
 
@@ -755,48 +757,115 @@ int main() {
       msg->_u.fcntl_msg.ret = 0;
       msg->_errno = 0;
 
-      if (msg->_u.fcntl_msg.cmd == F_SETFD) {
+      if (msg->_u.fcntl_msg.cmd == F_SETFL) {
+
+	emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: setting fs_flags of %d", msg->pid, msg->_u.fcntl_msg.fd);
 
 	int flags;
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
 	
-	msg->_errno = process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.fd, flags);
+	msg->_errno = (process_set_fs_flags(msg->pid, msg->_u.fcntl_msg.fd, flags) < 0)?EBADFD:0;
+
+	if (msg->_errno) {
+
+	  msg->msg_id |= 0x80;
+	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}
+	else {
+
+	  unsigned char type;
+	  unsigned short major;
+	  int remote_fd;
+
+	  if (process_get_fd(msg->pid, msg->_u.fcntl_msg.fd, &type, &major, &remote_fd) == 0) {
+
+	    emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: type=%d major=%d remote_fd=%d", msg->pid, type, major, remote_fd);
+	    
+	    if ( (type == FS_DEV) && (major == vfs_major) ) { // vfs
+
+	      if (vfs_set_fs_flags(remote_fd, flags) < 0)
+		msg->_errno = EBADFD;
+
+	      msg->msg_id |= 0x80;
+	      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+		
+	    }
+	    else { // Send message to driver
+
+	      msg->_u.fcntl_msg.fd = remote_fd;
+
+	      struct sockaddr_un driver_addr;
+
+	      driver_addr.sun_family = AF_UNIX;
+	      strcpy(driver_addr.sun_path, device_get_driver(type, major)->peer);
+
+	      emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: send to %s", msg->pid, driver_addr.sun_path);
+
+	      sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	    }
+	  }
+	  else {
+
+	    msg->_errno = EBADFD;
+	    
+	    msg->msg_id |= 0x80;
+	    sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	  }
+	}
       }
-      else if (msg->_u.fcntl_msg.cmd == F_GETFD) {
+      else {
 
-	msg->_u.fcntl_msg.ret = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.fd);
-      }
-      else if (msg->_u.fcntl_msg.cmd == F_DUPFD) {
+	if (msg->_u.fcntl_msg.cmd == F_SETFD) {
 
-	int fd;
+	  int flags;
 
-	memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
-
-	msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
-
-	// Add /proc/<pid>/fd/<fd> entry
-	process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
-      }
-      else if (msg->_u.fcntl_msg.cmd == F_DUPFD_CLOEXEC) {
-
-	int fd;
-
-	memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
-
-	msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
-
-	// Add /proc/<pid>/fd/<fd> entry
-	process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
+	  memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
 	
-	int flags = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.ret);
+	  msg->_errno = process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.fd, flags);
+	}
+	else if (msg->_u.fcntl_msg.cmd == F_GETFD) {
 
-	process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.ret, flags|FD_CLOEXEC);
+	  msg->_u.fcntl_msg.ret = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.fd);
+	}
+	else if (msg->_u.fcntl_msg.cmd == F_DUPFD) {
+
+	  int fd;
+
+	  memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	  msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+
+	  // Add /proc/<pid>/fd/<fd> entry
+	  process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
+	}
+	else if (msg->_u.fcntl_msg.cmd == F_DUPFD_CLOEXEC) {
+
+	  int fd;
+
+	  memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	  msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+
+	  // Add /proc/<pid>/fd/<fd> entry
+	  process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
+	
+	  int flags = process_get_fd_flags(msg->pid, msg->_u.fcntl_msg.ret);
+
+	  process_set_fd_flags(msg->pid, msg->_u.fcntl_msg.ret, flags|FD_CLOEXEC);
+	}
+	else if (msg->_u.fcntl_msg.cmd == F_GETFL) {
+
+	  msg->_u.fcntl_msg.ret = process_get_fs_flags(msg->pid, msg->_u.fcntl_msg.fd);
+	}
+
+	msg->msg_id |= 0x80;
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
+    }
+    else if (msg->msg_id == (FCNTL|0x80)) {
 
-      msg->msg_id |= 0x80;
-      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-
+      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == SETSID) {
 
@@ -925,7 +994,11 @@ int main() {
 
 	      // No more fd, close the fd in the driver
 
-	      if (major != vfs_major) { // Send close  msg to driver
+	      if ((type == FS_DEV) && (major == vfs_major)) {
+
+		vfs_close(remote_fd);
+	      }
+	      else { // Send close  msg to driver
 
 		add_pending_job(jobs, DUP_JOB, msg->pid, msg, bytes_rec, &remote_addr);
 
@@ -943,10 +1016,6 @@ int main() {
 		sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
 
 		continue; // Need to wait CLOSE response before closing the other ones
-	      }
-	      else {
-	
-		vfs_close(remote_fd);
 	      }
 	    }
 	  }
@@ -1962,7 +2031,11 @@ int close_opened_fd(int job, int sock, char * buf) {
 
       // No more fd, close the fd in the driver
 
-      if (major != vfs_major) { // Send close  msg to driver
+      if ( (type == FS_DEV) && (major == vfs_major) ) {
+
+	vfs_close(remote_fd);
+      }
+      else { // Send close  msg to driver
 
 	struct message * msg2 = malloc(256); // do not change msg
 
@@ -1983,10 +2056,6 @@ int close_opened_fd(int job, int sock, char * buf) {
 	free(msg2);
 	
 	return 1; // Need to wait CLOSE response before closing the other ones
-      }
-      else {
-	
-	vfs_close(remote_fd);
       }
     }
   }

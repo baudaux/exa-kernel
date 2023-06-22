@@ -1059,6 +1059,23 @@ int vfs_unlink(struct vnode * vnode) {
   return 0;
 }
 
+int vfs_set_fs_flags(int fd, int flags) {
+
+  if (fd == 0)
+    return -1;
+
+  for (int i = 1; i < NB_FD_MAX; ++i) { // 0 is reserved
+
+    if (fds[i].fd == fd) {
+
+      fds[i].flags = flags;
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 void vfs_dump() {
 
   emscripten_log(EM_LOG_CONSOLE, "VFS dump");

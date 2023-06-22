@@ -112,8 +112,12 @@ static int queue_add_packet(struct readsocket_message * msg) {
       
       packet->len = msg->len;
 
-      if (msg->len > 0)
+      if (msg->len > 0) {
+
+	packet->buf = malloc(msg->len);
+	
 	memmove(packet->buf, msg->buf, msg->len);
+      }
 
       packet->offset = 0;
       packet->next = NULL;
@@ -234,8 +238,9 @@ int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
       }
       else {
 
-	free(queues[i].first_packet->buf);
-
+	if (queues[i].first_packet->buf)
+	  free(queues[i].first_packet->buf);
+	
 	struct packet * p = queues[i].first_packet;
 
 	queues[i].first_packet = p->next;
@@ -473,7 +478,7 @@ int main() {
 
 	msg2 = (struct message *)malloc(68+msg->_u.sendto_msg.len);
 
-	memcpy(msg2, msg, bytes_rec);
+	memmove(msg2, msg, bytes_rec);
 
 	int bytes_rec2 = recvfrom(sock, msg2->_u.sendto_msg.message+bytes_rec, msg->_u.sendto_msg.len - (bytes_rec - 68), 0, (struct sockaddr *) &remote_addr, &len);
       }
@@ -503,9 +508,9 @@ int main() {
 
 	msg2 = (struct readsocket_message *)malloc(52+msg->_u.readsocket_msg.len);
 
-	memcpy(msg2, &msg->_u.readsocket_msg, bytes_rec - 12);
+	memmove(msg2, &msg->_u.readsocket_msg, bytes_rec - 12);
 
-	int bytes_rec2 = recvfrom(sock, msg2->buf+bytes_rec - 12, msg->_u.readsocket_msg.len - (bytes_rec - 64), 0, (struct sockaddr *) &remote_addr, &len);
+	int bytes_rec2 = recvfrom(sock, ((char *)msg2)+bytes_rec - 12, msg->_u.readsocket_msg.len - (bytes_rec - 64), 0, (struct sockaddr *) &remote_addr, &len);
 
 	emscripten_log(EM_LOG_CONSOLE, "and additional %d bytes", bytes_rec2);
       }
@@ -677,7 +682,7 @@ int main() {
 
 	msg->msg_id |= 0x80;
 
-	msg->_errno = 0;
+	msg->_errno = EAGAIN;
 
 	msg->_u.recvfrom_msg.len = 0; // no data in queue
 	
@@ -712,7 +717,7 @@ int main() {
 
 	msg2 = (struct message *)malloc(20+msg->_u.io_msg.len);
 
-	memcpy(msg2, msg, bytes_rec);
+	memmove(msg2, msg, bytes_rec);
 
 	int bytes_rec2 = recvfrom(sock, msg2->_u.io_msg.buf+bytes_rec, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
       }

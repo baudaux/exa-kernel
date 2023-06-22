@@ -959,7 +959,7 @@ int main() {
 
 	  msg->msg_id |= 0x80;
 
-	  msg->_errno = -1;
+	  msg->_errno = ENOENT;
 	    
 	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 	  continue;
@@ -1003,8 +1003,15 @@ int main() {
 	msg->_u.io_msg.len = count;
 
 	msg->msg_id |= 0x80;
+	msg->_errno = 0;
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
+      /*else if (clients[msg->_u.io_msg.fd].flags & O_NONBLOCK) {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = EAGAIN;
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	}*/
       else {
 
 	add_read_pending_request(msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len, &remote_addr);
@@ -1225,6 +1232,26 @@ int main() {
 	 msg->_errno = 0;
 	 sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
+    }
+    else if (msg->msg_id == FCNTL) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "tty: FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
+
+      msg->_u.fcntl_msg.ret = 0;
+      msg->_errno = 0;
+
+      if (msg->_u.fcntl_msg.cmd == F_SETFL) {
+
+	int flags;
+
+	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	clients[msg->_u.fcntl_msg.fd].flags = flags;
+      }
+
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
   }
   

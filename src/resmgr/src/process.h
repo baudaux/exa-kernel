@@ -96,6 +96,9 @@ int process_find_open_fd(unsigned char type, unsigned short major, int remote_fd
 int process_set_fd_flags(pid_t pid, int fd, int flags);
 int process_get_fd_flags(pid_t pid, int fd);
 
+int process_set_fs_flags(pid_t pid, int fd, int flags);
+int process_get_fs_flags(pid_t pid, int fd);
+
 struct sockaddr_un * process_get_peer_addr(pid_t pid);
 
 pid_t process_setsid(pid_t pid);

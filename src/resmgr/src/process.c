@@ -54,6 +54,7 @@ void process_init() {
   for (int i = 0; i < NB_PROCESSES_MAX; ++i) {
 
     processes[i].pid = -1;
+    processes[i].proc_state = EXITED_STATE;
   }
 
   process_fork(RESMGR_ID, NO_PARENT, "resmgr");
@@ -447,7 +448,7 @@ int process_set_fd_flags(pid_t pid, int fd, int flags) {
 
       processes[pid].fds[i].fd_flags = flags;
       
-      return 0;
+      return processes[pid].fds[i].fd_flags;
     }
   }
 
@@ -461,6 +462,64 @@ int process_get_fd_flags(pid_t pid, int fd) {
     if (processes[pid].fds[i].fd == fd) {
 
       return processes[pid].fds[i].fd_flags;
+    }
+  }
+
+  return -1;
+}
+
+int process_set_fs_flags(pid_t pid, int fd, int flags) {
+
+  int i;
+
+  for (i = 0; i < NB_FILES_MAX; ++i) {
+
+    if (processes[pid].fds[i].fd == fd) {
+
+      processes[pid].fds[i].fs_flags &= ~(O_APPEND | O_ASYNC | O_DIRECT | O_NOATIME | O_NONBLOCK) | flags;
+
+      break;
+
+      // TODO change all fd of all process with same remote_fd
+      
+      
+    }
+  }
+
+  //TODO: very inefficient, to be improved
+  if (i < NB_FILES_MAX) {
+
+    for (int j= 0; j < NB_PROCESSES_MAX; ++j) {
+
+      if ( (processes[j].pid >= 0) && (processes[j].proc_state < ZOMBIE_STATE) ) {
+	
+	for (int k = 0; k < NB_FILES_MAX; ++k) {
+
+	  if (processes[j].fds[k].fd >= 0) {
+	    
+	    if ( (processes[j].fds[k].remote_fd == processes[pid].fds[i].remote_fd) &&
+		 (processes[j].fds[k].type == processes[pid].fds[i].type) &&
+		 (processes[j].fds[k].minor == processes[pid].fds[i].minor) &&
+		 (processes[j].fds[k].major == processes[pid].fds[i].major) )
+	      processes[j].fds[k].fs_flags = processes[pid].fds[i].fs_flags;
+	  }
+	}
+      }
+    }
+
+    return processes[pid].fds[i].fs_flags;
+  }
+
+  return -1;
+}
+
+int process_get_fs_flags(pid_t pid, int fd) {
+
+  for (int i = 0; i < NB_FILES_MAX; ++i) {
+
+    if (processes[pid].fds[i].fd == fd) {
+
+      return processes[pid].fds[i].fs_flags;
     }
   }
 
@@ -618,6 +677,7 @@ EM_JS(void, exit_proc, (int pid), {
 void process_terminate(pid_t pid) {
 
   processes[pid].proc_state = EXITED_STATE;
+  processes[pid].pid = -1;
 
   //TOTEST
   exit_proc(pid);

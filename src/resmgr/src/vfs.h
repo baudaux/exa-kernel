@@ -101,6 +101,8 @@ int vfs_seek(int fd, int offset, int whence);
 
 int vfs_unlink(struct vnode * vnode);
 
+int vfs_set_fs_flags(int fd, int flags);
+
 void vfs_dump();
 
 
