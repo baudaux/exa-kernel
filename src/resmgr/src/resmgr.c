@@ -802,6 +802,8 @@ int main() {
 
 	      emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: send to %s", msg->pid, driver_addr.sun_path);
 
+	      //TODO: receive in each driver
+	      
 	      sendto(sock, buf, 256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
 	    }
 	  }
@@ -816,7 +818,11 @@ int main() {
       }
       else {
 
-	if (msg->_u.fcntl_msg.cmd == F_SETFD) {
+	if (msg->_u.fcntl_msg.cmd == F_GETFL) {
+
+	  msg->_u.fcntl_msg.ret = process_get_fs_flags(msg->pid, msg->_u.fcntl_msg.fd);
+	}
+	else if (msg->_u.fcntl_msg.cmd == F_SETFD) {
 
 	  int flags;
 

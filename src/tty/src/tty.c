@@ -122,6 +122,8 @@ static int last_fd = 0;
 
 static struct client clients[64];
 
+// TODO : do not use fd as index
+
 static int add_client(int fd, pid_t pid, unsigned short minor, int flags, unsigned short mode) {
 
   clients[fd].pid = pid;
@@ -1006,12 +1008,12 @@ int main() {
 	msg->_errno = 0;
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
-      /*else if (clients[msg->_u.io_msg.fd].flags & O_NONBLOCK) {
+      else if (clients[msg->_u.io_msg.fd].flags & O_NONBLOCK) {
 
 	msg->msg_id |= 0x80;
 	msg->_errno = EAGAIN;
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-	}*/
+      }
       else {
 
 	add_read_pending_request(msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len, &remote_addr);
@@ -1109,15 +1111,6 @@ int main() {
       ioctl_msg->msg_id |= 0x80;
       sendto(sock, ioctl_buf, 256, 0, (struct sockaddr *) &ioctl_addr, sizeof(ioctl_addr));
       
-    }
-    else if (msg->msg_id == FCNTL) {
-
-      //emscripten_log(EM_LOG_CONSOLE, "tty: FCNTL from %d", msg->pid);
-
-      // TODO: go through resmgr
-
-      msg->msg_id |= 0x80;
-      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == CLOSE) {
 

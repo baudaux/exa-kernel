@@ -781,6 +781,33 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "ip: CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
 
     }
+    else if (msg->msg_id == FCNTL) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
+
+      msg->_u.fcntl_msg.ret = 0;
+      msg->_errno = 0;
+
+      if (msg->_u.fcntl_msg.cmd == F_SETFL) {
+
+	int flags;
+
+	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+	  if (queues[i].fd == msg->_u.fcntl_msg.fd) {
+
+	    queues[i].flags = flags;
+	    break;
+	  }
+	}
+      }
+
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
   }
   
   return 0;

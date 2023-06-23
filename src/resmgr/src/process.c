@@ -224,6 +224,8 @@ pid_t create_init_process() {
   return 0;
 }
 
+// TODO : do not use pid as index
+
 pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
 
   emscripten_log(EM_LOG_CONSOLE,"process_fork: %d %d", pid, ppid);

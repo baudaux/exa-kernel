@@ -176,7 +176,7 @@ int main() {
 	
       } else {
 
-	msg->_errno = -1;
+	msg->_errno = ENOMEM;
       }
 
       msg->_u.pipe_msg.type = CHR_DEV;
@@ -227,7 +227,7 @@ int main() {
 		
 		msg3->msg_id = (WRITE|0x80);
 		msg3->pid = msg2->pid;
-		msg3->_errno = -EPIPE; //TODO: or send signal
+		msg3->_errno = EPIPE; //TODO: or send signal
 
 		msg3->_u.io_msg.fd = msg2->_u.io_msg.fd;
 		msg3->_u.io_msg.len = 0;
@@ -299,7 +299,7 @@ int main() {
       }
       else {
 
-	msg->_errno = -1;
+	msg->_errno = EBADFD;
       }
 
       msg->msg_id |= 0x80;
@@ -381,6 +381,10 @@ int main() {
 	    msg->_u.io_msg.len = 0;
 	    msg->_errno = 0;
 	  }
+	  else if (fds[i].flags & O_NONBLOCK) {
+	    
+	    msg->_errno = EAGAIN;
+	  }
 	  else {
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: READ from %d: add pending job addr=%s", msg->pid, remote_addr.sun_path);
@@ -393,12 +397,12 @@ int main() {
 	  }
 	}
 	else {
-	  msg->_errno = -1;
+	  msg->_errno = EBADFD;
 	}
       }
       else {
 
-	msg->_errno = -1;
+	msg->_errno = EBADFD;
       }
 
       msg->msg_id |= 0x80;
@@ -483,12 +487,12 @@ int main() {
 	  }
 	}
 	else {
-	  msg->_errno = -1;
+	  msg->_errno = EBADFD;
 	}
       }
       else {
 
-	msg->_errno = -1;
+	msg->_errno = EBADFD;
       }
 
       msg->msg_id |= 0x80;
@@ -500,7 +504,8 @@ int main() {
       //emscripten_log(EM_LOG_CONSOLE, "pipe: SEEK from %d", msg->pid);
 
       msg->msg_id |= 0x80;
-      msg->_errno = -ESPIPE;
+      msg->_errno = ESPIPE;
+      
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == IOCTL) {
@@ -512,6 +517,33 @@ int main() {
       if (msg->_u.ioctl_msg.op == TIOCGWINSZ) {
 
 	msg->_errno = ENOTTY;
+      }
+
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FCNTL) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: FCNTL from %d: %d %d", msg->pid, msg->_u.fcntl_msg.fd, msg->_u.fcntl_msg.cmd);
+
+      msg->_u.fcntl_msg.ret = 0;
+      msg->_errno = 0;
+
+      if (msg->_u.fcntl_msg.cmd == F_SETFL) {
+
+	int flags;
+
+	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	for (int i=0; i<NB_FD_MAX; ++i) {
+    
+	  if ( (fds[i].read_fd == msg->_u.fcntl_msg.fd) || (fds[i].write_fd == msg->_u.fcntl_msg.fd) ) {
+
+	    fds[i].flags = flags;
+	    break;
+	  }
+	}
       }
 
       msg->msg_id |= 0x80;
