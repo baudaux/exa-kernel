@@ -839,12 +839,12 @@ int vfs_ioctl(int fd, int op) {
     
     emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd found");
 
-    return 0;
+    return EINVAL;
   }
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_ioctl: fd not found");
 
-  return -1;
+  return EBADF;
 }
 
 int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, char ** trail) {

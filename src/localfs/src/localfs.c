@@ -245,7 +245,7 @@ static ssize_t localfs_write(int fd, const void * buf, size_t count) {
 
 static int localfs_ioctl(int fildes, int request, ... /* arg */) {
 
-  return 0;
+  return EINVAL;
 }
 
 static int localfs_unlink(const char * path, int flags) {

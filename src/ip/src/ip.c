@@ -808,6 +808,34 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
+    else if (msg->msg_id == GETSOCKNAME) {
+
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (GETSOCKNAME|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == GETPEERNAME) {
+
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (GETPEERNAME|0x80)) {
+
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
   }
   
   return 0;

@@ -287,7 +287,7 @@ static ssize_t netfs_write(int fd, const void * buf, size_t count) {
 
 static int netfs_ioctl(int fildes, int request, ... /* arg */) {
 
-  return 0;
+  return EINVAL;
 }
 
 static int netfs_close(int fd) {

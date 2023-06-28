@@ -404,7 +404,7 @@ int main() {
 
 	msg->_errno = EBADFD;
       }
-
+      
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       

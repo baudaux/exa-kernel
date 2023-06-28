@@ -77,6 +77,8 @@ enum message_id {
   READ_SOCKET,
   RECVFROM,
   CONNECT = 55,
+  GETSOCKNAME,
+  GETPEERNAME,
 };
 
 enum dev_type {
@@ -423,6 +425,13 @@ struct connect_message {
   char addr[40];
 };
 
+struct getsockname_message {
+  
+  int fd;
+  int addr_len;
+  char addr[40];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -477,6 +486,7 @@ struct message {
     struct readsocket_message readsocket_msg;
     struct recvfrom_message recvfrom_msg;
     struct connect_message connect_msg;
+    struct getsockname_message getsockname_msg;
   } _u;
 };
 
