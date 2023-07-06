@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <stropts.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,6 +164,24 @@ static int queue_is_nonblock(int fd) {
   return 0;
 }
 
+static int queue_set_nonblock(int fd, int onoff) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+
+      if (onoff)
+	queues[i].flags |= O_NONBLOCK; // on = non blocking
+      else
+	queues[i].flags &= ~O_NONBLOCK; //off = blocking
+      
+      break;
+    }
+  }
+
+  return 0;
+}
+
 static int queue_set_pending(int fd, int read_select, int pid, int arg) {
 
   for (int i = 0; i < NB_QUEUES_MAX; ++i) {
@@ -286,7 +305,7 @@ EM_JS(int, do_connect_websocket, (), {
 
       let buf = new Uint8Array(event.data);
 
-      console.log("[message] Data received from server: "+buf.length+" bytes");
+      //console.log("[message] Data received from server: "+buf.length+" bytes");
 
       let msg = {
 		    
@@ -500,7 +519,7 @@ int main() {
     }
     else if (msg->msg_id == READ_SOCKET) {
       
-      emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET %d %d (%d bytes)", msg->pid, msg->_u.readsocket_msg.fd, msg->_u.readsocket_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET fd=%d (%d bytes)", msg->_u.readsocket_msg.fd, msg->_u.readsocket_msg.len);
 
       struct readsocket_message * msg2 = &msg->_u.readsocket_msg;
 
@@ -514,6 +533,8 @@ int main() {
 
 	emscripten_log(EM_LOG_CONSOLE, "and additional %d bytes", bytes_rec2);
       }
+
+      emscripten_log(EM_LOG_CONSOLE, "%.*s", msg2->len, msg2->buf);
 
       queue_add_packet(msg2);
 
@@ -594,7 +615,7 @@ int main() {
 
 	int process_fd = arg;
 	
-	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> select pending !!!!! %d %d", pid, process_fd);
+	emscripten_log(EM_LOG_CONSOLE, "ip: READ_SOCKET --> select pending !!!!! %d fd=%d remote_fd=%d", pid, process_fd, msg->_u.readsocket_msg.fd);
 
 	msg->msg_id = SELECT|0x80;
 	msg->pid = pid;
@@ -711,6 +732,8 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
+      emscripten_log(EM_LOG_CONSOLE, "ip: WRITE from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+
       struct message * msg2 = msg;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
@@ -739,7 +762,7 @@ int main() {
     }
     else if (msg->msg_id == READ) {
       
-      emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d: %d %d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d: fd=%d %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       if (queue_not_empty(msg->_u.io_msg.fd)) {
 
@@ -780,6 +803,13 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "ip: CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
 
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (CLOSE|0x80)) {
+
+      emscripten_log(EM_LOG_CONSOLE, "ip: Return of CLOSE from %d: %d", msg->pid, msg->_u.close_msg.fd);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
     else if (msg->msg_id == FCNTL) {
       
@@ -789,7 +819,7 @@ int main() {
       msg->_errno = 0;
 
       if (msg->_u.fcntl_msg.cmd == F_SETFL) {
-
+	
 	int flags;
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
@@ -828,6 +858,44 @@ int main() {
     }
     else if (msg->msg_id == (GETPEERNAME|0x80)) {
 
+      struct sockaddr_un s_addr;
+	
+      memset(&s_addr, 0, sizeof(s_addr));
+      s_addr.sun_family = AF_UNIX;
+      sprintf(s_addr.sun_path, "channel.process.%d", msg->pid);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &s_addr, sizeof(s_addr));
+    }
+    else if (msg->msg_id == IOCTL) {
+
+      emscripten_log(EM_LOG_CONSOLE, "ip: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
+      
+      if (msg->_u.ioctl_msg.op == FIONBIO) {
+
+	int onoff = 0;
+	
+	memcpy(&onoff, msg->_u.ioctl_msg.buf, sizeof(int));
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: IOCTL FIONBIO onoff=%d", onoff);
+
+	queue_set_nonblock(msg->_u.ioctl_msg.fd, onoff);
+	
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
+      
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+    }
+    else if (msg->msg_id == SETSOCKOPT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: SETSOCKOPT from %d: fd=%d", msg->pid, msg->_u.setsockopt_msg.fd);
+      
+      do_send_websocket(msg, bytes_rec);
+    }
+    else if (msg->msg_id == (SETSOCKOPT|0x80)) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "ip: Return from SETSOCKOPT from %d: fd=%d", msg->pid, msg->_u.setsockopt_msg.fd);
+      
       struct sockaddr_un s_addr;
 	
       memset(&s_addr, 0, sizeof(s_addr));

@@ -79,6 +79,8 @@ enum message_id {
   CONNECT = 55,
   GETSOCKNAME,
   GETPEERNAME,
+  SOCKET_CLOSED,
+  SETSOCKOPT,
 };
 
 enum dev_type {
@@ -432,6 +434,15 @@ struct getsockname_message {
   char addr[40];
 };
 
+struct setsockopt_message {
+  
+  int fd;
+  int level;
+  int optname;
+  int optlen;
+  char optval[];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -487,6 +498,8 @@ struct message {
     struct recvfrom_message recvfrom_msg;
     struct connect_message connect_msg;
     struct getsockname_message getsockname_msg;
+    struct setsockopt_message setsockopt_msg;
+
   } _u;
 };
 

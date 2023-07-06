@@ -727,7 +727,7 @@ static void del_read_select_pending_request(pid_t pid, int remote_fd, int fd, st
 
 static int local_tty_select(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, struct sockaddr_un * sock_addr) {
 
-  emscripten_log(EM_LOG_CONSOLE, "local_tty_select");
+  //emscripten_log(EM_LOG_CONSOLE, "local_tty_select");
 
   struct device_desc * dev = get_device_from_fd(remote_fd);
 
@@ -735,7 +735,10 @@ static int local_tty_select(pid_t pid, int remote_fd, int fd, int read_write, in
 
     if (read_write) { // write
 
-      return 1; // write is always possible
+      if (count_circular_buffer(&dev->tx_buf) < (TTY_BUF_SIZE-16)) {
+	
+	return 1;
+      }
     }
     else { // read
       
