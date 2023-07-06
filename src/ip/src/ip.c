@@ -45,7 +45,7 @@
 struct packet {
 
   int addr_len;
-  char addr[128];
+  char addr[40];
   int len;
   char * buf;
   int offset;
@@ -104,32 +104,32 @@ static int queue_add_packet(struct readsocket_message * msg) {
 
     if (queues[i].fd == msg->fd) {
 
-      struct packet * packet = malloc(sizeof(struct packet));
-
-      packet->addr_len = msg->addr_len;
-
-      if (msg->addr_len > 0)
-	memmove(packet->addr, msg->addr, msg->addr_len);
-      
-      packet->len = msg->len;
-
       if (msg->len > 0) {
+
+	struct packet * packet = malloc(sizeof(struct packet));
+
+	packet->addr_len = msg->addr_len;
+
+	if (msg->addr_len > 0)
+	  memmove(packet->addr, msg->addr, msg->addr_len);
+      
+	packet->len = msg->len;
 
 	packet->buf = malloc(msg->len);
 	
 	memmove(packet->buf, msg->buf, msg->len);
-      }
 
-      packet->offset = 0;
-      packet->next = NULL;
+	packet->offset = 0;
+	packet->next = NULL;
       
-      if (queues[i].last_packet)
-	queues[i].last_packet->next = packet;
+	if (queues[i].last_packet)
+	  queues[i].last_packet->next = packet;
 
-      queues[i].last_packet = packet;
+	queues[i].last_packet = packet;
 
-      if (!queues[i].first_packet)
-	queues[i].first_packet = packet;
+	if (!queues[i].first_packet)
+	  queues[i].first_packet = packet;
+      }
 
       return i;
     }
@@ -250,7 +250,7 @@ int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
       int read_len = ((queues[i].first_packet->len-queues[i].first_packet->offset)<=len)?queues[i].first_packet->len-queues[i].first_packet->offset:len;
       
       if (buf && (read_len > 0))
-	memmove(buf, queues[i].first_packet->buf, read_len);
+	memmove(buf, queues[i].first_packet->buf+queues[i].first_packet->offset, read_len);
 
       if (read_len < (queues[i].first_packet->len-queues[i].first_packet->offset)) {
 	queues[i].first_packet->offset += read_len;
