@@ -81,6 +81,9 @@ enum message_id {
   GETPEERNAME,
   SOCKET_CLOSED,
   SETSOCKOPT,
+  PTHREAD_CREATE = 60,
+  PTHREAD_EXIT,
+  
 };
 
 enum dev_type {
@@ -443,6 +446,16 @@ struct setsockopt_message {
   char optval[];
 };
 
+struct pthread_create_message {
+  
+  int tid;
+};
+
+struct pthread_exit_message {
+  
+  int status;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -499,6 +512,8 @@ struct message {
     struct connect_message connect_msg;
     struct getsockname_message getsockname_msg;
     struct setsockopt_message setsockopt_msg;
+    struct pthread_create_message pthread_create_msg;
+    struct pthread_exit_message pthread_exit_msg;
 
   } _u;
 };

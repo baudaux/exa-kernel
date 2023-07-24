@@ -2003,6 +2003,30 @@ int main() {
 
        sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
     }
+    else if (msg->msg_id == PTHREAD_CREATE) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: PTHREAD_CREATE from %d: tid=%d", msg->pid, msg->_u.pthread_create_msg.tid);
+
+      //TODO
+      
+      msg->_errno = 0;
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
+    else if (msg->msg_id == PTHREAD_EXIT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: PTHREAD_EXIT from %d: status=%d", msg->pid, msg->_u.pthread_exit_msg.status);
+
+      //TODO
+      
+      msg->_errno = 0;
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+    }
   }
   
   return 0;
