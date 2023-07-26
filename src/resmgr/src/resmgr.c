@@ -1124,7 +1124,7 @@ int main() {
       // TODO: other self conversion
       if (strncmp(msg->_u.readlink_msg.pathname_or_buf, "/proc/self/", 11) == 0) {
 
-	sprintf(str, "/proc/%d/%s", msg->pid, msg->_u.readlink_msg.pathname_or_buf+11);
+	sprintf(str, "/proc/%d/%s", msg->pid & 0xffff, msg->_u.readlink_msg.pathname_or_buf+11);
 
 	pathname = &str[0];
       }
@@ -1486,7 +1486,7 @@ int main() {
 
       for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
       
-	if (itimers[i].pid == msg->pid) {
+	if (itimers[i].pid == (msg->pid & 0xffff)) {
 
 	  itimers[i].fd = -1;
 	  break;
@@ -1573,7 +1573,7 @@ int main() {
       }
       else if (action == 2) { // Custom action
 
-	if (msg->pid == msg->_u.kill_msg.pid) {
+	if ((msg->pid & 0xffff) == (msg->_u.kill_msg.pid & 0xffff)) {
 	  
 	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 	}
@@ -1604,7 +1604,7 @@ int main() {
       // Find if there is already a timer for this pid
       for (i = 0; i < NB_ITIMERS_MAX; ++i) {
       
-	if (itimers[i].pid == msg->pid) {
+	if (itimers[i].pid == (msg->pid & 0xffff)) {
 
 	  itimers[i].fd = fd;
 	  itimers[i].once = (msg->_u.setitimer_msg.it_sec == 0) && (msg->_u.setitimer_msg.it_usec == 0);
@@ -1620,7 +1620,7 @@ int main() {
       
 	  if (itimers[i].fd < 0) {
 
-	    itimers[i].pid = msg->pid;
+	    itimers[i].pid = msg->pid & 0xffff;
 	    itimers[i].fd = fd;
 	    itimers[i].once = (msg->_u.setitimer_msg.it_sec == 0) && (msg->_u.setitimer_msg.it_usec == 0);
 	    break;
@@ -2070,7 +2070,7 @@ int close_opened_fd(int job, int sock, char * buf) {
 	struct message * msg2 = malloc(256); // do not change msg
 
 	msg2->msg_id = CLOSE;
-	msg2->pid = msg->pid;
+	msg2->pid = msg->pid & 0xffff;
 	
 	msg2->_u.close_msg.fd = remote_fd;
 
@@ -2096,8 +2096,10 @@ int close_opened_fd(int job, int sock, char * buf) {
 int do_exit(int sock, struct message * msg) {
       
   int exit_status = msg->_u.exit_msg.status;
-  int pid = msg->pid;
+  int pid = msg->pid & 0xffff;
   int ppid;
+
+  emscripten_log(EM_LOG_CONSOLE, "--> do_exit");
       
   if (ppid=process_exit(pid, exit_status << 8)) {
 

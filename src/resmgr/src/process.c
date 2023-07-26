@@ -64,6 +64,8 @@ void add_proc_entry(pid_t pid) {
 
   char str[8];
 
+  pid = pid & 0xffff;
+
   sprintf(str, "%d", pid);
 
   // Add /proc/<pid>
@@ -76,6 +78,8 @@ void add_proc_entry(pid_t pid) {
 void del_proc_entry(pid_t pid) {
 
   char str[16];
+
+  pid = pid & 0xffff;
 
   sprintf(str, "/proc/%d", pid);
 
@@ -90,6 +94,8 @@ void process_add_proc_fd_entry(pid_t pid, int fd, char * link) {
   char str[32];
   char str2[8];
 
+  pid = pid & 0xffff;
+
   sprintf(str, "/proc/%d/fd", pid);
 
   sprintf(str2, "%d", fd);
@@ -103,6 +109,8 @@ void process_add_proc_fd_entry(pid_t pid, int fd, char * link) {
 void process_del_proc_fd_entry(pid_t pid, int fd) {
 
   char str[32];
+
+  pid = pid & 0xffff;
 
   sprintf(str, "/proc/%d/fd/%d", pid, fd);
   
@@ -227,13 +235,16 @@ pid_t create_init_process() {
 // TODO : do not use pid as index
 
 pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
-
   emscripten_log(EM_LOG_CONSOLE,"process_fork: %d %d", pid, ppid);
   
   if (pid < 0)
     pid = nb_processes;
-  else
+  else {
+
+    pid = pid & 0xffff;
+    
     nb_processes = pid;
+  }
 
   if (pid >= NB_PROCESSES_MAX)
     return -1;
@@ -340,6 +351,8 @@ int process_find_smallest_fd(pid_t pid) {
 
   int i, j;
 
+  pid = pid & 0xffff;
+
   for (i = 0; i < NB_FILES_MAX; ++i) {
 
     if ((processes[pid].fd_map[i/8] & 1 << (i%8)) == 0)
@@ -352,6 +365,8 @@ int process_find_smallest_fd(pid_t pid) {
 int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned short major, unsigned short minor, int flags) {
   
   int i;
+
+  pid = pid & 0xffff;
   
   for (i = 0; i < NB_FILES_MAX; ++i) {
 
@@ -381,6 +396,8 @@ int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned sho
 
 int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * major, int * remote_fd) {
 
+  pid = pid & 0xffff;
+
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
     if (processes[pid].fds[i].fd == fd) {
@@ -401,6 +418,8 @@ int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * maj
 }
 
 int process_close_fd(pid_t pid, int fd) {
+
+  pid = pid & 0xffff;
 
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
@@ -444,6 +463,8 @@ int process_find_open_fd(unsigned char type, unsigned short major, int remote_fd
 
 int process_set_fd_flags(pid_t pid, int fd, int flags) {
 
+  pid = pid & 0xffff;
+  
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
     if (processes[pid].fds[i].fd == fd) {
@@ -459,6 +480,8 @@ int process_set_fd_flags(pid_t pid, int fd, int flags) {
 
 int process_get_fd_flags(pid_t pid, int fd) {
 
+  pid = pid & 0xffff;
+  
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
     if (processes[pid].fds[i].fd == fd) {
@@ -473,6 +496,8 @@ int process_get_fd_flags(pid_t pid, int fd) {
 int process_set_fs_flags(pid_t pid, int fd, int flags) {
 
   int i;
+
+  pid = pid & 0xffff;
 
   for (i = 0; i < NB_FILES_MAX; ++i) {
 
@@ -517,6 +542,8 @@ int process_set_fs_flags(pid_t pid, int fd, int flags) {
 
 int process_get_fs_flags(pid_t pid, int fd) {
 
+  pid = pid & 0xffff;
+  
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
     if (processes[pid].fds[i].fd == fd) {
@@ -530,6 +557,8 @@ int process_get_fs_flags(pid_t pid, int fd) {
 
 struct sockaddr_un * process_get_peer_addr(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   return &processes[pid].peer_addr;
 }
 
@@ -546,6 +575,8 @@ pid_t process_group_exists(pid_t pgid) {
 
 pid_t process_setsid(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   if (!process_group_exists(pid)) { // process is not process group leader
 
     emscripten_log(EM_LOG_CONSOLE,"process_setsid: successful -> %d", pid);
@@ -562,22 +593,30 @@ pid_t process_setsid(pid_t pid) {
 }
 
 pid_t process_getsid(pid_t pid) {
+
+  pid = pid & 0xffff;
   
   return processes[pid].sid;
 }
 
 pid_t process_getppid(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   return processes[pid].ppid;
 }
 
 pid_t process_getpgid(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   return processes[pid].pgid;
 }
 
 int process_setpgid(pid_t pid, pid_t pgid) {
 
+  pid = pid & 0xffff;
+  
   if (pgid == 0) {
 
     processes[pid].pgid = pid;
@@ -600,6 +639,8 @@ int process_setpgid(pid_t pid, pid_t pgid) {
 int process_dup(pid_t pid, int fd, int new_fd) {
 
   int i;
+
+  pid = pid & 0xffff;
   
   for (i = 0; i < NB_FILES_MAX; ++i) {
 
@@ -654,11 +695,15 @@ int process_dup(pid_t pid, int fd, int new_fd) {
 
 char * process_getcwd(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   return processes[pid].cwd;
 }
 
 int process_chdir(pid_t pid, char * dir) {
 
+  pid = pid & 0xffff;
+  
   if (strlen(dir) < (1024-1))
     strcpy(processes[pid].cwd, dir);
 
@@ -667,6 +712,8 @@ int process_chdir(pid_t pid, char * dir) {
 
 EM_JS(void, exit_proc, (int pid), {
 
+    pid = pid & 0xffff;
+    
     let m = {
 	    
       type: 4,   // exit
@@ -678,6 +725,8 @@ EM_JS(void, exit_proc, (int pid), {
 
 void process_terminate(pid_t pid) {
 
+  pid = pid & 0xffff;
+  
   processes[pid].proc_state = EXITED_STATE;
   processes[pid].pid = -1;
 
@@ -687,6 +736,11 @@ void process_terminate(pid_t pid) {
 
 pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
 
+  if (pid > 0)
+    pid = pid & 0xffff;
+  
+  ppid = ppid & 0xffff;
+  
   processes[ppid].wait_child = 1;
   processes[ppid].wait_pid = pid;
   processes[ppid].wait_options = options;
@@ -714,6 +768,8 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
 
 pid_t process_exit(pid_t pid, int status) {
 
+  pid = pid & 0xffff;
+  
   processes[pid].proc_state = ZOMBIE_STATE;
   processes[pid].status = status;
 
@@ -745,6 +801,8 @@ int process_sigaction(pid_t pid, int signum, struct sigaction * act) {
   if (!signum || (signum > NSIG) )
     return -1;
 
+  pid = pid & 0xffff;
+
   memcpy(&old, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
 
   memcpy(&processes[pid].sigactions[signum-1], act, sizeof(struct sigaction));
@@ -759,6 +817,8 @@ int process_sigprocmask(pid_t pid, int how, sigset_t * set) {
   sigset_t old;
   unsigned char * set2 = (unsigned char *)set;
   unsigned char * mask = (unsigned char *)&processes[pid].sigprocmask;
+
+  pid = pid & 0xffff;
 
   memcpy(&old, &processes[pid].sigprocmask, sizeof(sigset_t));
 
@@ -805,41 +865,47 @@ int process_sigprocmask(pid_t pid, int how, sigset_t * set) {
 
 int process_kill(pid_t pid, int signum, struct sigaction * act) {
 
-    if ( (signum == SIGKILL) || (signum == SIGSTOP) ) {
+  pid = pid & 0xffff;
+  
+  if ( (signum == SIGKILL) || (signum == SIGSTOP) ) {
 
-      sigaddset(&processes[pid].sigpending, signum);
+    sigaddset(&processes[pid].sigpending, signum);
 
-      // Cannot change default behaviour for SIGKILL and SIGSTOP
+    // Cannot change default behaviour for SIGKILL and SIGSTOP
       
+    return 1; // Default action
+  }
+  else if ( (((int)processes[pid].sigactions[signum-1].sa_handler) != -2) && (!sigismember(&processes[pid].sigdelivering, signum)) ) { // Signal not ignored
+
+    sigaddset(&processes[pid].sigpending, signum);
+
+    if (sigismember(&processes[pid].sigprocmask, signum))
+      return 0; // No action
+      
+    memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+
+    if ( ((int)processes[pid].sigactions[signum-1].sa_handler) == 0)
       return 1; // Default action
-    }
-    else if ( (((int)processes[pid].sigactions[signum-1].sa_handler) != -2) && (!sigismember(&processes[pid].sigdelivering, signum)) ) { // Signal not ignored
 
-      sigaddset(&processes[pid].sigpending, signum);
-
-      if (sigismember(&processes[pid].sigprocmask, signum))
-	return 0; // No action
+    sigaddset(&processes[pid].sigdelivering, signum);
       
-      memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+    return 2; // Custom action
+  }
 
-      if ( ((int)processes[pid].sigactions[signum-1].sa_handler) == 0)
-	return 1; // Default action
-
-      sigaddset(&processes[pid].sigdelivering, signum);
-      
-      return 2; // Custom action
-    }
-
-    return 0; // No action
+  return 0; // No action
 }
 
 void process_signal_delivered(pid_t pid, int signum) {
 
+  pid = pid & 0xffff;
+  
   sigdelset(&processes[pid].sigdelivering, signum);
 }
 
 int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec) {
 
+  pid = pid & 0xffff;
+  
   if (processes[pid].timerfd < 0)
     processes[pid].timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
 
@@ -862,13 +928,17 @@ int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_se
 }
 
 void process_clearitimer(pid_t pid) {
- 
+
+  pid = pid & 0xffff;
+  
   if (processes[pid].timerfd >= 0)
     close(processes[pid].timerfd);
 }
 
 int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, int * remote_fd, int flag) {
 
+  pid = pid & 0xffff;
+  
   for (int i = 0; i < NB_FILES_MAX; ++i) {
 
     if (processes[pid].fds[i].fd >= 0) {
