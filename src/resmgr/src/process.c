@@ -555,11 +555,14 @@ int process_get_fs_flags(pid_t pid, int fd) {
   return -1;
 }
 
-struct sockaddr_un * process_get_peer_addr(pid_t pid) {
+void process_get_peer_addr(pid_t pid, struct sockaddr_un * addr) {
 
-  pid = pid & 0xffff;
+  /*pid = pid & 0xffff;
   
-  return &processes[pid].peer_addr;
+    return &processes[pid].peer_addr;*/
+
+  addr->sun_family = AF_UNIX;
+  sprintf(addr->sun_path, "channel.process.%d", pid);
 }
 
 pid_t process_group_exists(pid_t pgid) {

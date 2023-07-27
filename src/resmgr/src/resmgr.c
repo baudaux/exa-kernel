@@ -202,7 +202,12 @@ int main() {
 	    //  emscripten_log(EM_LOG_CONSOLE, "resmgr: process_kill action=%d", action);
 
 	    if (action == 2) {
-	      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+
+	      struct sockaddr_un addr;
+
+	      process_get_peer_addr(msg->pid, &addr);
+       
+	      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
 	    }
 	  }
 	}
@@ -382,7 +387,11 @@ int main() {
       
       // Forward response to process
 
-      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == BIND) {
 
@@ -528,7 +537,11 @@ int main() {
 
       // Forward response to process
 
-      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+       
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
       
     }
     else if (msg->msg_id == CLOSE) {
@@ -608,7 +621,7 @@ int main() {
     }
     else if (msg->msg_id == (CLOSE|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Response from CLOSE from %d (%s)", msg->pid, process_get_peer_addr(msg->pid)->sun_path);
+      emscripten_log(EM_LOG_CONSOLE, "Response from CLOSE from %d", msg->pid);
 
       unsigned long job;
       
@@ -658,7 +671,11 @@ int main() {
 
 	// Forward response to process
 
-	sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+	struct sockaddr_un addr;
+
+	process_get_peer_addr(msg->pid, &addr);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
       }
       
     }
@@ -871,7 +888,11 @@ int main() {
     }
     else if (msg->msg_id == (FCNTL|0x80)) {
 
-      sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == SETSID) {
 
@@ -1236,8 +1257,12 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "Response from STAT from %d: errno=%d", msg->pid, msg->_errno);
       
       // Forward response to process
+
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
       
-      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
       
     }
     else if (msg->msg_id == LSTAT) {
@@ -1320,8 +1345,12 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "Response from LSTAT from %d", msg->pid);
 
       // Forward response to process
+
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
       
-      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
       
     }
     else if (msg->msg_id == TIMERFD_CREATE) {
@@ -1436,7 +1465,11 @@ int main() {
 	    msg->_errno = ENOENT;
       }
 
-      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == GETDENTS) {
 
@@ -1707,7 +1740,11 @@ int main() {
 
       // Forward response to process
 
-      sendto(sock, buf, 1256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 1256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == FSTAT) {
 
@@ -1761,7 +1798,11 @@ int main() {
 
        // Forward response to process
 
-       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+       struct sockaddr_un addr;
+
+       process_get_peer_addr(msg->pid, &addr);
+
+       sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
      }
      else if (msg->msg_id == UNAME) {
       
@@ -1881,7 +1922,11 @@ int main() {
 
       // Forward response to process
 
-       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == RENAMEAT) {
 
@@ -2001,7 +2046,11 @@ int main() {
 
       // Forward response to process
 
-       sendto(sock, buf, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
     else if (msg->msg_id == PTHREAD_CREATE) {
       
@@ -2111,9 +2160,14 @@ int do_exit(int sock, struct message * msg) {
     msg->_u.wait_msg.status = exit_status << 8;
 
     emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d -> status=%d", msg->pid, msg->_u.wait_msg.status);
+    
     // Forward response to process
+
+    struct sockaddr_un addr;
+
+    process_get_peer_addr(msg->pid, &addr);
 	
-    sendto(sock, (char *)msg, 256, 0, (struct sockaddr *)process_get_peer_addr(msg->pid), sizeof(struct sockaddr_un));
+    sendto(sock, (char *)msg, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
 
     return 1;
   }
