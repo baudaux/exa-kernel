@@ -51,7 +51,8 @@
 
 enum {
   // NO_JOB=0
-  READ_WRITE_JOB = 0x40000000,
+  WRITE_JOB  = 0x20000000,
+  IO_JOB     = 0x40000000,
   SELECT_JOB = 0x80000000,
 };
 
@@ -71,7 +72,7 @@ static int major;
 
 void init_fds() {
 
-  for (int i=0; i<NB_FD_MAX; ++i) {
+  for (int i=0; i < NB_FD_MAX; ++i) {
     
     fds[i].read_fd = -1;
     fds[i].write_fd = -1;
@@ -80,7 +81,7 @@ void init_fds() {
 
 int find_fd(int fd[2], int flags) {
 
-  for (int i=0; i<NB_FD_MAX; ++i) {
+  for (int i=0; i < NB_FD_MAX; ++i) {
 
     if ( (fds[i].read_fd < 0) && ((fds[i].write_fd < 0)) ) {
 
@@ -209,13 +210,13 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x3fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
 
 	    if (job) { // a write or select is pending
 	      
-	      if ((job & 0xC0000000) == READ_WRITE_JOB) { // write in this case
+	      if ((job & 0xE0000000) == (WRITE_JOB|IO_JOB)) { // write in this case
 
 		struct message * msg2 = (struct message *)&buf2[0];
 		
@@ -258,13 +259,13 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x3fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
 
 	    if (job) { // a read or select is pending
 	      
-	      if ((job & 0xC0000000) == READ_WRITE_JOB) { // read in this case
+	      if ((job & 0xE0000000) == IO_JOB) { // read in this case
 
 		struct message * msg2 = (struct message *)&buf2[0];
 		
@@ -328,13 +329,13 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x3fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE -> pending job = %lu", job);
 
 	    if (job) { // a write or select is pending
 	      
-	      if ( (job & 0xC0000000) == READ_WRITE_JOB) { // write in this case
+	      if ( (job & 0xE0000000) == (WRITE_JOB|IO_JOB)) { // write in this case
 
 		struct message * msg2 = (struct message *)&buf2[0];
 		
@@ -369,9 +370,16 @@ int main() {
 		  }
 		}
 	      }
-	      else if ( (job & 0xC0000000) == SELECT_JOB) {
+	      else if ( (job & 0xE0000000) == (WRITE_JOB|SELECT_JOB)) {
+		
+		struct message * msg2 = (struct message *)&buf2[0];
 
-		//TODO
+		msg2->msg_id |= 0x80;
+
+		msg2->_errno = 0;
+		  
+		sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		del_pending_job(jobs, job, msg2->pid);
 	      }
 	    }
 	    
@@ -391,7 +399,7 @@ int main() {
 
 	    msg->msg_id |= 0x80;
 	    
-	    add_pending_job(jobs, READ_WRITE_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
+	    add_pending_job(jobs, IO_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
 
 	    continue; // do not send read ack since write is pending
 	  }
@@ -429,13 +437,13 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x3fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE -> pending job = %lu", job);
 
 	    if (job) { // a read or select is pending
 	      
-	      if ( (job & 0xC0000000) == READ_WRITE_JOB) { // read in this case
+	      if ( (job & 0xE0000000) == IO_JOB) { // read in this case
 
 		struct message * msg2 = (struct message *)&buf2[0];
 		
@@ -465,9 +473,16 @@ int main() {
 
 		free(buf3);
 	      }
-	      else if ( (job & 0xC0000000) == SELECT_JOB) {
+	      else if ( (job & 0xE0000000) == SELECT_JOB) {
+		
+		struct message * msg2 = (struct message *)&buf2[0];
 
-		//TODO
+		msg2->msg_id |= 0x80;
+
+		msg2->_errno = 0;
+		  
+		sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		del_pending_job(jobs, job, msg2->pid);
 	      }
 	    }
 	  }
@@ -481,7 +496,7 @@ int main() {
 	    
 	    msg->msg_id |= 0x80;
 	    
-	    add_pending_job(jobs, READ_WRITE_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
+	    add_pending_job(jobs, WRITE_JOB | IO_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
 	    
 	    continue; // do not send write ack since write is pending
 	  }
@@ -550,7 +565,59 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
-    
+    else if (msg->msg_id == SELECT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: %d %d %d %d", msg->pid, msg->_u.select_msg.fd, msg->_u.select_msg.remote_fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop);
+
+      int answer = 0;
+
+      int i = msg->_u.select_msg.remote_fd / 2;
+
+      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+      
+	if (msg->_u.select_msg.start_stop) { // start
+
+	  if (msg->_u.select_msg.read_write) { // write
+	
+	    if ((msg->_u.select_msg.remote_fd % 2) == 1) {
+
+	      if (count_circular_buffer(&fds[i].buf) <= (PIPE_SIZE-2)) {
+		answer = 1;
+	      }
+	      else {
+
+		add_pending_job(jobs, SELECT_JOB | msg->_u.select_msg.remote_fd, msg->pid, msg, bytes_rec, &remote_addr);
+	      }
+	    }
+	  }
+	  else {
+
+	    if ((msg->_u.select_msg.remote_fd % 2) == 0) {
+
+	      if (count_circular_buffer(&fds[i].buf) > 0) {
+		answer = 1;
+	      }
+	      else {
+		
+		add_pending_job(jobs, SELECT_JOB | msg->_u.select_msg.remote_fd, msg->pid, msg, bytes_rec, &remote_addr);
+	      }
+	    }
+	  }
+	}
+	else {
+
+	  del_pending_job(jobs, SELECT_JOB | msg->_u.select_msg.remote_fd, msg->pid);
+	}
+      }
+      
+      if (answer > 0) {
+
+	 msg->msg_id |= 0x80;
+
+	 msg->_errno = 0;
+	 sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+    }
   }
   
   return 0;
