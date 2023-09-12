@@ -260,6 +260,7 @@ struct select_message {
   int read_write; // 0: read, 1: write
   int start_stop; // 1: start, 0: stop
   int remote_fd;
+  int once;       // 1: timer is zero, 0: timer is non zero
 };
 
 struct timerfd_create_message {

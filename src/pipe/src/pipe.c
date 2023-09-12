@@ -429,7 +429,7 @@ int main() {
 
 	  int len = write_circular_buffer(&fds[i].buf, msg->_u.io_msg.len, msg->_u.io_msg.buf);
 
-	  emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE %d bytes written", len);
+	  emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE %d bytes written (%d)", len, count_circular_buffer(&fds[i].buf));
 
 	  if (len > 0) {
 
@@ -476,6 +476,8 @@ int main() {
 	      else if ( (job & 0xE0000000) == SELECT_JOB) {
 		
 		struct message * msg2 = (struct message *)&buf2[0];
+
+		emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE -> pending job SELECT: %d %d", msg2->_u.select_msg.fd, msg2->_u.select_msg.remote_fd);
 
 		msg2->msg_id |= 0x80;
 
@@ -582,9 +584,12 @@ int main() {
 	    if ((msg->_u.select_msg.remote_fd % 2) == 1) {
 
 	      if (count_circular_buffer(&fds[i].buf) <= (PIPE_SIZE-2)) {
+
+		emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: %d bytes in queue %d (write)", msg->pid, count_circular_buffer(&fds[i].buf), i);
+		
 		answer = 1;
 	      }
-	      else {
+	      else if (!msg->_u.select_msg.once) {
 
 		add_pending_job(jobs, SELECT_JOB | msg->_u.select_msg.remote_fd, msg->pid, msg, bytes_rec, &remote_addr);
 	      }
@@ -595,9 +600,12 @@ int main() {
 	    if ((msg->_u.select_msg.remote_fd % 2) == 0) {
 
 	      if (count_circular_buffer(&fds[i].buf) > 0) {
+
+		emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: %d bytes in queue %d (read)", msg->pid, count_circular_buffer(&fds[i].buf), i);
+		
 		answer = 1;
 	      }
-	      else {
+	      else if (!msg->_u.select_msg.once) {
 		
 		add_pending_job(jobs, SELECT_JOB | msg->_u.select_msg.remote_fd, msg->pid, msg, bytes_rec, &remote_addr);
 	      }
@@ -611,6 +619,8 @@ int main() {
       }
       
       if (answer > 0) {
+
+	emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: answer remote_fd=%d", msg->pid, msg->_u.select_msg.remote_fd);
 
 	 msg->msg_id |= 0x80;
 
