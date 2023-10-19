@@ -43,7 +43,10 @@ void device_init() {
   struct vnode * vnode = vfs_find_node("/", NULL);
 
   // Add /dev
-  vfs_add_dir(vnode, "dev");
+  struct vnode * devnode = vfs_add_dir(vnode, "dev");
+
+  // Add /dev/pts
+  vfs_add_dir(devnode, "pts");
 
   // Add /bin for netfs
   vfs_add_dir(vnode, "bin");
@@ -113,8 +116,23 @@ int device_register_device(unsigned char type, unsigned short major, unsigned sh
 
   if ( (type == CHR_DEV) || ((type == BLK_DEV)) ) {
 
-    // add device in /dev
-    struct vnode * vnode = vfs_find_node("/dev", NULL);
+    // name can be a path, so find last '/'
+
+    char * s = strrchr(name, '/');
+
+    char root[128] = "/dev";
+
+    if (s) {
+
+      strcat(root, "/");
+      strncat(root, name, s-name);
+      root[5+s-name] = 0;
+      
+      name = s+1;
+    }
+    
+    // add device in /dev or /dev/...
+    struct vnode * vnode = vfs_find_node(root, NULL);
   
     if (vnode) {
       vfs_add_dev(vnode, name, type, major, minor);
