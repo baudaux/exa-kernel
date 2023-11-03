@@ -276,6 +276,14 @@ struct cwd_message {
   unsigned char buf[];
 };
 
+struct cwd2_message {
+
+  unsigned short major;
+  unsigned short minor;
+  unsigned long len;
+  unsigned char buf[];
+};
+
 struct getdents_message {
 
   int fd;
@@ -492,6 +500,7 @@ struct message {
     struct select_message select_msg;
     struct timerfd_create_message timerfd_create_msg;
     struct cwd_message cwd_msg;
+    struct cwd2_message cwd2_msg;
     struct getdents_message getdents_msg;
     struct wait_message wait_msg;
     struct exit_message exit_msg;

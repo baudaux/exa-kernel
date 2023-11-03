@@ -68,6 +68,12 @@ void device_init() {
 
   // Add /home
   vfs_add_dir(vnode, "home");
+
+  // Add /media
+  struct vnode * media = vfs_add_dir(vnode, "media");
+  
+  // Add /media/localhost
+  vfs_add_dir(media, "localhost");
 }
 
 unsigned short device_register_driver(unsigned char type, const char * name, const char * peer) {
@@ -133,7 +139,7 @@ int device_register_device(unsigned char type, unsigned short major, unsigned sh
     
     // add device in /dev or /dev/...
     struct vnode * vnode = vfs_find_node(root, NULL);
-  
+    
     if (vnode) {
       vfs_add_dev(vnode, name, type, major, minor);
 

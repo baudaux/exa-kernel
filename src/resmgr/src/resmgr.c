@@ -325,7 +325,7 @@ int main() {
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
 	emscripten_log(EM_LOG_CONSOLE, "Mount path: %s", pathname);
 
-	if (strcmp((const char *)&(pathname[0]),"/etc") == 0) {
+	if (strcmp((const char *)&(pathname[0]),"/media/localhost") == 0) {
 
 	  memset(buf, 0, 1256);
 	  msg->msg_id = WRITE;
@@ -1429,10 +1429,13 @@ int main() {
 
 	  if (trail)
 	    strcat(new_dir, trail);
-	  
-	  strcpy(msg->_u.cwd_msg.buf, new_dir);
 
-	  emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s -> send to driver", msg->pid, msg->_u.cwd_msg.buf);
+	  msg->_u.cwd2_msg.major = vnode->_u.dev.major;
+	  msg->_u.cwd2_msg.minor = vnode->_u.dev.minor;
+	  
+	  strcpy(msg->_u.cwd2_msg.buf, new_dir);
+
+	  emscripten_log(EM_LOG_CONSOLE, "CHDIR from %d: %s -> send to driver", msg->pid, msg->_u.cwd2_msg.buf);
 
 	  driver_addr.sun_family = AF_UNIX;
 	  strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
@@ -1457,11 +1460,11 @@ int main() {
     }
     else if (msg->msg_id == (CHDIR|0x80)) {
 
-      emscripten_log(EM_LOG_CONSOLE, "Return from CHDIR from %d: %s", msg->pid, msg->_u.cwd_msg.buf);
+      emscripten_log(EM_LOG_CONSOLE, "Return from CHDIR from %d: %s", msg->pid, msg->_u.cwd2_msg.buf);
 
       if (msg->_errno == 0) {
 
-	if (process_chdir(msg->pid, (char *)msg->_u.cwd_msg.buf) < 0)
+	if (process_chdir(msg->pid, (char *)msg->_u.cwd2_msg.buf) < 0)
 	    msg->_errno = ENOENT;
       }
 

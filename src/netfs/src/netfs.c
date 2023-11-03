@@ -54,10 +54,12 @@ struct device_ops {
   ssize_t (*write)(int fildes, const void *buf, size_t nbyte);
   int (*ioctl)(int fildes, int request, ... /* arg */);
   int (*close)(int fd);
-  int (*stat)(const char *pathname, struct stat * stat);
+  int (*stat)(const char *pathname, struct stat * stat, unsigned short minor);
   ssize_t (*getdents)(int fd, char * buf, ssize_t count);
   int (*seek)(int fd, int offset, int whence);
-  int (*faccess)(const char *pathname, int amode, int flags);
+  int (*faccess)(const char *pathname, int amode, int flags, unsigned short minor);
+
+  char root[128];
 };
 
 struct fd_entry {
@@ -118,7 +120,7 @@ int find_fd_entry(int fd) {
   return -1;
 }
 
-EM_JS(int, do_fetch_head, (const char * pathname), {
+EM_JS(int, do_fetch_head, (const char * root, const char * pathname), {
     
   return Asyncify.handleSleep(function (wakeUp) {
 
@@ -135,7 +137,7 @@ EM_JS(int, do_fetch_head, (const char * pathname), {
       if (path[0] == '/')
 	sep = "";
       
-      fetch("/netfs" + sep + path, myInit).then(function (response) {
+      fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
 	  
 	  //console.log(response.headers.get('Accept-Ranges'));
 	  //console.log(response.headers.get('Content-Length'));
@@ -156,7 +158,7 @@ EM_JS(int, do_fetch_head, (const char * pathname), {
   });
 });
 
-EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, unsigned int count), {
+EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int offset, void * buf, unsigned int count), {
     
   return Asyncify.handleSleep(function (wakeUp) {
 
@@ -173,7 +175,7 @@ EM_JS(int, do_fetch, (const char * pathname, unsigned int offset, void * buf, un
       if (path[0] == '/')
 	sep = "";
       
-      fetch("/netfs" + sep + path, myInit).then(function (response) {
+      fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
 	  
 	  //console.log(response.headers.get('Accept-Ranges'));
 	  //console.log(response.headers.get('Content-Length'));
@@ -241,7 +243,7 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
       return -ENOMEM;
     }
     
-    size = do_fetch(fds[i].pathname, 0, data, fds[i].size);
+    size = do_fetch(devices[fds[i].minor]->root, fds[i].pathname, 0, data, fds[i].size);
 
     emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes fetched (/%d)", size, fds[i].size);
 
@@ -302,7 +304,7 @@ static int netfs_close(int fd) {
   return 0;
 }
 
-static int netfs_stat(const char * pathname, struct stat * stat) {
+static int netfs_stat(const char * pathname, struct stat * stat, unsigned short minor) {
 
   emscripten_log(EM_LOG_CONSOLE, "netfs_stat: %s", pathname);
 
@@ -321,10 +323,12 @@ static int netfs_stat(const char * pathname, struct stat * stat) {
   _errno = ENOENT;
 
   char buf[1256];
+
+  emscripten_log(EM_LOG_CONSOLE, "netfs_stat: do_fetch minor=%d root=%s", minor, devices[minor]->root);
   
   sprintf(buf, "../query?stat=%s", pathname);
-
-  int size = do_fetch(buf, 0, buf, 1256);
+  
+  int size = do_fetch(devices[minor]->root, buf, 0, buf, 1256);
   
   if (size > 0) {
 
@@ -374,7 +378,7 @@ static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, 
   int _errno;
   struct stat stat;
 
-  if ((_errno=netfs_stat(pathname, &stat)) == 0) {
+  if ((_errno=netfs_stat(pathname, &stat, minor)) == 0) {
     
     int remote_fd =  add_fd_entry(pid, minor, pathname, flags, mode, stat.st_size);
 
@@ -418,7 +422,7 @@ static ssize_t netfs_getdents(int fd, char * data_buf, ssize_t count) {
 
     int tmp_size = 8192;
     char * tmp = (char *)malloc(tmp_size+1);
-    tmp_size = do_fetch(buf2, 0, tmp, tmp_size);
+    tmp_size = do_fetch(devices[fds[i].minor]->root, buf2, 0, tmp, tmp_size);
       
     tmp[tmp_size] = 0;
 
@@ -640,12 +644,12 @@ static int netfs_seek(int fd, int offset, int whence) {
   return fds[i].offset;
 }
 
-static int netfs_faccess(const char * pathname, int amode, int flags) {
+static int netfs_faccess(const char * pathname, int amode, int flags, unsigned short minor) {
 
   if (amode & W_OK)
     return EACCES;
 
-  if (do_fetch_head(pathname) < 0)
+  if (do_fetch_head(devices[minor]->root, pathname) < 0)
     return EACCES;
       
   return 0;
@@ -662,6 +666,21 @@ static struct device_ops netfs_ops = {
   .getdents = netfs_getdents,
   .seek = netfs_seek,
   .faccess = netfs_faccess,
+  .root = "/netfs",
+};
+
+static struct device_ops localhost_ops = {
+
+  .open = netfs_open,
+  .read = netfs_read,
+  .write = netfs_write,
+  .ioctl = netfs_ioctl,
+  .close = netfs_close,
+  .stat = netfs_stat,
+  .getdents = netfs_getdents,
+  .seek = netfs_seek,
+  .faccess = netfs_faccess,
+  .root = "http://localhost:7777",
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -758,7 +777,7 @@ int main() {
 
       minor += 1;
 	
-      register_device(minor, &netfs_ops);
+      register_device(minor, (minor < 4)?&netfs_ops:&localhost_ops);
       
       msg->msg_id = REGISTER_DEVICE;
       msg->_u.dev_msg.minor = minor;
@@ -784,22 +803,46 @@ int main() {
 
       memset(msg->_u.mount_msg.pathname, 0, sizeof(msg->_u.mount_msg.pathname));
 
-      if (minor == 1)
+      switch(minor) {
+
+      case 1:
+
 	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/bin");
-      else if (minor == 2)
+	break;
+
+      case 2:
+
 	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/usr");
-      else if (minor == 3)
+	break;
+
+      case 3:
+
 	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/etc");
-  
+	break;
+
+      case 4:
+
+	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/media/localhost");
+	break;
+
+      default:
+	break;
+      }
+      
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
     else if (msg->msg_id == (MOUNT|0x80)) {
 
-      if (msg->_u.mount_msg.minor < 3) {
+      if (msg->_errno)
+	continue;
+
+      emscripten_log(EM_LOG_CONSOLE, "MOUNT successful: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+
+      if (msg->_u.mount_msg.minor < 4) {
 	
 	minor += 1;
 	
-	register_device(minor, &netfs_ops);
+	register_device(minor, (minor < 4)?&netfs_ops:&localhost_ops);
       
 	msg->msg_id = REGISTER_DEVICE;
 	msg->_u.dev_msg.dev_type = FS_DEV;	
@@ -929,7 +972,7 @@ int main() {
 
       int _errno = 0;
 
-      if ((_errno=get_device(msg->_u.stat_msg.minor)->stat((const char *)(msg->_u.stat_msg.pathname_or_buf), &stat_buf)) == 0) {
+      if ((_errno=get_device(msg->_u.stat_msg.minor)->stat((const char *)(msg->_u.stat_msg.pathname_or_buf), &stat_buf, msg->_u.stat_msg.minor)) == 0) {
 	
 	msg->_u.stat_msg.len = sizeof(struct stat);
 	memcpy(msg->_u.stat_msg.pathname_or_buf, &stat_buf, sizeof(struct stat));
@@ -1022,7 +1065,7 @@ int main() {
 
       struct stat stat_buf;
 
-      msg->_errno = get_device(1)->stat((const char *)(msg->_u.cwd_msg.buf), &stat_buf);
+      msg->_errno = get_device(msg->_u.cwd2_msg.minor)->stat((const char *)(msg->_u.cwd2_msg.buf), &stat_buf, msg->_u.cwd2_msg.minor);
 
       msg->msg_id |= 0x80;
 
@@ -1060,7 +1103,7 @@ int main() {
     }
     else if (msg->msg_id == FACCESSAT) {
 
-      msg->_errno = get_device(msg->_u.faccessat_msg.minor)->faccess((const char *)(msg->_u.faccessat_msg.pathname), msg->_u.faccessat_msg.amode, msg->_u.faccessat_msg.flags);
+      msg->_errno = get_device(msg->_u.faccessat_msg.minor)->faccess((const char *)(msg->_u.faccessat_msg.pathname), msg->_u.faccessat_msg.amode, msg->_u.faccessat_msg.flags, msg->_u.faccessat_msg.minor);
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
@@ -1082,7 +1125,7 @@ int main() {
 
 	int _errno = 0;
 
-	if ((_errno=get_device(min)->stat((const char *)fds[i].pathname, &stat_buf)) == 0) {
+	if ((_errno=get_device(min)->stat((const char *)fds[i].pathname, &stat_buf, min)) == 0) {
 	
 	  msg->_u.fstat_msg.len = sizeof(struct stat);
 	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat));

@@ -902,7 +902,7 @@ int main() {
 
       struct stat stat_buf;
 
-      msg->_errno = get_device(1)->stat((const char *)(msg->_u.cwd_msg.buf), &stat_buf);
+      msg->_errno = get_device(msg->_u.cwd2_msg.minor)->stat((const char *)(msg->_u.cwd2_msg.buf), &stat_buf);
 
       msg->msg_id |= 0x80;
 
