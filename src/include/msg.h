@@ -83,7 +83,7 @@ enum message_id {
   SETSOCKOPT,
   PTHREAD_CREATE = 60,
   PTHREAD_EXIT,
-  
+  END_OF_SIGNAL
 };
 
 enum dev_type {
@@ -260,7 +260,7 @@ struct select_message {
   int read_write; // 0: read, 1: write
   int start_stop; // 1: start, 0: stop
   int remote_fd;
-  int once;       // 1: timer is zero, 0: timer is non zero
+  int once;       // 1: timer is zero, 0: timer is non zero, 2: pollhup
 };
 
 struct timerfd_create_message {

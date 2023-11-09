@@ -79,6 +79,9 @@ struct process {
 void process_init();
 
 pid_t process_fork(pid_t pid, pid_t ppid, const char * name);
+void process_reset_sigactions(pid_t pid);
+
+int process_get_state(pid_t pid);
 
 pid_t create_tty_process();
 pid_t create_netfs_process();
@@ -114,11 +117,13 @@ char * process_getcwd(pid_t pid);
 int process_chdir(pid_t pid, char * dir);
 
 pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status);
-pid_t process_exit(pid_t pid, int status);
+void process_to_zombie(pid_t pid, int status);
+pid_t process_exit(pid_t pid, int sock);
+pid_t process_exit_child(pid_t ppid, int sock);
 
 int process_sigaction(pid_t pid, int signum, struct sigaction * act);
 int process_sigprocmask(pid_t pid, int how, sigset_t * set);
-int process_kill(pid_t pid, int sig, struct sigaction * act);
+int process_kill(pid_t pid, int sig, struct sigaction * act, int sock);
 void process_signal_delivered(pid_t pid, int signum);
 
 int process_setitimer(pid_t pid, int which, int val_sec, int val_usec, int it_sec, int it_usec);

@@ -12,11 +12,13 @@
 
 #include "process.h"
 #include "vfs.h"
+#include "msg.h"
 
 #include <string.h>
 #include <signal.h>
 
 #include <sys/timerfd.h>
+#include <sys/wait.h>
 
 #include <emscripten.h>
 
@@ -269,7 +271,6 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
     memcpy(&processes[pid].sigprocmask, &processes[ppid].sigprocmask, sizeof(sigset_t));
 
     memcpy(&processes[pid].sigactions, &processes[ppid].sigactions, 32*sizeof(struct sigaction));
-    
   }
   else {
 
@@ -335,6 +336,20 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
   ++nb_processes;
 
   return pid;
+}
+
+void process_reset_sigactions(pid_t pid) {
+
+  sigemptyset(&processes[pid].sigprocmask);
+
+  memset(&processes[pid].sigactions, 0, 32*sizeof(struct sigaction));
+}
+
+int process_get_state(pid_t pid) {
+
+  pid = pid & 0xffff;
+
+  return processes[pid].proc_state;
 }
 
 void dump_processes() {
@@ -735,18 +750,34 @@ void process_terminate(pid_t pid) {
 
   //TOTEST
   exit_proc(pid);
+
+  for (int i = 0; i < nb_processes; ++i) {
+
+    if (processes[i].ppid == pid) {
+      
+      if (processes[i].proc_state == ZOMBIE_STATE) {
+
+	process_terminate(i);
+      }
+      else if (processes[i].proc_state != EXITED_STATE) {
+
+	emscripten_log(EM_LOG_CONSOLE, "process_wait: attach process %d to resmgr", i);
+
+	processes[i].ppid = 1; // attach process to resmgr
+      }
+    
+    }
+  }
 }
 
 pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
 
+  int ret = -1;
+  
   if (pid > 0)
     pid = pid & 0xffff;
   
   ppid = ppid & 0xffff;
-  
-  processes[ppid].wait_child = 1;
-  processes[ppid].wait_pid = pid;
-  processes[ppid].wait_options = options;
   
   for (int i = 0; i < nb_processes; ++i) {
 
@@ -757,19 +788,31 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
 
 	emscripten_log(EM_LOG_CONSOLE, "process_wait: found child pid %d", i);
 	
-	*status = processes[i].status;
-
-	process_terminate(i);
-	
-	return i;
+	ret = i;
+	break;
       }
     }
   }
-  
-  return 0;
+
+  if (ret >= 0) { // found a zombie child
+
+    *status = processes[ret].status;
+
+    process_terminate(ret);
+  }
+  else if (!(options & WNOHANG)) { // wait for a child process in a blocking way
+
+    processes[ppid].wait_child = 1;
+    processes[ppid].wait_pid = pid;
+    processes[ppid].wait_options = options;
+
+    ret = 0;
+  }
+
+  return ret;
 }
 
-pid_t process_exit(pid_t pid, int status) {
+void process_to_zombie(pid_t pid, int status) {
 
   pid = pid & 0xffff;
   
@@ -777,23 +820,74 @@ pid_t process_exit(pid_t pid, int status) {
   processes[pid].status = status;
 
   del_proc_entry(pid);
+}
+
+pid_t process_exit(pid_t pid, int sock) {
+
+  emscripten_log(EM_LOG_CONSOLE, "process_exit: pid=%d state=%d", pid, processes[pid].proc_state);
+  
+  if (processes[pid].proc_state != ZOMBIE_STATE)
+    return 0;
 
   int ppid = processes[pid].ppid;
 
-  //TODO : stop timers
+  emscripten_log(EM_LOG_CONSOLE, "process_exit: ppid=%d wait_child=%d wait_pid=%d", ppid, processes[ppid].wait_child, processes[ppid].wait_pid);
   
-  if (processes[ppid].wait_child &&
-      ( (processes[ppid].wait_pid == -1) || (processes[ppid].wait_pid == pid) ) ) {
+  //TODO: case of several pthread 
+  
+  if ( (ppid == 1) || (processes[ppid].wait_child &&
+		       ( (processes[ppid].wait_pid == -1) || (processes[ppid].wait_pid == pid) ) ) ) {
 
     // TODO: add other conditions (group)
 
     emscripten_log(EM_LOG_CONSOLE, "process_exit: found parent pid %d", ppid);
     
     process_terminate(pid);
+
+    processes[ppid].wait_child = 0;
+
+    if (ppid > 1) { // parent (except resmgr) is waiting child's exit 
+
+      char buf[256];
+      struct message * msg = &buf[0];
+
+      msg->msg_id = WAIT|0x80;
+      msg->pid = ppid;
+      msg->_errno = 0;
+
+      msg->_u.wait_msg.pid = pid;
+      msg->_u.wait_msg.status = processes[pid].status;
+
+      emscripten_log(EM_LOG_CONSOLE, "finish_exit: Send wait response to parent %d -> status=%d", msg->pid, msg->_u.wait_msg.status);
+    
+      // Forward response to process
+
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+	
+      sendto(sock, (char *)msg, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
+    }
       
     return ppid;
   }
   
+  return 0;
+}
+
+pid_t process_exit_child(pid_t ppid, int sock) {
+
+  if (processes[ppid].wait_child) {
+
+    for (int i=0; i < nb_processes; ++i) {
+
+      if ( (processes[i].ppid == ppid) && (processes[i].proc_state == ZOMBIE_STATE) && ( (processes[ppid].wait_pid == -1) || (processes[ppid].wait_pid == i) ) ) {
+
+	return process_exit(i, sock);
+      }
+    }
+  }
+
   return 0;
 }
 
@@ -866,9 +960,14 @@ int process_sigprocmask(pid_t pid, int how, sigset_t * set) {
   return 0;
 }
 
-int process_kill(pid_t pid, int signum, struct sigaction * act) {
+int process_kill(pid_t pid, int signum, struct sigaction * act, int sock) {
 
   pid = pid & 0xffff;
+
+  if (processes[pid].proc_state != RUNNING_STATE)
+    return 0;
+
+  int action = 0; // No action
   
   if ( (signum == SIGKILL) || (signum == SIGSTOP) ) {
 
@@ -876,26 +975,49 @@ int process_kill(pid_t pid, int signum, struct sigaction * act) {
 
     // Cannot change default behaviour for SIGKILL and SIGSTOP
       
-    return 1; // Default action
+    action = 1; // Default action
   }
   else if ( (((int)processes[pid].sigactions[signum-1].sa_handler) != -2) && (!sigismember(&processes[pid].sigdelivering, signum)) ) { // Signal not ignored
 
     sigaddset(&processes[pid].sigpending, signum);
 
-    if (sigismember(&processes[pid].sigprocmask, signum))
-      return 0; // No action
+    if (!sigismember(&processes[pid].sigprocmask, signum)) {
       
-    memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+      memcpy(act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
 
-    if ( ((int)processes[pid].sigactions[signum-1].sa_handler) == 0)
-      return 1; // Default action
+      if ( ((int)processes[pid].sigactions[signum-1].sa_handler) == 0) {
+	
+	action = 1; // Default action
+      }
+      else {
 
-    sigaddset(&processes[pid].sigdelivering, signum);
-      
-    return 2; // Custom action
+	sigaddset(&processes[pid].sigdelivering, signum);
+	
+	action = 2; // Custom action
+
+	char buf[256];
+	struct message * msg = &buf[0];
+
+	msg->msg_id = KILL;
+	msg->pid = 1;
+	msg->_u.kill_msg.pid = pid;
+	msg->_u.kill_msg.sig = signum;
+	memcpy(&msg->_u.kill_msg.act, &processes[pid].sigactions[signum-1], sizeof(struct sigaction));
+	
+	struct sockaddr_un addr;
+	
+	process_get_peer_addr(pid, &addr);
+
+	emscripten_log(EM_LOG_CONSOLE, "process_kill: send signal %d to pid %d (%s)", signum, pid, addr.sun_path);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &addr, sizeof(addr));
+      }
+    }
   }
 
-  return 0; // No action
+  emscripten_log(EM_LOG_CONSOLE, "<-- process_kill: pid=%d sig=%d action=%d", pid, signum, action);
+
+  return action;
 }
 
 void process_signal_delivered(pid_t pid, int signum) {
@@ -934,8 +1056,10 @@ void process_clearitimer(pid_t pid) {
 
   pid = pid & 0xffff;
   
-  if (processes[pid].timerfd >= 0)
+  if (processes[pid].timerfd >= 0) {
     close(processes[pid].timerfd);
+    processes[pid].timerfd = -1;
+  }
 }
 
 int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, int * remote_fd, int flag) {

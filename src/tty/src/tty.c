@@ -49,7 +49,7 @@
 #define TTY_PATH "/var/tty.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
-#define NB_TTY_MAX       8
+#define NB_TTY_MAX       32
 
 #define TTY_BUF_SIZE     (16*1024)
 
@@ -111,7 +111,11 @@ struct device_desc {
   pid_t session;
   pid_t fg_pgrp;
 
+  enum tty_dev_type type;
+
   int ptm_fd; // used for pts dev
+
+  int state; // 0: closed; 1: open
 };
 
 struct client {
@@ -137,12 +141,118 @@ static struct client clients[64];
 
 // TODO : do not use fd as index
 
+struct device_desc * get_device(unsigned short m) {
+
+  return &devices[m];
+}
+
+struct device_desc * get_device_from_fd(int fd) {
+
+  return &devices[clients[fd].minor];
+}
+
+struct device_desc * get_device_from_session(pid_t sid, unsigned short * min) {
+
+  for (unsigned short i = 1; i <= minor; i++) {
+
+    if (devices[i].session == sid) {
+
+      *min = i;
+      return &devices[i];
+    }
+  }
+
+  return NULL;
+}
+
 static int add_client(int fd, pid_t pid, unsigned short m, int flags, unsigned short mode) {
 
   clients[fd].pid = pid;
   clients[fd].minor = m;
   clients[fd].flags = flags;
   clients[fd].mode = mode;
+  clients[fd].pts_dev_minor = -1;
+  
+  devices[m].state = 1;
+
+  return fd;
+}
+
+static int del_client(int fd) {
+
+  clients[fd].pid = -1;
+
+  if (devices[clients[fd].minor].ptm_fd >= 0) {  // pts
+
+    int found = 0;
+  
+    for (int i = 1; i <= last_fd; ++i) {
+
+      if ( (clients[i].pid >= 0) && (clients[fd].minor == clients[i].minor) )
+	found = 1;
+    }
+
+    if (!found) { // no other open client for this device
+    
+      emscripten_log(EM_LOG_CONSOLE,"!! pts closed: need to notify other side i.e ptm");
+
+      devices[clients[fd].minor].state = 0;
+
+      struct device_desc * ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
+
+      unsigned char reply_buf[256];
+      struct message * reply_msg = (struct message *)&reply_buf[0];
+      
+      if ( (ptm_dev->read_pending.fd >= 0) && (ptm_dev->read_pending.len > 0) ) { // Pending read
+
+	reply_msg->msg_id = READ|0x80;
+	reply_msg->pid = ptm_dev->read_pending.pid;
+	reply_msg->_errno = 0;
+	reply_msg->_u.io_msg.fd = ptm_dev->read_pending.fd;
+
+	size_t sent_len = 0;
+      
+	reply_msg->_u.io_msg.len = sent_len;
+
+	sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &ptm_dev->read_pending.client_addr, sizeof(ptm_dev->read_pending.client_addr));
+
+	ptm_dev->read_pending.len = 0; // unset read pending
+	ptm_dev->read_pending.fd = -1;
+      }
+      else if (ptm_dev->read_select_pending.fd >= 0) {
+
+	emscripten_log(EM_LOG_CONSOLE, "del_client: pending read select: fd=%d", ptm_dev->read_select_pending.fd);
+
+	int i;
+
+	reply_msg->msg_id = SELECT|0x80;
+	reply_msg->pid = ptm_dev->read_select_pending.pid;
+	reply_msg->_errno = 0;
+	reply_msg->_u.select_msg.remote_fd = ptm_dev->read_select_pending.remote_fd;
+	reply_msg->_u.select_msg.fd = ptm_dev->read_select_pending.fd;
+	reply_msg->_u.select_msg.read_write = 0; // read
+	reply_msg->_u.select_msg.once = 2; // hangup
+	
+	sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &ptm_dev->read_select_pending.client_addr, sizeof(ptm_dev->read_select_pending.client_addr));
+
+	ptm_dev->read_select_pending.fd = -1; // unset read select pending
+	ptm_dev->read_select_pending.remote_fd = -1;
+      }
+    }
+  }
+  else if (clients[fd].pts_dev_minor >= 0) { // ptm
+
+    emscripten_log(EM_LOG_CONSOLE, "!! ptm closed: need to notify other side i.e processes belonging to the session %d", devices[clients[fd].pts_dev_minor].session);
+    char buf[256];
+    struct message * msg = (struct message *)&buf[0];
+      
+    msg->msg_id = KILL;
+    msg->pid = 2; // PID of TTY driver
+    msg->_u.kill_msg.pid = devices[clients[fd].pts_dev_minor].session | 0x40000000; // meaning session id
+    msg->_u.kill_msg.sig = SIGHUP;
+  
+    sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+  }
 
   return fd;
 }
@@ -203,34 +313,15 @@ int register_device(unsigned short m, struct device_ops * dev_ops, enum tty_dev_
   devices[m].session = 0;
   devices[m].fg_pgrp = 0;
 
+  devices[m].type = type;
+
   devices[m].ptm_fd = -1;
+
+  devices[m].state = 0; // closed
 
   return 0;
 }
 
-struct device_desc * get_device(unsigned short m) {
-
-  return &devices[m];
-}
-
-struct device_desc * get_device_from_fd(int fd) {
-
-  return &devices[clients[fd].minor];
-}
-
-struct device_desc * get_device_from_session(pid_t sid, unsigned short * min) {
-
-  for (unsigned short i = 1; i <= minor; i++) {
-
-    if (devices[i].session == sid) {
-
-      *min = i;
-      return &devices[i];
-    }
-  }
-
-  return NULL;
-}
 
 EM_JS(int, probe_terminal, (), {
 
@@ -297,11 +388,11 @@ static void local_tty_start_timer(int fd) {
 
 static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigned short m, pid_t pid, pid_t sid) {
 
-  emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d", last_fd);
-
   ++last_fd;
 
   add_client(last_fd, pid, m, flags, mode);
+
+  emscripten_log(EM_LOG_CONSOLE,"local_tty_open: fd=%d", last_fd);
 
   //emscripten_log(EM_LOG_CONSOLE,"local_tty_open: %d %d", get_device_from_fd(last_fd)->session, get_device_from_fd(last_fd)->fg_pgrp);
   
@@ -497,14 +588,14 @@ static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_
 
       memcpy(&arg, buf, sizeof(int));
 
-      //emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSCTTY (%d %d %d)", get_device_from_fd(fd)->session, sid, arg);
+      emscripten_log(EM_LOG_CONSOLE,"local_tty_ioctl: TIOCSCTTY (%d %d %d %d %d)", fd, get_device_from_fd(fd)->session, pid, sid, arg);
 
       if ( (pid == sid) && (get_device_from_fd(fd)->session == 0) && (!arg) ) {
 
 	get_device_from_fd(fd)->session = sid;
 	get_device_from_fd(fd)->fg_pgrp = pgid;
       }
-      else if (arg) {
+      else if (arg) { // arg is non null so terminal can be stolen
 
 	get_device_from_fd(fd)->session = sid;
 	get_device_from_fd(fd)->fg_pgrp = pgid;
@@ -919,9 +1010,14 @@ static void pts_flush(int fd) {
 
 static int pts_close(int fd) {
 
-  emscripten_log(EM_LOG_CONSOLE, "pts_close");
+  emscripten_log(EM_LOG_CONSOLE, "!!! pts_close: fd=%d", fd);
 
-  return local_tty_close(fd);
+  //TOTEST
+  //return 0;
+
+  del_client(fd);
+
+  return 0;
 }
 
 static struct device_ops pts_ops = {
@@ -941,6 +1037,8 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
   ++last_fd;
   
   add_client(last_fd, pid, m, flags, mode);
+
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: fd=%d", last_fd);
   
   minor += 1;
   
@@ -949,6 +1047,8 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
   devices[minor].ptm_fd = last_fd; // pts dev stores fd of ptm client
   
   clients[last_fd].pts_dev_minor = minor; // ptm client stores minor of pts dev
+
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: create PTM fd=%d & PTS minor=%d", devices[minor].ptm_fd, clients[last_fd].pts_dev_minor);
   
   char buf[1256];
   struct message * msg = (struct message *)&buf[0];
@@ -974,16 +1074,19 @@ static ssize_t ptmx_read(int fd, void * buf, size_t len) {
   struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
   
   struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
+
+  if (pts_dev->state == 1) { // open
   
-  size_t len2 = count_circular_buffer(&pts_dev->tx_buf);
+    size_t len2 = count_circular_buffer(&pts_dev->tx_buf);
   
-  size_t read_len = (len2 <= len)?len2:len;
+    size_t read_len = (len2 <= len)?len2:len;
   
-  if (read_len > 0) {
+    if (read_len > 0) {
     
-    read_circular_buffer(&pts_dev->tx_buf, read_len, buf);
+      read_circular_buffer(&pts_dev->tx_buf, read_len, buf);
     
-    return read_len;
+      return read_len;
+    }
   }
   
   return 0;
@@ -999,24 +1102,27 @@ static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
 
   struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
 
+  if (pts_dev->state == 0)  // closed
+    return 0;
+  
   unsigned char reply_buf[1256];
   struct message * reply_msg = (struct message *)&reply_buf[0];
 
   reply_msg->msg_id = 0;
 
   int len = enqueue(pts_dev, fd, buf, count, reply_msg, &pts_write);
-
+  
   if (reply_msg->msg_id == (READ|0x80)) {
-
+    
     emscripten_log(EM_LOG_CONSOLE, "ptmx_write: send %d bytes to %s", len, pts_dev->read_pending.client_addr.sun_path);
     
     sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &pts_dev->read_pending.client_addr, sizeof(pts_dev->read_pending.client_addr));
-
+    
     pts_dev->read_pending.len = 0; // unset read pending
     pts_dev->read_pending.fd = -1;
   }
   else if (reply_msg->msg_id == (SELECT|0x80)) {
-
+    
     sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &pts_dev->read_select_pending.client_addr, sizeof(pts_dev->read_select_pending.client_addr));
 
     pts_dev->read_select_pending.fd = -1; // unset read select pending
@@ -1114,16 +1220,46 @@ static int ptmx_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_t pid
 
   emscripten_log(EM_LOG_CONSOLE,"ptmx_ioctl: fd=%d op=%d", fd, op);
 
-  if (op == TIOCGPTN) {
+  switch (op) {
 
-    int ptn = clients[fd].pts_dev_minor;
+  case TIOCGPTN:
+    {
 
-    memcpy(buf, &ptn, sizeof(int));
+      int ptn = clients[fd].pts_dev_minor;
 
-    return 0;
+      memcpy(buf, &ptn, sizeof(int));
+
+      break;
+    }
+    
+  case TIOCSWINSZ:
+    {
+
+      memcpy(&(devices[clients[fd].pts_dev_minor].ws), buf, sizeof(struct winsize));
+      emscripten_log(EM_LOG_CONSOLE,"ptmx_ioctl: TIOCSWINSZ row=%d col=%d", devices[clients[fd].pts_dev_minor].ws.ws_row, devices[clients[fd].pts_dev_minor].ws.ws_col);
+      
+      break;
+    }
+    
+  default:
+
+    return -1;
+    break;
   }
+  
+  return 0;
+}
 
-  return -1;
+static int ptmx_close(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "!!! ptmx_close: fd=%d", fd);
+
+  //TOTEST
+  //return 0;
+
+  del_client(fd);
+  
+  return 0;
 }
 
 static int ptmx_select(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, struct sockaddr_un * sock_addr) {
@@ -1136,7 +1272,13 @@ static int ptmx_select(pid_t pid, int remote_fd, int fd, int read_write, int sta
 
   if (start_stop) { // start
 
-    if (read_write) { // write
+    if (pts_dev->state == 0) { // closed
+
+      emscripten_log(EM_LOG_CONSOLE, "!!! ptmx_select: pts dev CLOSED");
+
+      return 2; // POLLHUP
+    }
+    else if (read_write) { // write
 
       // TOTO
     }
@@ -1173,7 +1315,7 @@ static struct device_ops ptmx_ops = {
   .read = ptmx_read,
   .write = ptmx_write,
   .ioctl = ptmx_ioctl,
-  .close = NULL,
+  .close = ptmx_close,
   .enqueue = NULL,
   .select = ptmx_select,
   .flush = NULL,
@@ -1273,7 +1415,7 @@ int main() {
       continue;
     }
 
-    //emscripten_log(EM_LOG_CONSOLE, "tty: recfrom: %d", bytes_rec);
+    emscripten_log(EM_LOG_CONSOLE, "tty: recfrom %s: %d bytes (%d)", remote_addr.sun_path, bytes_rec, msg->msg_id);
 
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -1403,11 +1545,11 @@ int main() {
 
       msg->_u.open_msg.remote_fd = remote_fd;
       
-      if (!(msg->_u.open_msg.flags & O_NOCTTY)) {
+      if ( (get_device(msg->_u.open_msg.minor)->type != PTM) && (!(msg->_u.open_msg.flags & O_NOCTTY)) ) {
 
 	if ( (get_device(msg->_u.open_msg.minor)->session == 0) && (msg->pid ==  msg->_u.open_msg.sid) ) {
 
-	  //emscripten_log(EM_LOG_CONSOLE, "!!!! tty: set controlling tty of session %d (%d)", msg->_u.open_msg.sid, get_device(msg->_u.open_msg.minor)->session);
+	  emscripten_log(EM_LOG_CONSOLE, "!!!! tty: set controlling tty of session %d (min=%d)", msg->_u.open_msg.sid, msg->_u.open_msg.minor);
 	  
 	  // tty is not yet controlled so it is now controlling the sid session
 	  get_device(msg->_u.open_msg.minor)->session = msg->_u.open_msg.sid;
@@ -1502,7 +1644,7 @@ int main() {
     }
     else if (msg->msg_id == IOCTL) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
+      emscripten_log(EM_LOG_CONSOLE, "tty: IOCTL from %d: %d (fd=%d)", msg->pid, msg->_u.ioctl_msg.op, msg->_u.ioctl_msg.fd);
       
       if (msg->_u.ioctl_msg.op == TIOCSCTTY) {
 
@@ -1541,12 +1683,13 @@ int main() {
 
       //emscripten_log(EM_LOG_CONSOLE, "tty: CLOSE from %d, %d", msg->pid, msg->_u.close_msg.fd);
 
+      msg->_errno = get_device_from_fd(msg->_u.close_msg.fd)->ops->close(msg->_u.close_msg.fd);
+
       // very temporary
       clients[msg->_u.close_msg.fd].pid = -1;
 
       msg->msg_id |= 0x80;
-      msg->_errno = 0;
-      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));     
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       
     }
     else if (msg->msg_id == STAT) {
@@ -1643,11 +1786,17 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "tty: SELECT from %d: %d %d %d (%x)", msg->pid, msg->_u.select_msg.fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop, get_device_from_fd(msg->_u.select_msg.remote_fd)->ops->select);
 
-      if (get_device_from_fd(msg->_u.select_msg.remote_fd)->ops->select(msg->pid, msg->_u.select_msg.remote_fd, msg->_u.select_msg.fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop, &remote_addr) > 0) {
+      int ret = get_device_from_fd(msg->_u.select_msg.remote_fd)->ops->select(msg->pid, msg->_u.select_msg.remote_fd, msg->_u.select_msg.fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop, &remote_addr);
+
+      if (ret > 0) {
 
 	 msg->msg_id |= 0x80;
 
 	 msg->_errno = 0;
+	 
+	 if (ret == 2)
+	   msg->_u.select_msg.once = 2; // pollhup
+	 
 	 sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
     }

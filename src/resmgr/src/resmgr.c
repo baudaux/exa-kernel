@@ -82,7 +82,8 @@ static unsigned short vfs_major;
 static unsigned short vfs_minor;
 
 int close_opened_fd(int job, int sock, char * buf);
-int do_exit(int sock, struct message * msg);
+void do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr);
+int finish_exit(int sock, struct message * msg);
 
 int main() {
 
@@ -197,17 +198,13 @@ int main() {
 	    msg->_u.kill_msg.pid = itimers[i].pid;
 	    msg->_u.kill_msg.sig = SIGALRM;
 
-	    int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+	    int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act, sock);
 
 	    //  emscripten_log(EM_LOG_CONSOLE, "resmgr: process_kill action=%d", action);
 
-	    if (action == 2) {
+	    if (action == 1) { // default
 
-	      struct sockaddr_un addr;
-
-	      process_get_peer_addr(msg->pid, &addr);
-       
-	      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
+	      do_exit(sock, itimers, msg, 256, NULL);
 	    }
 	  }
 	}
@@ -220,6 +217,9 @@ int main() {
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
     emscripten_log(EM_LOG_CONSOLE, "resmgr: msg %d received from %s (%d)", msg->msg_id, remote_addr.sun_path,bytes_rec);
+
+    if (bytes_rec == 0)
+      continue;
 
     if (msg->msg_id == REGISTER_DRIVER) {
       
@@ -642,7 +642,7 @@ int main() {
 
 	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
 
-	  do_exit(sock, (struct message *)&buf2[0]);
+	  finish_exit(sock, (struct message *)&buf2[0]);
 
 	  del_pending_job(jobs, job, msg->pid);
 	}
@@ -937,6 +937,8 @@ int main() {
     }
     else if (msg->msg_id == FORK) {
 
+      //TODO reset pending signals in child
+
       emscripten_log(EM_LOG_CONSOLE, "FORK from %d", msg->pid);
 
       msg->_u.fork_msg.child = process_fork(-1, msg->pid, NULL);
@@ -951,7 +953,7 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "EXECVE from %d: %lu", msg->pid, msg->_u.execve_msg.args_size);
 
-      if (msg->_u.execve_msg.args_size == 0xffffffff) {
+      if (msg->_u.execve_msg.args_size == 0xffffffff) { // 2nd time once new iframe is created
 
 	if (is_pending_job(jobs, msg->pid) == EXEC_JOB) {
 
@@ -973,7 +975,9 @@ int main() {
 	  continue_pending_job(jobs, msg->pid, sock);
 	}
       }
-      else {
+      else { // first time before creating new iframe
+	
+	process_reset_sigactions(msg->pid);
 
         msg->msg_id |= 0x80;
 
@@ -1506,7 +1510,11 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "WAIT -> %d status=%d", msg->_u.wait_msg.pid, msg->_u.wait_msg.status);
 
 	msg->msg_id |= 0x80;
-	msg->_errno = 0;
+
+	if (msg->_u.wait_msg.pid >= 0)
+	  msg->_errno = 0;
+	else
+	  msg->_errno = ECHILD;
 	
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
@@ -1515,41 +1523,8 @@ int main() {
     else if (msg->msg_id == EXIT) {
 
       emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: status=%d", msg->pid, msg->_u.exit_msg.status);
-      
-      // Close all opened fd
 
-      // Find if there is already a timer for this pid
-
-      for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
-      
-	if (itimers[i].pid == (msg->pid & 0xffff)) {
-
-	  itimers[i].fd = -1;
-	  break;
-	}
-      }
-      
-      process_clearitimer(msg->pid);
-
-      unsigned char type;
-      unsigned short major;
-      int remote_fd;
-      
-      if (process_opened_fd(msg->pid, &type, &major, &remote_fd, 0) >= 0) {
-
-	emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
-
-	if (close_opened_fd(EXIT_JOB, sock, buf) > 0) {
-
-	  msg->msg_id |= 0x80;
-
-	  add_pending_job(jobs, EXIT_JOB, msg->pid, msg, bytes_rec, &remote_addr);
-	
-	  continue; // Wait CLOSE response before closing the other opened fd
-	}
-      }
-
-      do_exit(sock, msg);
+      do_exit(sock, itimers, msg, bytes_rec, &remote_addr);
 
     }
     else if (msg->msg_id == SEEK) {
@@ -1595,33 +1570,61 @@ int main() {
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
     }
+    else if (msg->msg_id == END_OF_SIGNAL) {
+
+      emscripten_log(EM_LOG_CONSOLE, "END_OF_SIGNAL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+
+      // In case of a pending wait
+
+      int ret = process_exit_child(msg->pid, sock);
+	
+      emscripten_log(EM_LOG_CONSOLE, "KILL: process_exit_child: %d", ret);
+
+      //TODO other cases
+      }
     else if (msg->msg_id == KILL) {
 
       emscripten_log(EM_LOG_CONSOLE, "KILL from %d: pid=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
 
-      int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act);
+      msg->msg_id |= 0x80;
+      msg->_errno = 0;
 
-      emscripten_log(EM_LOG_CONSOLE, "KILL from %d: action=%d", msg->pid, action);
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 
-      if (action == 1) { // Default action
+      msg->msg_id &= 0x7f;
+      
+      if (!(msg->_u.kill_msg.pid & 0x40000000)) { // unique process
 
-	
-      }
-      else if (action == 2) { // Custom action
+	int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act, sock);
 
-	if ((msg->pid & 0xffff) == (msg->_u.kill_msg.pid & 0xffff)) {
-	  
-	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	emscripten_log(EM_LOG_CONSOLE, "KILL from %d: action=%d", msg->pid, action);
+	if (action == 1) { // Default action
+
+	  msg->pid = msg->_u.kill_msg.pid;
+	  do_exit(sock, itimers, msg, bytes_rec, NULL);
 	}
-	else {
+      }
+      else { // session
 
-	  //TODO
+	//TOTEST
+
+	msg->_u.kill_msg.pid &= 0x3fffffff;
+
+	emscripten_log(EM_LOG_CONSOLE, "KILL from %d: session=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
+	  
+	int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act, sock);
+
+	if (action == 1) { // Default action
+
+	  msg->pid = msg->_u.kill_msg.pid;
+
+	  do_exit(sock, itimers, msg, bytes_rec, NULL);
 	}
       }
     }
     else if (msg->msg_id == EXA_RELEASE_SIGNAL) {
       
-      emscripten_log(EM_LOG_CONSOLE, "EXA_RELEASE_SIGNAL from %d: pid=%d sig=%d", msg->pid, msg->_u.exa_release_signal_msg.sig);
+      emscripten_log(EM_LOG_CONSOLE, "EXA_RELEASE_SIGNAL from %d: sig=%d", msg->pid, msg->_u.exa_release_signal_msg.sig);
       
       process_signal_delivered(msg->pid, msg->_u.exa_release_signal_msg.sig);
 
@@ -2100,6 +2103,8 @@ int close_opened_fd(int job, int sock, char * buf) {
     if (fd < 0)
       break;
 
+    emscripten_log(EM_LOG_CONSOLE, "close_opened_fd: process_opened_fd remote_fd=%d", remote_fd);
+
     // Get the fd of the process
 
     // Close the fd for this process
@@ -2145,35 +2150,81 @@ int close_opened_fd(int job, int sock, char * buf) {
   return 0;
 }
 
-int do_exit(int sock, struct message * msg) {
+void do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr) {
+
+  emscripten_log(EM_LOG_CONSOLE, "--> do_exit: pid=%d", msg->pid);
+
+  if (process_get_state(msg->pid) == EXITED_STATE)
+    return;
+
+  // Close all opened fd
+
+  // Find if there is already a timer for this pid
+
+  for (int i = 0; i < NB_ITIMERS_MAX; ++i) {
+      
+    if (itimers[i].pid == (msg->pid & 0xffff)) {
+
+      itimers[i].fd = -1;
+
+      emscripten_log(EM_LOG_CONSOLE, "do_exit: clear itimer %d", i);
+      break;
+    }
+  }
+      
+  process_clearitimer(msg->pid);
+
+  unsigned char type;
+  unsigned short major;
+  int remote_fd;
+      
+  if (process_opened_fd(msg->pid, &type, &major, &remote_fd, 0) >= 0) {
+
+    emscripten_log(EM_LOG_CONSOLE, "EXIT from %d: there are opened fd", msg->pid);
+
+    if (close_opened_fd(EXIT_JOB, sock, msg) > 0) {
+
+      msg->msg_id |= 0x80;
+
+      add_pending_job(jobs, EXIT_JOB, msg->pid, msg, len, remote_addr);
+	
+      return; // Wait CLOSE response before closing the other opened fd
+    }
+  }
+
+  finish_exit(sock, msg);
+}
+
+int finish_exit(int sock, struct message * msg) {
       
   int exit_status = msg->_u.exit_msg.status;
   int pid = msg->pid & 0xffff;
   int ppid;
 
-  emscripten_log(EM_LOG_CONSOLE, "--> do_exit");
-      
-  if (ppid=process_exit(pid, exit_status << 8)) {
+  emscripten_log(EM_LOG_CONSOLE, "--> finish_exit= pid=%d", pid);
 
-    msg->msg_id = WAIT|0x80;
-    msg->pid = ppid;
-    msg->_errno = 0;
+  process_to_zombie(pid, exit_status << 8);
 
-    msg->_u.wait_msg.pid = pid;
-    msg->_u.wait_msg.status = exit_status << 8;
+  ppid = process_getppid(pid);
 
-    emscripten_log(EM_LOG_CONSOLE, "EXIT: Send wait response to parent %d -> status=%d", msg->pid, msg->_u.wait_msg.status);
+  char buf2[256];
+  struct message * msg2 = &buf2[0];
+
+  //TOFIX: bash does not display prompt after child exit
+
+  if (ppid > 1) {
     
-    // Forward response to process
+    if (process_kill(ppid, SIGCHLD, &msg2->_u.kill_msg.act, sock) == 2) {
 
-    struct sockaddr_un addr;
-
-    process_get_peer_addr(msg->pid, &addr);
-	
-    sendto(sock, (char *)msg, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
-
-    return 1;
+      emscripten_log(EM_LOG_CONSOLE, "finish_exit: SIGCHLD custom handler");
+      
+      return 0;
+    }
   }
+
+  int ret = process_exit(pid, sock);
+  
+  emscripten_log(EM_LOG_CONSOLE, "finish_exit: <-- process_exit %d", ret);
 
   return 0;
 }
