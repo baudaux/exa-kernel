@@ -177,35 +177,21 @@ EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int off
       
       fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
 	  
-	  //console.log(response.headers.get('Accept-Ranges'));
-	  //console.log(response.headers.get('Content-Length'));
+	  /*console.log(response.headers.get('Accept-Ranges'));
+	  console.log(response.headers.get('Content-Length'));
+	  console.log(response.headers.get('Content-Size'));
+
+	  console.log(response);
+	  console.log(response.headers);*/
 
 	  if (response.ok) {
-
-	    let contentLength = 0;
-
-	    if (typeof response.headers.get('Content-Size') == 'string') {
-	      contentLength = parseInt(response.headers.get('Content-Size'));
-	    }
-	    else if (typeof response.headers.get('Content-Length') == 'string') {
-	      contentLength = parseInt(response.headers.get('Content-Length'));
-	    }
-
+	    
 	    response.arrayBuffer().then(buffer => {
 
 		Module.HEAPU8.set(new Uint8Array(buffer), buf);
 		
-		wakeUp(contentLength);
-		});
-
-	    /*response.text().then(text => {
-
-		stringToUTF8(text, buf, contentLength+1);
-		
-		//Module.HEAPU8.set(buffer, buf);
-		
-		wakeUp(contentLength);
-		});*/
+		wakeUp(buffer.byteLength);
+	      });
 	    
 	  }
 	  else
