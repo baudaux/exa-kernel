@@ -131,6 +131,8 @@ void process_clearitimer(pid_t pid);
 
 int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, int * remote_fd, int flag);
 
+int process_get_session(pid_t sid, pid_t session[], int size);
+
 void dump_processes();
 
 #endif // _PROCESS_H

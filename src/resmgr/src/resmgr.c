@@ -82,8 +82,14 @@ static unsigned short vfs_major;
 static unsigned short vfs_minor;
 
 int close_opened_fd(int job, int sock, char * buf);
-void do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr);
+int do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr);
 int finish_exit(int sock, struct message * msg);
+void process_to_kill(int sock, struct itimer * itimers);
+
+static pid_t processes_to_kill[128];
+static int process_index = 0;
+static int nb_processes_to_kill = 0;
+static int process_sig;
 
 int main() {
 
@@ -642,9 +648,14 @@ int main() {
 
 	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
 
+	  del_pending_job(jobs, job, msg->pid);
+	  
 	  finish_exit(sock, (struct message *)&buf2[0]);
 
-	  del_pending_job(jobs, job, msg->pid);
+	  if (nb_processes_to_kill > 0) {
+	    ++process_index;
+	    process_to_kill(sock, itimers);
+	  }
 	}
 	else if (job == DUP_JOB) {
 
@@ -1606,20 +1617,12 @@ int main() {
       }
       else { // session
 
-	//TOTEST
+	nb_processes_to_kill = process_get_session(msg->_u.kill_msg.pid & 0x3fffffff, processes_to_kill, 128);
 
-	msg->_u.kill_msg.pid &= 0x3fffffff;
+	process_index = 0;
+	process_sig = msg->_u.kill_msg.sig;
 
-	emscripten_log(EM_LOG_CONSOLE, "KILL from %d: session=%d sig=%d", msg->pid, msg->_u.kill_msg.pid, msg->_u.kill_msg.sig);
-	  
-	int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act, sock);
-
-	if (action == 1) { // Default action
-
-	  msg->pid = msg->_u.kill_msg.pid;
-
-	  do_exit(sock, itimers, msg, bytes_rec, NULL);
-	}
+	process_to_kill(sock, itimers);
       }
     }
     else if (msg->msg_id == EXA_RELEASE_SIGNAL) {
@@ -2150,12 +2153,12 @@ int close_opened_fd(int job, int sock, char * buf) {
   return 0;
 }
 
-void do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr) {
+int do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr) {
 
   emscripten_log(EM_LOG_CONSOLE, "--> do_exit: pid=%d", msg->pid);
 
-  if (process_get_state(msg->pid) == EXITED_STATE)
-    return;
+  if (process_get_state(msg->pid) > ZOMBIE_STATE)
+    return 0;
 
   // Close all opened fd
 
@@ -2188,11 +2191,13 @@ void do_exit(int sock, struct itimer * itimers, struct message * msg, int len, s
 
       add_pending_job(jobs, EXIT_JOB, msg->pid, msg, len, remote_addr);
 	
-      return; // Wait CLOSE response before closing the other opened fd
+      return 1; // Wait CLOSE response before closing the other opened fd
     }
   }
 
   finish_exit(sock, msg);
+
+  return 0;
 }
 
 int finish_exit(int sock, struct message * msg) {
@@ -2227,4 +2232,29 @@ int finish_exit(int sock, struct message * msg) {
   emscripten_log(EM_LOG_CONSOLE, "finish_exit: <-- process_exit %d", ret);
 
   return 0;
+}
+
+void process_to_kill(int sock, struct itimer * itimers) {
+
+  while (process_index < nb_processes_to_kill) {
+
+    struct message msg;
+
+    msg._u.kill_msg.pid = processes_to_kill[process_index];
+    msg.pid = msg._u.kill_msg.pid;
+    msg._u.kill_msg.sig = process_sig;
+    
+    int action = process_kill(msg._u.kill_msg.pid, msg._u.kill_msg.sig, &msg._u.kill_msg.act, sock);
+
+    if (action == 1) { // Default action
+
+      do_exit(sock, itimers, &msg, 256, NULL);
+      return;
+    }
+
+    ++process_index;
+  }
+
+  nb_processes_to_kill = 0;
+  process_index = 0;
 }

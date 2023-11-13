@@ -1083,3 +1083,24 @@ int process_opened_fd(pid_t pid, unsigned char * type, unsigned short * major, i
 
   return -1;
 }
+
+int process_get_session(pid_t sid, pid_t session[], int size) {
+
+  int i = 0;
+
+  for (int j= 0; j < NB_PROCESSES_MAX; ++j) {
+
+    if ( (processes[j].pid >= 0) && (processes[j].proc_state < ZOMBIE_STATE) ) {
+	
+      if (processes[j].sid == sid) {
+
+	session[i++] = processes[j].pid;
+
+	if (i == size)
+	  return i;
+      }
+    }
+  }
+
+  return i;
+}

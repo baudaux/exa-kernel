@@ -50,12 +50,11 @@
 #define RESMGR_PATH "/var/resmgr.peer"
 
 #define NB_TTY_MAX       32
+#define NB_CLIENT_MAX    64
 
 #define TTY_BUF_SIZE     (16*1024)
 
 #define TTY_TIMEOUT      15
-
-//#define TTY_TIMER_COUNT  5
 
 enum tty_dev_type {
 
@@ -73,7 +72,7 @@ struct device_ops {
   int (*close)(int fd);
   ssize_t (*enqueue)(int fd, void * buf, size_t len, struct message * reply_msg);
   int (*select)(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, struct sockaddr_un * sock_addr);
-  void (*flush)(int fd);
+  int (*flush)(int fd);
 };
 
 struct pending_request {
@@ -81,6 +80,17 @@ struct pending_request {
   pid_t pid;
   int fd;
   size_t len;
+  struct sockaddr_un client_addr;
+};
+
+struct write_pending_request {
+
+  pid_t pid;
+  int fd;
+  size_t len;
+  char * buf;
+  int offset;
+  size_t orig_len;
   struct sockaddr_un client_addr;
 };
 
@@ -100,12 +110,14 @@ struct device_desc {
 
   struct pending_request read_pending;
   struct select_pending_request read_select_pending;
+  struct write_pending_request write_pending;
 
   struct circular_buffer rx_buf;
   struct circular_buffer tx_buf;
 
   int timer;
   int timer_started;
+
   int data_written;
   
   pid_t session;
@@ -137,7 +149,7 @@ static struct device_desc devices[NB_TTY_MAX];
 
 static int last_fd = 0;
 
-static struct client clients[64];
+static struct client clients[NB_CLIENT_MAX];
 
 // TODO : do not use fd as index
 
@@ -302,13 +314,17 @@ int register_device(unsigned short m, struct device_ops * dev_ops, enum tty_dev_
     init_circular_buffer(&devices[m].tx_buf, TTY_BUF_SIZE);
   }
   
-  if (type == TTY)
+  if ( (type == TTY) || (type == PTS) )
     devices[m].timer = timerfd_create(CLOCK_MONOTONIC, 0);
   else
     devices[m].timer = -1;
       
   devices[m].timer_started = 0;
   devices[m].data_written = 0;
+
+  devices[m].read_pending.fd = -1;
+  devices[m].read_select_pending.fd = -1;
+  devices[m].write_pending.fd = -1;
   
   devices[m].session = 0;
   devices[m].fg_pgrp = 0;
@@ -360,30 +376,45 @@ EM_JS(int, write_terminal, (char * buf, unsigned long len), {
     return len;
   });
 
-static void local_tty_start_timer(int fd) {
+static void start_timer(struct device_desc * dev) {
 
-   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
-   struct itimerspec ts;
+  struct itimerspec ts;
+  
+  if (!dev->timer_started) {
 
-   if (!dev->timer_started) {
+    //emscripten_log(EM_LOG_CONSOLE,"start_timer");
 
-     dev->timer_started = 1;
-     //dev->timer_count = TTY_TIMER_COUNT;
+    dev->timer_started = 1;
      
-     unsigned long long val_msec = TTY_TIMEOUT;
-     unsigned long long int_msec = TTY_TIMEOUT;
+    unsigned long long val_msec = TTY_TIMEOUT;
+    unsigned long long int_msec = TTY_TIMEOUT;
      
-     ts.it_interval.tv_sec = int_msec / 1000ull;
-     ts.it_interval.tv_nsec = (int_msec % 1000ull) * 1000000ull;
-     ts.it_value.tv_sec = val_msec / 1000ull;
-     ts.it_value.tv_nsec = (val_msec % 1000ull) * 1000000ull;
+    ts.it_interval.tv_sec = int_msec / 1000ull;
+    ts.it_interval.tv_nsec = (int_msec % 1000ull) * 1000000ull;
+    ts.it_value.tv_sec = val_msec / 1000ull;
+    ts.it_value.tv_nsec = (val_msec % 1000ull) * 1000000ull;
      
-     timerfd_settime(dev->timer, 0, &ts, NULL);
-   }
-   else {
+    timerfd_settime(dev->timer, 0, &ts, NULL);
+  }
+}
 
-     //dev->timer_count = TTY_TIMER_COUNT;
-   }
+static void stop_timer(struct device_desc * dev) {
+
+  struct itimerspec ts;
+  
+  if (dev->timer_started) {
+    
+    //emscripten_log(EM_LOG_CONSOLE,"stop_timer");
+    
+    dev->timer_started = 0;
+    
+    ts.it_interval.tv_sec = 0;
+    ts.it_interval.tv_nsec = 0;
+    ts.it_value.tv_sec = 0;
+    ts.it_value.tv_nsec = 0;
+     
+    timerfd_settime(dev->timer, 0, &ts, NULL);
+  }
 }
 
 static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigned short m, pid_t pid, pid_t sid) {
@@ -434,9 +465,10 @@ static ssize_t local_tty_read(int fd, void * buf, size_t len) {
   return 0;
 }
 
-static void local_tty_flush(int fd) {
+static int local_tty_flush(int fd) {
 
   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  
   struct itimerspec ts;
 
   char * ptr;
@@ -455,46 +487,39 @@ static void local_tty_flush(int fd) {
     }
 
     empty_circular_buffer(&dev->tx_buf);
+
+    return 1;
   }
-  else /*if (dev->timer_count <= 0)*/ {
-    
-    dev->timer_started = 0;
-     
-    unsigned long long val_msec = 0;
-    unsigned long long int_msec = 0;
-     
-    ts.it_interval.tv_sec = int_msec / 1000ull;
-    ts.it_interval.tv_nsec = (int_msec % 1000ull) * 1000000ull;
-    ts.it_value.tv_sec = val_msec / 1000ull;
-    ts.it_value.tv_nsec = (val_msec % 1000ull) * 1000000ull;
-    
-    timerfd_settime(dev->timer, 0, &ts, NULL);
-  }
+
+  return 0;
 }
 
-static int tty_write_char(int fd, struct device_desc * dev, char c) {
-
-  if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-5)) {
-
-    if (dev->ops->flush)
-      dev->ops->flush(fd);
-  }
+static int tty_write_char(struct device_desc * dev, char c) {
 
   if ( (c == '\n') && (dev->ctrl.c_oflag & ONLCR) ) {
 
-    if (!enqueue_circular_buffer(&dev->tx_buf, '\r'))
+    if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-5))
       return 0;
+
+    enqueue_circular_buffer(&dev->tx_buf, '\r');
   }
   else if ( (c == '\r') && (dev->ctrl.c_oflag & OCRNL) ) {
 
-    return enqueue_circular_buffer(&dev->tx_buf, '\n');
+    if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-5))
+      return 0;
+    
+    enqueue_circular_buffer(&dev->tx_buf, '\n');
   }
   else if ( (c == '\r') && (dev->ctrl.c_oflag & ONLRET) ) {
 
     return 1;
   }
+  else if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-5))
+      return 0;
   
-  return enqueue_circular_buffer(&dev->tx_buf, c);
+  enqueue_circular_buffer(&dev->tx_buf, c);
+
+  return 1;
 }
 
 static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
@@ -505,9 +530,15 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
   emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
 
+  if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-count-5)) {
+
+    if (dev->ops->flush)
+      dev->ops->flush(fd);
+  }
+
   for (int i = 0; i < count; ++i) {
 
-    tty_write_char(fd, dev, data[i]);
+    tty_write_char(dev, data[i]);
   }
 
   //emscripten_log(EM_LOG_CONSOLE, "local_tty_write: tx_buf count=%d", count_circular_buffer(&dev->tx_buf));
@@ -516,7 +547,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
     dev->data_written = 1;
     
-    local_tty_start_timer(fd);
+    start_timer(dev);
   }
   
   return count;
@@ -912,86 +943,107 @@ static ssize_t pts_read(int fd, void * buf, size_t len) {
   return local_tty_read(fd, buf, len);
 }
 
-static ssize_t pts_write(int fd, const void * buf, size_t count) {
+static int notify_ptm(struct device_desc * pts_dev) {
 
+  struct device_desc * ptm_dev = get_device_from_fd(pts_dev->ptm_fd);
+  
+  size_t len = count_circular_buffer(&pts_dev->tx_buf);
+
+  emscripten_log(EM_LOG_CONSOLE, "notify_ptm: len=%d", len);
+
+  if (len == 0)
+    return 0;
+
+  if ( (ptm_dev->read_pending.fd >= 0) && (ptm_dev->read_pending.len > 0) ) { // Pending read
+
+    size_t sent_len = (len <= ptm_dev->read_pending.len)?len:ptm_dev->read_pending.len;
+
+    int buf_size = 20+sent_len; // message is 5 * 4 bytes + buffer
+
+    unsigned char * reply_buf = (unsigned char * )malloc(buf_size);
+    struct message * reply_msg = (struct message *)&reply_buf[0];
+
+    reply_msg->msg_id = READ|0x80;
+    reply_msg->pid = ptm_dev->read_pending.pid;
+    reply_msg->_errno = 0;
+    reply_msg->_u.io_msg.fd = ptm_dev->read_pending.fd;
+    reply_msg->_u.io_msg.len = sent_len;
+
+    read_circular_buffer(&pts_dev->tx_buf, sent_len, (char *)reply_msg->_u.io_msg.buf);
+    
+    sendto(sock, reply_buf, buf_size, 0, (struct sockaddr *) &ptm_dev->read_pending.client_addr, sizeof(ptm_dev->read_pending.client_addr));
+
+    free(reply_buf);
+
+    ptm_dev->read_pending.len = 0; // unset read pending
+    ptm_dev->read_pending.fd = -1;
+
+    return 1;
+  }
+  else if (ptm_dev->read_select_pending.fd >= 0) {
+
+    unsigned char reply_buf[256];
+    struct message * reply_msg = (struct message *)&reply_buf[0];
+
+    int i;
+
+    reply_msg->msg_id = SELECT|0x80;
+    reply_msg->pid = ptm_dev->read_select_pending.pid;
+    reply_msg->_errno = 0;
+    reply_msg->_u.select_msg.remote_fd = ptm_dev->read_select_pending.remote_fd;
+    reply_msg->_u.select_msg.fd = ptm_dev->read_select_pending.fd;
+    reply_msg->_u.select_msg.read_write = 0; // read
+
+    sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &ptm_dev->read_select_pending.client_addr, sizeof(ptm_dev->read_select_pending.client_addr));
+    
+    ptm_dev->read_select_pending.fd = -1; // unset read select pending
+    ptm_dev->read_select_pending.remote_fd = -1;
+
+    return 1;
+  }
+
+  return 0;
+}
+
+static ssize_t pts_write(int fd, const void * buf, size_t count) {
+  
   emscripten_log(EM_LOG_CONSOLE, "pts_write: fd=%d %d bytes", fd, count);
 
   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
 
   struct device_desc * ptm_dev;
+  int ptm_fd;
 
   if (dev->ptm_fd < 0) { // Not a pts but a ptm, case when ptmx_write calls enqueue that calls pts_write
 
     dev = &devices[clients[fd].pts_dev_minor]; // dev is now pts dev
     ptm_dev = get_device_from_fd(fd);
+    ptm_fd = fd;
   }
   else {
 
     ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
+    ptm_fd = devices[clients[fd].minor].ptm_fd;
   }
 
   unsigned char * data = (unsigned char *)buf;
-
+  
   for (int i = 0; i < count; ++i) {
+    
+    if (!tty_write_char(dev, data[i])) {
 
-    // TODO: fd is not good when from ptmx_write
-    if (!tty_write_char(fd, dev, data[i])) {
+      if (i > 0)
+	notify_ptm(dev); // pts dev
 
-      //TODO: handle overflow
-      emscripten_log(EM_LOG_CONSOLE, "!!!!!! OVERFLOW !!!!!!!!!");
+      return i;
     }
   }
-
-  emscripten_log(EM_LOG_CONSOLE, "pts_write: ptm_fd=%d", devices[clients[fd].minor].ptm_fd);
 
   size_t len = count_circular_buffer(&dev->tx_buf);
 
   if (len > 0) {
 
-    if ( (ptm_dev->read_pending.fd >= 0) && (ptm_dev->read_pending.len > 0) ) { // Pending read
-
-      size_t sent_len = (len <= ptm_dev->read_pending.len)?len:ptm_dev->read_pending.len;
-
-      int buf_size = 20+sent_len; // message is 5 * 4 bytes + buffer
-
-      unsigned char * reply_buf = (unsigned char * )malloc(buf_size);
-      struct message * reply_msg = (struct message *)&reply_buf[0];
-
-      reply_msg->msg_id = READ|0x80;
-      reply_msg->pid = ptm_dev->read_pending.pid;
-      reply_msg->_errno = 0;
-      reply_msg->_u.io_msg.fd = ptm_dev->read_pending.fd;
-      reply_msg->_u.io_msg.len = sent_len;
-
-      read_circular_buffer(&dev->tx_buf, sent_len, (char *)reply_msg->_u.io_msg.buf);
-      sendto(sock, reply_buf, buf_size, 0, (struct sockaddr *) &ptm_dev->read_pending.client_addr, sizeof(ptm_dev->read_pending.client_addr));
-
-      free(reply_buf);
-
-      ptm_dev->read_pending.len = 0; // unset read pending
-      ptm_dev->read_pending.fd = -1;
-    }
-    else if (ptm_dev->read_select_pending.fd >= 0) {
-
-      unsigned char reply_buf[256];
-      struct message * reply_msg = (struct message *)&reply_buf[0];
-
-      emscripten_log(EM_LOG_CONSOLE, "pts_write: pending read select: fd=%d", ptm_dev->read_select_pending.fd);
-
-      int i;
-
-      reply_msg->msg_id = SELECT|0x80;
-      reply_msg->pid = ptm_dev->read_select_pending.pid;
-      reply_msg->_errno = 0;
-      reply_msg->_u.select_msg.remote_fd = ptm_dev->read_select_pending.remote_fd;
-      reply_msg->_u.select_msg.fd = ptm_dev->read_select_pending.fd;
-      reply_msg->_u.select_msg.read_write = 0; // read
-
-      sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &ptm_dev->read_select_pending.client_addr, sizeof(ptm_dev->read_select_pending.client_addr));
-
-      ptm_dev->read_select_pending.fd = -1; // unset read select pending
-      ptm_dev->read_select_pending.remote_fd = -1;
-    }
+    notify_ptm(dev); // pts dev
   }
   
   return count;
@@ -1009,6 +1061,15 @@ static int pts_select(pid_t pid, int remote_fd, int fd, int read_write, int star
   emscripten_log(EM_LOG_CONSOLE, "pts_select");
 
   return local_tty_select(pid, remote_fd, fd, read_write, start_stop, sock_addr);
+}
+
+static int pts_flush(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "pts_flush: fd=%d", fd);
+  
+  struct device_desc * dev = get_device_from_fd(fd);
+  
+  return notify_ptm(dev);
 }
 
 static int pts_close(int fd) {
@@ -1029,7 +1090,7 @@ static struct device_ops pts_ops = {
   .close = pts_close,
   .enqueue = NULL,
   .select = pts_select,
-  .flush = NULL,
+  .flush = pts_flush,
 };
 
 static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned short m, pid_t pid, pid_t sid) {
@@ -1069,24 +1130,67 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
 
 static ssize_t ptmx_read(int fd, void * buf, size_t len) {
   
-  emscripten_log(EM_LOG_CONSOLE, "ptmx_read: len=%d", len);
-  
   struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
   
   struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
 
-  if (pts_dev->state == 1) { // open
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_read: len=%d", len);
+
+  if (pts_dev->state == 1) { // device open
   
     size_t len2 = count_circular_buffer(&pts_dev->tx_buf);
   
     size_t read_len = (len2 <= len)?len2:len;
+
+    emscripten_log(EM_LOG_CONSOLE, "ptmx_read: read_len=%d", read_len);
   
     if (read_len > 0) {
     
       read_circular_buffer(&pts_dev->tx_buf, read_len, buf);
+      
+      if ( (pts_dev->write_pending.fd >= 0) && (count_circular_buffer(&pts_dev->tx_buf) < (TTY_BUF_SIZE-1024)) ) { // Pending write and enough space for writing
+
+	int write_len = (pts_dev->write_pending.len<(TTY_BUF_SIZE-count_circular_buffer(&pts_dev->tx_buf)-5))?pts_dev->write_pending.len:(TTY_BUF_SIZE-count_circular_buffer(&pts_dev->tx_buf)-5);
+
+	int i = 0;
+	
+	for (; i < write_len; ++i) {
+    
+	  if (!tty_write_char(pts_dev, pts_dev->write_pending.buf[pts_dev->write_pending.offset+i])) {
+
+	    break;
+	  }
+	}
+
+	pts_dev->write_pending.len -= i;
+
+	if (pts_dev->write_pending.len > 0) {
+
+	  pts_dev->write_pending.offset += i;
+	}
+	else {
+
+	  unsigned char reply_buf[256];
+	  struct message * reply_msg = (struct message *)&reply_buf[0];
+
+	  reply_msg->msg_id = WRITE|0x80;
+	  reply_msg->pid = pts_dev->write_pending.pid;
+	  reply_msg->_errno = 0;
+	  reply_msg->_u.io_msg.fd = pts_dev->write_pending.fd;
+	  reply_msg->_u.io_msg.len = pts_dev->write_pending.orig_len;
+
+	  sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &pts_dev->write_pending.client_addr, sizeof(pts_dev->write_pending.client_addr));
+
+	  pts_dev->write_pending.len = 0; // unset write pending
+	  pts_dev->write_pending.fd = -1;
+
+	  free(pts_dev->write_pending.buf);
+	}
+      }
     
       return read_len;
     }
+    
   }
   
   return 0;
@@ -1202,16 +1306,17 @@ static int ptmx_select(pid_t pid, int remote_fd, int fd, int read_write, int sta
       
       if (count_circular_buffer(&pts_dev->tx_buf) > 0) { // input buffer contains char
 	
-	emscripten_log(EM_LOG_CONSOLE, "ptmx_select: %d bytes in tx queue", count_circular_buffer(&pts_dev->tx_buf));
+	  emscripten_log(EM_LOG_CONSOLE, "ptmx_select: %d bytes in tx queue", count_circular_buffer(&pts_dev->tx_buf));
 	
-	return 1;
-      }
-      else {
+	  return 1;
+	}
+	else {
 
-	emscripten_log(EM_LOG_CONSOLE, "ptmx_select: add pending request: remote_fd=%d", remote_fd);
+	  emscripten_log(EM_LOG_CONSOLE, "ptmx_select: add pending request: remote_fd=%d", remote_fd);
 
-	add_read_select_pending_request(pid, remote_fd, fd, sock_addr);
-      }
+	  add_read_select_pending_request(pid, remote_fd, fd, sock_addr);
+	}
+     
     }
   }
   else { // stop
@@ -1247,6 +1352,23 @@ static void add_read_pending_request(pid_t pid, int fd, size_t len, struct socka
   dev->read_pending.fd = fd;
   dev->read_pending.len = len;
   memcpy(&dev->read_pending.client_addr, sock_addr, sizeof(struct sockaddr_un));
+}
+
+static void add_write_pending_request(pid_t pid, int fd, size_t len, size_t orig_len, char * buf, struct sockaddr_un * sock_addr) {
+
+  emscripten_log(EM_LOG_CONSOLE, "--> add_write_pending_request from pid=%d: fd=%d len=%d", pid, fd, len);
+
+  struct device_desc * dev = get_device_from_fd(fd);
+  
+  dev->write_pending.pid = pid;
+  dev->write_pending.fd = fd;
+  dev->write_pending.len = len;
+  dev->write_pending.orig_len = orig_len;
+  dev->write_pending.buf = (char *)malloc(len);
+  dev->write_pending.offset = 0;
+  memcpy(dev->write_pending.buf, buf, len);
+  
+  memcpy(&dev->write_pending.client_addr, sock_addr, sizeof(struct sockaddr_un));
 }
 
 int main() {
@@ -1301,25 +1423,58 @@ int main() {
     FD_ZERO(&rfds);
     FD_SET(sock, &rfds);
 
-    if (dev1->timer > 0)
-      FD_SET(dev1->timer, &rfds);
+    int timer_fd_max = 0;
     
-    retval = select(((sock > dev1->timer)?sock:dev1->timer)+1, &rfds, NULL, NULL, NULL);
+    for (int i=0; i < NB_TTY_MAX; ++i) {
+
+      if (devices[i].state && devices[i].timer_started) {
+	
+	FD_SET(devices[i].timer, &rfds);
+
+	if (devices[i].timer > timer_fd_max)
+	  timer_fd_max = devices[i].timer;
+      }
+    }
+    
+    retval = select(((sock > timer_fd_max)?sock:timer_fd_max)+1, &rfds, NULL, NULL, NULL);
     
     if (retval < 0)
       continue;
 
-    if ( (dev1->timer > 0) && FD_ISSET(dev1->timer, &rfds) ) {
+    if (!FD_ISSET(sock, &rfds) ) { // A timer has elapsed
 
-      uint64_t count = 0;
+      for (int i=0; i < NB_TTY_MAX; ++i) {
 
-      read(dev1->timer, &count, sizeof(count));
+	if (devices[i].state && devices[i].timer_started) {
+	
+	  if (FD_ISSET(devices[i].timer, &rfds)) {
 
-      // Flush when no data has been written since last timeout
-      if (!dev1->data_written)
-	dev1->ops->flush(-1);
+	    uint64_t count; // Be careful, shall read 8 bytes otherwise read fails
 
-      dev1->data_written = 0;
+	    read(devices[i].timer, &count, sizeof(count));
+	    
+	    int j = 0;
+
+	    // Find a client of the pts dev for passing to to flush
+	    // Whatever the client, only the pts dev is needed
+	    
+	    for (j=0; j < NB_CLIENT_MAX; ++j) {
+
+	      if (clients[j].minor == i) {
+		
+		if (!devices[i].ops->flush(j)) {
+
+		  stop_timer(&devices[i]);
+		}
+		
+		break;
+	      }
+	    }
+
+	    break;
+	  }
+	}
+      }
      
       continue;
     }
@@ -1481,12 +1636,14 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "tty: READ from %d: %d", msg->pid, msg->_u.io_msg.len);
 
+      struct device_desc * dev = get_device_from_fd(msg->_u.io_msg.fd);
+
       int buf_size = 20+msg->_u.io_msg.len;
 
       unsigned char * reply_buf = (unsigned char * )malloc(buf_size);
       struct message * reply_msg = (struct message *)&reply_buf[0];
 
-      int count = get_device_from_fd(msg->_u.io_msg.fd)->ops->read(msg->_u.io_msg.fd, reply_msg->_u.io_msg.buf, msg->_u.io_msg.len);
+      int count = dev->ops->read(msg->_u.io_msg.fd, reply_msg->_u.io_msg.buf, msg->_u.io_msg.len);
       
       if (count > 0) {
 	
@@ -1538,17 +1695,19 @@ int main() {
 
       struct device_desc * dev;
 
+      int nb_bytes_written = 0;
+
       if (msg->_u.io_msg.fd == -1) {
 
 	dev = get_device(1);
 
-        dev->ops->write(-1, buf2, msg->_u.io_msg.len);
+        nb_bytes_written = dev->ops->write(-1, buf2, msg->_u.io_msg.len);
       }
       else {
       
 	dev = get_device_from_fd(msg->_u.io_msg.fd);
 
-	dev->ops->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
+	nb_bytes_written = dev->ops->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);	
       }
 
       if (msg->_u.io_msg.len > 0) {
@@ -1556,14 +1715,22 @@ int main() {
 	dev->data_written = 1;
       }
 
-      msg->msg_id |= 0x80;
-      msg->_errno = 0;
-      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      if (nb_bytes_written == msg->_u.io_msg.len) {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else {
+
+	add_write_pending_request(msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len-nb_bytes_written, msg->_u.io_msg.len, buf2+nb_bytes_written, &remote_addr);
+      }
 
       if (buf2 != msg->_u.io_msg.buf) {
 
 	free(buf2);
       }
+      
     }
     else if (msg->msg_id == SEEK) {
 
