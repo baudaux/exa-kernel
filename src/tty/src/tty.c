@@ -190,81 +190,83 @@ static int add_client(int fd, pid_t pid, unsigned short m, int flags, unsigned s
   return fd;
 }
 
-static int del_client(int fd) {
+static int del_pts_client(int fd) {
+
+  clients[fd].pid = -1;
+  
+  int found = 0;
+  
+  for (int i = 1; i <= last_fd; ++i) {
+
+    if ( (clients[i].pid >= 0) && (clients[fd].minor == clients[i].minor) )
+      found = 1;
+  }
+
+  if (!found) { // no other open client for this device
+    
+    emscripten_log(EM_LOG_CONSOLE,"!! pts closed: need to notify other side i.e ptm");
+
+    devices[clients[fd].minor].state = 0;
+
+    struct device_desc * ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
+
+    unsigned char reply_buf[256];
+    struct message * reply_msg = (struct message *)&reply_buf[0];
+      
+    if ( (ptm_dev->read_pending.fd >= 0) && (ptm_dev->read_pending.len > 0) ) { // Pending read
+
+      reply_msg->msg_id = READ|0x80;
+      reply_msg->pid = ptm_dev->read_pending.pid;
+      reply_msg->_errno = 0;
+      reply_msg->_u.io_msg.fd = ptm_dev->read_pending.fd;
+
+      size_t sent_len = 0;
+      
+      reply_msg->_u.io_msg.len = sent_len;
+
+      sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &ptm_dev->read_pending.client_addr, sizeof(ptm_dev->read_pending.client_addr));
+
+      ptm_dev->read_pending.len = 0; // unset read pending
+      ptm_dev->read_pending.fd = -1;
+    }
+    else if (ptm_dev->read_select_pending.fd >= 0) {
+
+      emscripten_log(EM_LOG_CONSOLE, "del_client: pending read select: fd=%d", ptm_dev->read_select_pending.fd);
+
+      int i;
+
+      reply_msg->msg_id = SELECT|0x80;
+      reply_msg->pid = ptm_dev->read_select_pending.pid;
+      reply_msg->_errno = 0;
+      reply_msg->_u.select_msg.remote_fd = ptm_dev->read_select_pending.remote_fd;
+      reply_msg->_u.select_msg.fd = ptm_dev->read_select_pending.fd;
+      reply_msg->_u.select_msg.read_write = 0; // read
+      reply_msg->_u.select_msg.once = 2; // hangup
+	
+      sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &ptm_dev->read_select_pending.client_addr, sizeof(ptm_dev->read_select_pending.client_addr));
+
+      ptm_dev->read_select_pending.fd = -1; // unset read select pending
+      ptm_dev->read_select_pending.remote_fd = -1;
+    }
+  }
+
+  return fd;
+}
+
+static int del_ptmx_client(int fd) {
 
   clients[fd].pid = -1;
 
-  if (devices[clients[fd].minor].ptm_fd >= 0) {  // pts
-
-    int found = 0;
+  emscripten_log(EM_LOG_CONSOLE, "!! ptm closed: need to notify other side i.e processes belonging to the session %d", devices[clients[fd].pts_dev_minor].session);
+  char buf[256];
+  struct message * msg = (struct message *)&buf[0];
+      
+  msg->msg_id = KILL;
+  msg->pid = 2; // PID of TTY driver
+  msg->_u.kill_msg.pid = devices[clients[fd].pts_dev_minor].session | 0x40000000; // meaning session id
+  msg->_u.kill_msg.sig = SIGHUP;
   
-    for (int i = 1; i <= last_fd; ++i) {
-
-      if ( (clients[i].pid >= 0) && (clients[fd].minor == clients[i].minor) )
-	found = 1;
-    }
-
-    if (!found) { // no other open client for this device
-    
-      emscripten_log(EM_LOG_CONSOLE,"!! pts closed: need to notify other side i.e ptm");
-
-      devices[clients[fd].minor].state = 0;
-
-      struct device_desc * ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
-
-      unsigned char reply_buf[256];
-      struct message * reply_msg = (struct message *)&reply_buf[0];
-      
-      if ( (ptm_dev->read_pending.fd >= 0) && (ptm_dev->read_pending.len > 0) ) { // Pending read
-
-	reply_msg->msg_id = READ|0x80;
-	reply_msg->pid = ptm_dev->read_pending.pid;
-	reply_msg->_errno = 0;
-	reply_msg->_u.io_msg.fd = ptm_dev->read_pending.fd;
-
-	size_t sent_len = 0;
-      
-	reply_msg->_u.io_msg.len = sent_len;
-
-	sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &ptm_dev->read_pending.client_addr, sizeof(ptm_dev->read_pending.client_addr));
-
-	ptm_dev->read_pending.len = 0; // unset read pending
-	ptm_dev->read_pending.fd = -1;
-      }
-      else if (ptm_dev->read_select_pending.fd >= 0) {
-
-	emscripten_log(EM_LOG_CONSOLE, "del_client: pending read select: fd=%d", ptm_dev->read_select_pending.fd);
-
-	int i;
-
-	reply_msg->msg_id = SELECT|0x80;
-	reply_msg->pid = ptm_dev->read_select_pending.pid;
-	reply_msg->_errno = 0;
-	reply_msg->_u.select_msg.remote_fd = ptm_dev->read_select_pending.remote_fd;
-	reply_msg->_u.select_msg.fd = ptm_dev->read_select_pending.fd;
-	reply_msg->_u.select_msg.read_write = 0; // read
-	reply_msg->_u.select_msg.once = 2; // hangup
-	
-	sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &ptm_dev->read_select_pending.client_addr, sizeof(ptm_dev->read_select_pending.client_addr));
-
-	ptm_dev->read_select_pending.fd = -1; // unset read select pending
-	ptm_dev->read_select_pending.remote_fd = -1;
-      }
-    }
-  }
-  else if (clients[fd].pts_dev_minor >= 0) { // ptm
-
-    emscripten_log(EM_LOG_CONSOLE, "!! ptm closed: need to notify other side i.e processes belonging to the session %d", devices[clients[fd].pts_dev_minor].session);
-    char buf[256];
-    struct message * msg = (struct message *)&buf[0];
-      
-    msg->msg_id = KILL;
-    msg->pid = 2; // PID of TTY driver
-    msg->_u.kill_msg.pid = devices[clients[fd].pts_dev_minor].session | 0x40000000; // meaning session id
-    msg->_u.kill_msg.sig = SIGHUP;
-  
-    sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
-  }
+  sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
   return fd;
 }
@@ -658,7 +660,24 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
 
   for (int i = 0; i < count; ++i) {
 
-    if ( (data[i] == '\r') && (dev->ctrl.c_iflag & IGNCR) ) {
+    if (data[i] == dev->ctrl.c_cc[VINTR]) { // Ctrl-C (if not changed)
+
+      emscripten_log(EM_LOG_CONSOLE, "tty: enqueue -> SIGINT !!!");
+
+      // Send SGINT to foreground process group
+      
+      reply_msg->msg_id = KILL;
+      reply_msg->pid = 2; // PID of TTY driver
+      reply_msg->_u.kill_msg.pid = dev->fg_pgrp | 0x20000000; // meaning process group id
+      reply_msg->_u.kill_msg.sig = SIGINT;
+
+      return 0;
+    }
+    else if (data[i] == dev->ctrl.c_cc[VEOF]) { // Ctrl-D (if not changed)
+
+      return -1; // EOF
+    }
+    else if ( (data[i] == '\r') && (dev->ctrl.c_iflag & IGNCR) ) {
 
       //emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: IGNCR");
       
@@ -1076,7 +1095,7 @@ static int pts_close(int fd) {
 
   emscripten_log(EM_LOG_CONSOLE, "!!! pts_close: fd=%d", fd);
 
-  del_client(fd);
+  del_pts_client(fd);
 
   return 0;
 }
@@ -1215,8 +1234,38 @@ static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
   reply_msg->msg_id = 0;
 
   int len = enqueue(pts_dev, fd, buf, count, reply_msg, &pts_write);
-  
-  if (reply_msg->msg_id == (READ|0x80)) {
+
+  if (len == -1) { // EOF
+
+     if ( (pts_dev->read_pending.fd >= 0) && (pts_dev->read_pending.len > 0) ) { // Pending read
+
+	reply_msg->msg_id = READ|0x80;
+	reply_msg->pid = pts_dev->read_pending.pid;
+	reply_msg->_errno = 0;
+	reply_msg->_u.io_msg.fd = pts_dev->read_pending.fd;
+	reply_msg->_u.io_msg.len = 0;
+
+	sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &pts_dev->read_pending.client_addr, sizeof(pts_dev->read_pending.client_addr));
+
+	pts_dev->read_pending.len = 0; // unset read pending
+	pts_dev->read_pending.fd = -1;
+     }
+     else if (pts_dev->read_select_pending.fd >= 0) {
+
+	reply_msg->msg_id = SELECT|0x80;
+	reply_msg->pid = pts_dev->read_select_pending.pid;
+	reply_msg->_errno = 0;
+	reply_msg->_u.select_msg.remote_fd = pts_dev->read_select_pending.remote_fd;
+	reply_msg->_u.select_msg.fd = pts_dev->read_select_pending.fd;
+	reply_msg->_u.select_msg.read_write = 0;
+	
+	sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &pts_dev->read_select_pending.client_addr, sizeof(pts_dev->read_select_pending.client_addr));
+	
+	pts_dev->read_select_pending.fd = -1; // unset read select pending
+	pts_dev->read_select_pending.remote_fd = -1;
+     }
+  }
+  else if (reply_msg->msg_id == (READ|0x80)) {
     
     emscripten_log(EM_LOG_CONSOLE, "ptmx_write: send %d bytes to %s", len, pts_dev->read_pending.client_addr.sun_path);
     
@@ -1227,10 +1276,14 @@ static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
   }
   else if (reply_msg->msg_id == (SELECT|0x80)) {
     
-    sendto(sock, reply_buf, 1256, 0, (struct sockaddr *) &pts_dev->read_select_pending.client_addr, sizeof(pts_dev->read_select_pending.client_addr));
+    sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &pts_dev->read_select_pending.client_addr, sizeof(pts_dev->read_select_pending.client_addr));
 
     pts_dev->read_select_pending.fd = -1; // unset read select pending
     pts_dev->read_select_pending.remote_fd = -1;
+  }
+  else if (reply_msg->msg_id == KILL) {
+    
+    sendto(sock, reply_buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
   }
 
   return count;
@@ -1277,7 +1330,7 @@ static int ptmx_close(int fd) {
   //TOTEST
   //return 0;
 
-  del_client(fd);
+  del_ptmx_client(fd);
   
   return 0;
 }

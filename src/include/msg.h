@@ -83,7 +83,9 @@ enum message_id {
   SETSOCKOPT,
   PTHREAD_CREATE = 60,
   PTHREAD_EXIT,
-  END_OF_SIGNAL
+  END_OF_SIGNAL,
+  TRUNCATE,
+  FTRUNCATE
 };
 
 enum dev_type {
@@ -465,6 +467,19 @@ struct pthread_exit_message {
   int status;
 };
 
+struct truncate_message {
+
+  int length;
+  unsigned long len;
+  unsigned char buf[];
+};
+
+struct ftruncate_message {
+
+  int length;
+  int fd;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -524,6 +539,8 @@ struct message {
     struct setsockopt_message setsockopt_msg;
     struct pthread_create_message pthread_create_msg;
     struct pthread_exit_message pthread_exit_msg;
+    struct ftruncate_message ftruncate_msg;
+    struct truncate_message truncate_msg;
 
   } _u;
 };

@@ -99,7 +99,10 @@ int vfs_fstat(int fd, struct stat * stat_buf);
 
 int vfs_seek(int fd, int offset, int whence);
 
+int vfs_ftruncate(int fd, int length);
+
 int vfs_unlink(struct vnode * vnode);
+int vfs_rename(struct vnode * vnode, const char * newpath);
 
 int vfs_set_fs_flags(int fd, int flags);
 

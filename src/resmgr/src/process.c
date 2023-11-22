@@ -643,11 +643,11 @@ int process_setpgid(pid_t pid, pid_t pgid) {
 
   pid_t i = process_group_exists(pgid);
 
-  if (!i)
-    return -1;
+  if (i) {
 
-  if (processes[pid].sid != processes[i].sid)
-    return -1;
+    if (processes[pid].sid != processes[i].sid) // shall be in same session
+      return -1;
+  }
 
   processes[pid].pgid = pgid;
 
@@ -782,9 +782,10 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
   for (int i = 0; i < nb_processes; ++i) {
 
     if ( (processes[i].ppid == ppid) && (processes[i].proc_state == ZOMBIE_STATE) ) {
-      if ( (pid == -1) || (pid == i) ) {
-
-	// TODO: add other conditions (group)
+      if ( (pid == -1) || // any process
+	   ( (pid > 0) && (pid == i) ) ||  // exact pid
+	   ( (pid == 0) && (processes[i].pgid == processes[ppid].pgid) ) ||  // sam group
+	   ( (pid < -1) && (processes[i].pgid = -pid) ) ) {
 
 	emscripten_log(EM_LOG_CONSOLE, "process_wait: found child pid %d", i);
 	
@@ -966,7 +967,7 @@ int process_kill(pid_t pid, int signum, struct sigaction * act, int sock) {
 
   if (processes[pid].proc_state != RUNNING_STATE)
     return 0;
-
+  
   int action = 0; // No action
   
   if ( (signum == SIGKILL) || (signum == SIGSTOP) ) {
@@ -1095,6 +1096,27 @@ int process_get_session(pid_t sid, pid_t session[], int size) {
       if (processes[j].sid == sid) {
 
 	session[i++] = processes[j].pid;
+
+	if (i == size)
+	  return i;
+      }
+    }
+  }
+
+  return i;
+}
+
+int process_get_group(pid_t pgid, pid_t group[], int size) {
+
+  int i = 0;
+
+  for (int j= 0; j < NB_PROCESSES_MAX; ++j) {
+
+    if ( (processes[j].pid >= 0) && (processes[j].proc_state < ZOMBIE_STATE) ) {
+	
+      if (processes[j].pgid == pgid) {
+
+	group[i++] = processes[j].pid;
 
 	if (i == size)
 	  return i;

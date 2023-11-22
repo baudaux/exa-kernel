@@ -864,9 +864,13 @@ int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, 
 
       buf->st_dev = makedev(0, 0); // vfs major, minor
       buf->st_ino = (ino_t)vnode;
-
+      
       buf->st_mode = 0;
       buf->st_size = 0;
+
+      buf->st_nlink = 1;	
+      buf->st_uid = 1;
+      buf->st_gid = 1;
 
       switch(vnode->type) {
 
@@ -925,6 +929,10 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       buf->st_mode = 0;
       buf->st_size = 0;
 
+      buf->st_nlink = 1;	
+      buf->st_uid = 1;
+      buf->st_gid = 1;
+
       switch(vnode->type) {
 
       case VDIR:
@@ -966,6 +974,10 @@ int vfs_fstat(int fd, struct stat * buf) {
 
     buf->st_mode = 0;
     buf->st_size = 0;
+
+    buf->st_nlink = 1;	
+    buf->st_uid = 1;
+    buf->st_gid = 1;
 
     switch(vnode->type) {
 
@@ -1032,6 +1044,46 @@ int vfs_seek(int fd, int offset, int whence) {
   return -1;
 }
 
+int vfs_ftruncate(int fd, int length) {
+
+  int i = get_fd_entry(fd);
+
+  if (i < 0)
+    return ENOENT;
+
+  struct vnode * vnode = fds[i].vnode;
+
+  if (!vnode)
+    return EBADF;
+
+  if (vnode->type != VFILE)
+    return EISDIR;
+
+  if (length > vnode->_u.file.file_size) {
+
+    if (length > vnode->_u.file.buffer_size) {
+
+      unsigned char * buf = (unsigned char *)malloc(length);
+
+      if (vnode->_u.file.buffer_size > 0)
+	memcpy(buf, vnode->_u.file.buffer, vnode->_u.file.buffer_size);
+
+      if (vnode->_u.file.buffer)
+	free(vnode->_u.file.buffer);
+
+      vnode->_u.file.buffer = buf;
+      vnode->_u.file.buffer_size = length;
+    }
+
+    memset(vnode->_u.file.buffer+vnode->_u.file.file_size, 0, vnode->_u.file.buffer_size-vnode->_u.file.file_size);
+    
+  }
+
+  vnode->_u.file.file_size = length;
+  
+  return 0;
+}
+
 int vfs_unlink(struct vnode * vnode) {
 
   if (!vnode)
@@ -1057,6 +1109,75 @@ int vfs_unlink(struct vnode * vnode) {
   vfs_del_node(vnode);
 
   return 0;
+}
+
+int vfs_rename(struct vnode * old_vnode, const char * newpath) {
+
+  struct vnode * new_vnode = vfs_find_node(newpath, NULL);
+
+  if (old_vnode == new_vnode) // Same node
+    return 0;
+
+  if (old_vnode->type == VDIR) {
+
+    if ( (new_vnode == NULL) /*||
+			       ((new_vnode->type == VDIR) && () )*/ ) {
+
+      //TODO
+
+    }
+    else {
+
+      return ENOTDIR;
+    }
+  }
+  else if (old_vnode->type == VFILE) {
+
+    if (!new_vnode) {
+
+      char parent_dir[1024];
+
+      char * last = strrchr(newpath, '/');
+
+      if (!last || (last == newpath) )
+	return EACCES;
+
+      strncpy(parent_dir, newpath, last-newpath);
+      parent_dir[last-newpath] = 0;
+
+      struct vnode * parent_vnode = vfs_find_node(parent_dir, NULL);
+
+      if (!parent_vnode || (parent_vnode->type != VDIR) )
+	return EACCES;
+
+      if (parent_vnode == old_vnode->parent) { // Same dir
+
+	strcpy(old_vnode->name, last+1);
+	
+	return 0;
+      }
+      else {
+
+	//TODO
+	//parent_vnode
+      }
+	
+    }
+    else if (new_vnode->type == VFILE){
+
+      //TODO
+    }
+    else if (new_vnode->type == VDIR) {
+
+      return EISDIR;
+    }
+  }
+  else {
+
+    //TODO
+  }
+
+  return EACCES;
 }
 
 int vfs_set_fs_flags(int fd, int flags) {

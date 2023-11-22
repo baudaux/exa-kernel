@@ -526,9 +526,12 @@ static ssize_t netfs_getdents(int fd, char * data_buf, ssize_t count) {
 	      emscripten_log(EM_LOG_CONSOLE, "Add stat in cache for: %s", pathname);
 
 	      stat_buf.st_dev = makedev(major, fds[i].minor);
-	      stat_buf.st_ino = 1;
+	      stat_buf.st_ino = (ino_t)&devices[fds[i].minor];
 	      stat_buf.st_mode = mode;
 	      stat_buf.st_size = size;
+	      stat_buf.st_nlink = 1;	
+	      stat_buf.st_uid = 1;
+	      stat_buf.st_gid = 1;
 
 	      netcache_set_stat(pathname, &stat_buf, 0);
 	    }
@@ -954,7 +957,10 @@ int main() {
       struct stat stat_buf;
 
       stat_buf.st_dev = makedev(msg->_u.stat_msg.major, msg->_u.stat_msg.minor);
-      stat_buf.st_ino = 1;
+      stat_buf.st_ino = (ino_t)&devices[msg->_u.stat_msg.minor];
+      stat_buf.st_nlink = 1;	
+      stat_buf.st_uid = 1;
+      stat_buf.st_gid = 1;
 
       int _errno = 0;
 
@@ -1108,6 +1114,9 @@ int main() {
 
 	stat_buf.st_dev = makedev(major, min);
 	stat_buf.st_ino = (ino_t)&devices[min];
+	stat_buf.st_nlink = 1;	
+	stat_buf.st_uid = 1;
+	stat_buf.st_gid = 1;
 
 	int _errno = 0;
 

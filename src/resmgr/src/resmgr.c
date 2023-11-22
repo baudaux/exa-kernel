@@ -531,7 +531,7 @@ int main() {
     }
     else if (msg->msg_id == (OPEN|0x80)) {
       
-      emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: errno=%d flags=%x mode=%x %s pid=%d remote_fd=%d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname,msg->pid, msg->_u.open_msg.remote_fd);
+      emscripten_log(EM_LOG_CONSOLE, "Response from OPEN from %d: errno=%d flags=%x mode=%x %s pid=%d remote_fd=%d", msg->pid, msg->_errno, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname, msg->pid, msg->_u.open_msg.remote_fd);
 
       if (msg->_errno == 0) {
 
@@ -648,10 +648,10 @@ int main() {
 
 	  unsigned long job = get_pending_job(jobs, msg->pid, &buf2, &buf2_size, &addr2);
 
+	  finish_exit(sock, (struct message *)&buf2[0]);
+	  
 	  del_pending_job(jobs, job, msg->pid);
 	  
-	  finish_exit(sock, (struct message *)&buf2[0]);
-
 	  if (nb_processes_to_kill > 0) {
 	    ++process_index;
 	    process_to_kill(sock, itimers);
@@ -671,7 +671,7 @@ int main() {
 
 	  // Add /proc/<pid>/fd/<fd> entry
 	  process_add_proc_fd_entry(msg->pid, msg2->_u.dup_msg.new_fd, "dup");
-      
+	  
 	  msg2->msg_id |= 0x80;
 	  msg2->_errno = 0;
 
@@ -1113,7 +1113,7 @@ int main() {
     }
     else if (msg->msg_id == SETPGID) {
 
-      emscripten_log(EM_LOG_CONSOLE, "SETPGID from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "SETPGID from %d: %d %d", msg->pid, msg->_u.getpgid_msg.pid, msg->_u.getpgid_msg.pgid);
 
       if (msg->_u.getpgid_msg.pid == 0)
         process_setpgid(msg->pid, msg->_u.getpgid_msg.pgid);
@@ -1604,7 +1604,7 @@ int main() {
 
       msg->msg_id &= 0x7f;
       
-      if (!(msg->_u.kill_msg.pid & 0x40000000)) { // unique process
+      if (!(msg->_u.kill_msg.pid & 0x60000000)) { // unique process
 
 	int action = process_kill(msg->_u.kill_msg.pid, msg->_u.kill_msg.sig, &msg->_u.kill_msg.act, sock);
 
@@ -1615,9 +1615,23 @@ int main() {
 	  do_exit(sock, itimers, msg, bytes_rec, NULL);
 	}
       }
-      else { // session
+      else if (msg->_u.kill_msg.pid & 0x40000000) { // session
 
-	nb_processes_to_kill = process_get_session(msg->_u.kill_msg.pid & 0x3fffffff, processes_to_kill, 128);
+	nb_processes_to_kill = process_get_session(msg->_u.kill_msg.pid & 0x0fffffff, processes_to_kill, 128);
+
+	emscripten_log(EM_LOG_CONSOLE, "<-- process_get_session: session=%d ; %d proc to kill", msg->_u.kill_msg.pid & 0x0fffffff, nb_processes_to_kill);
+
+	process_index = 0;
+	process_sig = msg->_u.kill_msg.sig;
+
+	process_to_kill(sock, itimers);
+      }
+
+      else if (msg->_u.kill_msg.pid & 0x20000000) { // group
+
+	nb_processes_to_kill = process_get_group(msg->_u.kill_msg.pid & 0x0fffffff, processes_to_kill, 128);
+
+	emscripten_log(EM_LOG_CONSOLE, "<-- process_get_group: grp=%d ; %d proc to kill", msg->_u.kill_msg.pid & 0x0fffffff, nb_processes_to_kill);
 
 	process_index = 0;
 	process_sig = msg->_u.kill_msg.sig;
@@ -1862,11 +1876,13 @@ int main() {
       char * path;
       char new_path[1024];
 
+      emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %d %s", msg->pid, msg->_u.unlinkat_msg.dirfd, msg->_u.unlinkat_msg.path);
+
       if (msg->_u.unlinkat_msg.path[0] == '/') {
 
 	path = msg->_u.unlinkat_msg.path;
       }
-      else {
+      else if (msg->_u.unlinkat_msg.dirfd == AT_FDCWD) {
 
 	char * cwd = process_getcwd(msg->pid);
 
@@ -1877,8 +1893,12 @@ int main() {
 
 	path = &new_path[0];
       }
+      else {
+	emscripten_log(EM_LOG_CONSOLE, "UNLINKAT OTHER THAN AT_FDCWD IS NOT IMPLEMENTED !!");
+	continue;
+      }
 
-      emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %s %s", msg->pid, msg->_u.unlinkat_msg.path, path);
+      emscripten_log(EM_LOG_CONSOLE, "UNLINKAT from %d: %s", msg->pid, path);
       
       char * trail = NULL;
       
@@ -1958,7 +1978,7 @@ int main() {
 
 	oldpath = msg2->_u.renameat_msg.oldpath;
       }
-      else {
+      else if (msg2->_u.renameat_msg.olddirfd == AT_FDCWD) {
 
 	char * cwd = process_getcwd(msg->pid);
 
@@ -1969,10 +1989,27 @@ int main() {
 
 	oldpath = &oldpath2[0];
       }
+      else {
+
+	emscripten_log(EM_LOG_CONSOLE, "RENAMEAT OTHER THAN AT_FDCWD IS NOT IMPLEMENTED !!");
+	continue;
+      }
       
       char * oldtrail = NULL;
       
       struct vnode * oldvnode = vfs_find_node((const char *)oldpath, &oldtrail);
+
+      if (oldvnode->type == NULL) {
+
+	msg2->msg_id |= 0x80;
+	msg2->_errno = ENOENT;
+
+	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+	free(buf2);
+	
+	continue;
+      }
       
       char * newpath;
       char newpath2[1024];
@@ -1981,7 +2018,7 @@ int main() {
 
 	newpath = msg2->_u.renameat_msg.newpath;
       }
-      else {
+      else if (msg2->_u.renameat_msg.newdirfd == AT_FDCWD) {
 
 	char * cwd = process_getcwd(msg->pid);
 
@@ -1992,19 +2029,19 @@ int main() {
 	
 	newpath = &newpath2[0];
       }
+      else {
+
+	emscripten_log(EM_LOG_CONSOLE, "RENAMEAT OTHER THAN AT_FDCWD IS NOT IMPLEMENTED !!");
+	continue;
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "RENAMEAT: %s %s", oldpath, newpath);
       
       char * newtrail = NULL;
       
       struct vnode * newvnode = vfs_find_node((const char *)newpath, &newtrail);
-
-      if (oldvnode->type == NULL) {
-
-	msg2->msg_id |= 0x80;
-	msg2->_errno = ENOENT;
-
-	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-      }
-      else if (oldvnode->type == VMOUNT) {
+      
+      if (oldvnode->type == VMOUNT) {
 
 	if ( (newvnode->type == VMOUNT) && (oldvnode->_u.dev.type == newvnode->_u.dev.type) && (oldvnode->_u.dev.major == newvnode->_u.dev.major) && (oldvnode->_u.dev.minor == newvnode->_u.dev.minor) ) {
 
@@ -2026,7 +2063,7 @@ int main() {
 	  msg2->_u.renameat_msg.major = oldvnode->_u.dev.major;
 	  msg2->_u.renameat_msg.minor = oldvnode->_u.dev.minor;
 
-	  //emscripten_log(EM_LOG_CONSOLE, "RENAMEAT: VMOUNT %s %s (%d %d %d)", msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor);
+	  emscripten_log(EM_LOG_CONSOLE, "RENAMEAT: VMOUNT %s %s (%d %d %d)", msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor);
 
 	  driver_addr.sun_family = AF_UNIX;
 	  strcpy(driver_addr.sun_path, device_get_driver(oldvnode->_u.dev.type, oldvnode->_u.dev.major)->peer);
@@ -2036,15 +2073,21 @@ int main() {
 	}
 	else {
 
+	  emscripten_log(EM_LOG_CONSOLE, "RENAMEAT: MOVE ACROSS FILE SYSTEMS IS NOT IMPLEMENTED");
+
 	  msg2->msg_id |= 0x80;
 	  msg2->_errno = EACCES;
 
-	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	  sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
 	}
       }
       else {
+	
+	msg2->_errno = vfs_rename(oldvnode, newpath);
 
-	// TODO
+	msg2->msg_id |= 0x80;
+
+	sendto(sock, buf2, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
 
       free(buf2);
@@ -2083,7 +2126,23 @@ int main() {
       msg->msg_id |= 0x80;
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FTRUNCATE) {
 
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: FTRUNCATE from %d: fd=%d length=%d", msg->pid, msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
+
+      int ret = vfs_ftruncate(msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
+      msg->_errno = ret;
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      
+    }
+    else if (msg->msg_id == TRUNCATE) {
+
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: TRUNCATE from %d: path=%s length=%d", msg->pid, msg->_u.truncate_msg.buf, msg->_u.truncate_msg.length);
+
+      //TODO
     }
   }
   
