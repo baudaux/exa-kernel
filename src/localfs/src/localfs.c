@@ -335,7 +335,7 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
 
 static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  emscripten_log(EM_LOG_CONSOLE,"localfs_open: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"localfs_open: %d %d %s", flags, mode, pathname);
 
   int _errno;
   struct stat stat;

@@ -4,8 +4,10 @@
 
 EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 			 lfs_off_t off, void * buffer, lfs_size_t size), {
+  
+	return Asyncify.handleSleep(function (wakeUp) {
 
-	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+	    window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
 
 	if (!window.indexedDB)
 	  return -1;
@@ -13,8 +15,6 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
 
 	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
-  
-	return Asyncify.handleSleep(function (wakeUp) {
 
 	    //console.log("*** lfs_blk_read: "+block);
 
@@ -86,11 +86,10 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 EM_JS(int, lfs_blk_prog, (const struct lfs_config * c, lfs_block_t block,
 			  lfs_off_t off, const void * buffer, lfs_size_t size), {
 
-
-	if (!window.indexedDB)
-	  return -1;
-
 	return Asyncify.handleSleep(function (wakeUp) {
+
+	    if (!window.indexedDB)
+	      return -1;
 
 	    //console.log("*** lfs_blk_prog: "+block);
 
@@ -147,10 +146,10 @@ EM_JS(int, lfs_blk_prog, (const struct lfs_config * c, lfs_block_t block,
 
 EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
 
-    if (!window.indexedDB)
-      return -1;
-
     return Asyncify.handleSleep(function (wakeUp) {
+
+	if (!window.indexedDB)
+	  return -1;
 
 	//console.log("*** lfs_blk_erase: "+block);
 

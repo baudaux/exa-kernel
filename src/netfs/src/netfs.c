@@ -138,7 +138,9 @@ EM_JS(int, do_fetch_head, (const char * root, const char * pathname), {
 	sep = "";
       
       fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
-	  
+
+	  //console.log(response);
+	  //console.log(response.headers);
 	  //console.log(response.headers.get('Accept-Ranges'));
 	  //console.log(response.headers.get('Content-Length'));
 
@@ -179,10 +181,10 @@ EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int off
 	  
 	  /*console.log(response.headers.get('Accept-Ranges'));
 	  console.log(response.headers.get('Content-Length'));
-	  console.log(response.headers.get('Content-Size'));
+	  console.log(response.headers.get('Content-Size'));*/
 
-	  console.log(response);
-	  console.log(response.headers);*/
+	  //console.log(response);
+	  //console.log(response.headers);
 
 	  if (response.ok) {
 	    
@@ -317,6 +319,8 @@ static int netfs_stat(const char * pathname, struct stat * stat, unsigned short 
   int size = do_fetch(devices[minor]->root, buf, 0, buf, 1256);
   
   if (size > 0) {
+
+    buf[size] = 0;
 
     emscripten_log(EM_LOG_CONSOLE, "netfs_stat result\n%s", buf);
 
