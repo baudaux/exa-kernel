@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#include <linux/videodev2.h>
+
 #include "msg.h"
 
 #ifndef DEBUG
@@ -198,7 +200,7 @@ int main() {
 
       //emscripten_log(EM_LOG_CONSOLE, "tty: CLOSE from %d, %d", msg->pid, msg->_u.close_msg.fd);
 
-      if (msg->pid, msg->_u.close_msg.fd == VIDEO_INPUT) {
+      if (msg->_u.close_msg.fd == VIDEO_INPUT) {
 
 	if (video_input_opened) {
 
@@ -215,8 +217,99 @@ int main() {
       }
       
     }
-    
-    
+    else if (msg->msg_id == IOCTL) {
+
+      emscripten_log(EM_LOG_CONSOLE, "av: IOCTL from %d: %d", msg->pid, msg->_u.ioctl_msg.op);
+
+      msg->_errno = 1;
+
+      if (msg->_u.ioctl_msg.op == VIDIOC_QUERYCAP) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_capability * cap = (struct v4l2_capability *)msg->_u.ioctl_msg.buf;
+
+	  cap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
+
+	  emscripten_log(EM_LOG_CONSOLE, "av: cap=%x", cap->capabilities);
+
+	  msg->_errno = 0;
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_G_FMT) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_format * fmt = (struct v4l2_format *)msg->_u.ioctl_msg.buf;
+
+	  if (fmt->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_REQBUFS) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_requestbuffers * req = (struct v4l2_requestbuffers *)msg->_u.ioctl_msg.buf;
+
+	  if ( (req->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) && (req->memory == V4L2_MEMORY_MMAP) ) {
+
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_QUERYBUF) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_buffer * buf = (struct v4l2_buffer *)msg->_u.ioctl_msg.buf;
+
+	  if ( (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) && (buf->memory == V4L2_MEMORY_MMAP) ) {
+
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_QBUF) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_buffer * buf = (struct v4l2_buffer *)msg->_u.ioctl_msg.buf;
+
+	  if ( (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) && (buf->memory == V4L2_MEMORY_MMAP) ) {
+
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_STREAMON) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  enum v4l2_buf_type * buf_type = (enum v4l2_buf_type *)msg->_u.ioctl_msg.buf;
+	  if (*buf_type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      else if (msg->_u.ioctl_msg.op == VIDIOC_DQBUF) {
+
+	if (msg->_u.ioctl_msg.fd == VIDEO_INPUT) {
+
+	  struct v4l2_buffer * buf = (struct v4l2_buffer *)msg->_u.ioctl_msg.buf;
+
+	  if ( (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) && (buf->memory == V4L2_MEMORY_MMAP) ) {
+
+	    msg->_errno = 0;
+	  }
+	}
+      }
+      
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
   }
   
   return 0;
