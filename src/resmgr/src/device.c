@@ -63,7 +63,7 @@ void device_init() {
   // Add /var/run
   vfs_add_dir(var, "run");
 
-  // Add /tmp for netfs
+  // Add /tmp
   vfs_add_dir(vnode, "tmp");
 
   // Add /home

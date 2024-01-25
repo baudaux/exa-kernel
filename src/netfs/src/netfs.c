@@ -353,6 +353,13 @@ static int netfs_stat(const char * pathname, struct stat * stat, unsigned short 
       ptr = strtok(NULL, delim);
     }
   }
+
+  int i = 0;
+    
+  for (char * c = pathname; *c; ++c)
+    i += *c;
+
+  stat->st_ino = i;
   
   netcache_set_stat(pathname, stat, _errno);
 

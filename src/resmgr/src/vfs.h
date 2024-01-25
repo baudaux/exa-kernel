@@ -70,6 +70,8 @@ struct vnode * vfs_add_dev(struct vnode * parent, const char * name, unsigned ch
 int vfs_del_node(struct vnode * node);
 int vfs_del_tree(struct vnode * node);
 
+int vfs_rm_dir(struct vnode * node);
+
 int vfs_set_mount(struct vnode * node, unsigned char type, unsigned short major, unsigned short minor);
 
 struct vnode * vfs_add_path(const char * pathname);

@@ -85,7 +85,9 @@ enum message_id {
   PTHREAD_EXIT,
   END_OF_SIGNAL,
   TRUNCATE,
-  FTRUNCATE
+  FTRUNCATE,
+  MKDIRAT = 65,
+  RMDIR,
 };
 
 enum dev_type {
@@ -480,6 +482,26 @@ struct ftruncate_message {
   int fd;
 };
 
+struct mkdirat_message {
+  
+  int dirfd;
+  int mode;
+  int len;
+  char path[1024];
+  unsigned char type;
+  unsigned short major;
+  unsigned short minor;
+};
+
+struct rmdir_message {
+
+  int len;
+  char path[1024];
+  unsigned char type;
+  unsigned short major;
+  unsigned short minor;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -541,6 +563,8 @@ struct message {
     struct pthread_exit_message pthread_exit_msg;
     struct ftruncate_message ftruncate_msg;
     struct truncate_message truncate_msg;
+    struct mkdirat_message mkdirat_msg;
+    struct rmdir_message rmdir_msg;
 
   } _u;
 };

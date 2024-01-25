@@ -1999,7 +1999,7 @@ int main() {
       
       struct vnode * oldvnode = vfs_find_node((const char *)oldpath, &oldtrail);
 
-      if (oldvnode->type == NULL) {
+      if (!oldvnode) {
 
 	msg2->msg_id |= 0x80;
 	msg2->_errno = ENOENT;
@@ -2143,6 +2143,210 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "resmgr: TRUNCATE from %d: path=%s length=%d", msg->pid, msg->_u.truncate_msg.buf, msg->_u.truncate_msg.length);
 
       //TODO
+    }
+    else if (msg->msg_id == MKDIRAT) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "MKDIRAT from %d: %d %s", msg->pid, msg->_u.mkdirat_msg.dirfd, msg->_u.mkdirat_msg.path);
+
+      char * path;
+      char path2[1024];
+
+      if (msg->_u.mkdirat_msg.path[0] == '/') {
+
+	path = msg->_u.mkdirat_msg.path;
+      }
+      else if (msg->_u.mkdirat_msg.dirfd == AT_FDCWD) {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(path2, "%s%s", cwd, msg->_u.mkdirat_msg.path);
+	else
+	  sprintf(path2, "%s/%s", cwd, msg->_u.mkdirat_msg.path);
+
+	path = &path2[0];
+      }
+      else {
+
+	emscripten_log(EM_LOG_CONSOLE, "MKDIRAT OTHER THAN AT_FDCWD IS NOT IMPLEMENTED !!");
+	continue;
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: full path=%s", path);
+      
+      char * trail = NULL;
+      
+      struct vnode * vnode = vfs_find_node((const char *)path, &trail);
+
+      emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: vnode = %p type=%d", vnode, (vnode)?vnode->type:-1);
+
+      if (!vnode) {
+
+	char * dir = strrchr(path, '/');
+
+	if (dir) {
+
+	  char root[1024];
+	  
+	  strncpy(root, path, dir-path);
+
+	  root[dir-path] = 0;
+
+	  emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: root = %s", root);
+
+	  vnode = vfs_find_node(&root[0], &trail);
+	}
+	
+	if (!vnode) {
+
+	  msg->msg_id |= 0x80;
+	  msg->_errno = ENOENT;
+
+	  sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	
+	  continue;
+	}
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: vnode type = %d", vnode->type);
+      
+      if (vnode->type == VMOUNT) {
+
+	struct sockaddr_un driver_addr;
+
+	strcpy(msg->_u.mkdirat_msg.path, path);
+
+	msg->_u.mkdirat_msg.type = vnode->_u.dev.type;
+	msg->_u.mkdirat_msg.major = vnode->_u.dev.major;
+	msg->_u.mkdirat_msg.minor = vnode->_u.dev.minor;
+
+	emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: VMOUNT %s (%d %d %d)", msg->_u.mkdirat_msg.path, msg->_u.mkdirat_msg.type, msg->_u.mkdirat_msg.major, msg->_u.mkdirat_msg.minor);
+
+	driver_addr.sun_family = AF_UNIX;
+	strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
+
+	sendto(sock, buf, 12+sizeof(struct mkdirat_message), 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	  
+      }
+      else if (vnode->type == VDIR) {
+
+	char * dir = strrchr(path, '/');
+
+	if (!dir)
+	  dir = &path[0];
+	
+	if (vfs_add_dir(vnode, dir+1)) {
+
+	  msg->_errno = 0;
+	}
+	else {
+	  msg->_errno = EBADF;
+	}
+
+	emscripten_log(EM_LOG_CONSOLE, "MKDIRAT: dir created in vfs -> errno=%d", msg->_errno);
+
+	msg->msg_id |= 0x80;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+    }
+    else if (msg->msg_id == (MKDIRAT|0x80)) {
+
+      emscripten_log(EM_LOG_CONSOLE, "Return of MKDIRAT: pid=%d errno=%d", msg->pid, msg->_errno);
+
+      // Forward response to process
+
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
+    }
+    else if (msg->msg_id == RMDIR) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "RMDIR from %d: %s", msg->pid, msg->_u.rmdir_msg.path);
+
+      char * path;
+      char path2[1024];
+
+      if (msg->_u.rmdir_msg.path[0] == '/') {
+
+	path = msg->_u.rmdir_msg.path;
+      }
+      else {
+
+	char * cwd = process_getcwd(msg->pid);
+
+	if (cwd[strlen(cwd)-1] == '/')
+	  sprintf(path2, "%s%s", cwd, msg->_u.rmdir_msg.path);
+	else
+	  sprintf(path2, "%s/%s", cwd, msg->_u.rmdir_msg.path);
+
+	path = &path2[0];
+      }
+
+      char * trail = NULL;
+      
+      struct vnode * vnode = vfs_find_node((const char *)path, &trail);
+
+      emscripten_log(EM_LOG_CONSOLE, "RMDIR: vnode = %p type=%d", vnode, (vnode)?vnode->type:-1);
+
+      if (!vnode) {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = ENOENT;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	
+	continue;
+      }
+
+      if (vnode->type == VMOUNT) {
+
+	struct sockaddr_un driver_addr;
+
+	strncpy(msg->_u.rmdir_msg.path, path, 1024);
+
+	msg->_u.rmdir_msg.type = vnode->_u.dev.type;
+	msg->_u.rmdir_msg.major = vnode->_u.dev.major;
+	msg->_u.rmdir_msg.minor = vnode->_u.dev.minor;
+
+	emscripten_log(EM_LOG_CONSOLE, "RMDIR: VMOUNT %s (%d %d %d)", msg->_u.rmdir_msg.path, msg->_u.rmdir_msg.type, msg->_u.rmdir_msg.major, msg->_u.rmdir_msg.minor);
+
+	driver_addr.sun_family = AF_UNIX;
+	strcpy(driver_addr.sun_path, device_get_driver(vnode->_u.dev.type, vnode->_u.dev.major)->peer);
+
+	sendto(sock, buf, 12+sizeof(struct mkdirat_message), 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+	  
+      }
+      else if (vnode->type == VDIR) {
+	
+	if (!vfs_rm_dir(vnode)) {
+
+	  msg->_errno = 0;
+	}
+	else {
+	  msg->_errno = EBADF;
+	}
+
+	emscripten_log(EM_LOG_CONSOLE, "RMDIR: dir removed -> errno=%d", msg->_errno);
+
+	msg->msg_id |= 0x80;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+    }
+    else if (msg->msg_id == (RMDIR|0x80)) {
+
+      emscripten_log(EM_LOG_CONSOLE, "Return of RMDIR: pid=%d errno=%d", msg->pid, msg->_errno);
+
+      // Forward response to process
+
+      struct sockaddr_un addr;
+
+      process_get_peer_addr(msg->pid, &addr);
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
   }
   

@@ -61,6 +61,7 @@ struct device_ops {
   int (*unlink)(const char * path, int flags);
   int (*rename)(const char * oldpath, const char * newpath);
   int (*ftruncate)(int fd, int length);
+  int (*mkdir)(const char * path, int mode);
 };
 
 struct fd_entry {
@@ -326,6 +327,13 @@ static int localfs_stat(const char * pathname, struct stat * stat) {
       stat->st_size = 0;
       stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
     }
+
+    int i = 0;
+    
+    for (char * c = pathname; *c; ++c)
+      i += *c;
+
+    stat->st_ino = i;
   }
 
   emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
@@ -501,6 +509,16 @@ static int localfs_ftruncate(int fd, int length) {
   return localfs_errno(lfs_file_truncate(&lfs, fds[i].lfs_handle, length));
 }
 
+static int localfs_mkdir(const char * path, int mode) {
+
+  return localfs_errno(lfs_mkdir(&lfs, path));
+}
+
+static int localfs_rmdir(const char * path) {
+
+  return localfs_errno(lfs_remove(&lfs, path));
+}
+
 static struct device_ops localfs_ops = {
 
   .open = localfs_open,
@@ -515,6 +533,7 @@ static struct device_ops localfs_ops = {
   .unlink = localfs_unlink,
   .rename = localfs_rename,
   .ftruncate = localfs_ftruncate,
+  .mkdir = localfs_mkdir,
 };
 
 int register_device(unsigned short minor, struct device_ops * dev_ops) {
@@ -1073,6 +1092,48 @@ int main() {
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     
+    }
+    else if (msg->msg_id == MKDIRAT) {
+
+      emscripten_log(EM_LOG_CONSOLE, "localfs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
+      
+      struct device_ops * dev = NULL;
+
+      dev = get_device(msg->_u.mkdirat_msg.minor);
+      
+      if (dev) {
+      
+	msg->_errno = dev->mkdir(msg->_u.mkdirat_msg.path, msg->_u.mkdirat_msg.mode);
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+      
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == RMDIR) {
+
+      emscripten_log(EM_LOG_CONSOLE, "localfs: RMDIR from %d: path=%s", msg->pid, msg->_u.rmdir_msg.path);
+      
+      struct device_ops * dev = NULL;
+
+      dev = get_device(msg->_u.rmdir_msg.minor);
+      
+      if (dev) {
+      
+	msg->_errno = dev->unlink(msg->_u.rmdir_msg.path, 0);
+      }
+      else {
+
+	msg->_errno = EBADF;
+      }
+      
+      msg->msg_id |= 0x80;
+      
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
   }
   

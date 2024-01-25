@@ -275,6 +275,51 @@ int vfs_del_tree(struct vnode * node) {
   return 0;
 }
 
+int vfs_rm_dir(struct vnode * node) {
+
+  if (!node || (node->type != VDIR))
+    return -1;
+
+  struct vnode * n = node->_u.link.vnode;
+
+  int not_empty = 0;
+
+  while (n) {
+
+    if ( (n->type != VSYMLINK) || (strcmp(n->name, ".") && strcmp(n->name, "..")) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "vfs_rm_dir: child node %d %s", n->type, n->name);
+      
+      not_empty = 1;
+      break;
+    }
+
+    n = n->next;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "vfs_rm_dir: not_empty=%d", not_empty);
+
+  if (!not_empty) {
+
+    struct vnode * n = node->_u.link.vnode;
+
+    while (n) {
+
+      struct vnode * next = n->next;
+
+      vfs_del_node(n);
+
+      n = next;
+    }
+
+    node->_u.link.vnode = NULL;
+
+    return vfs_del_node(node);
+  }
+      
+  return -1;
+}
+
 int vfs_set_mount(struct vnode * node, unsigned char type, unsigned short major, unsigned short minor) {
 
   node->type = VMOUNT;
