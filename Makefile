@@ -1,24 +1,18 @@
 DEBUG ?= 0
 EMCC ?= emcc
 
-all:
-	make -C ./src/av DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/fb DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/ip DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/localfs DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/netfs DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/pipe DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/resmgr DEBUG=$(DEBUG) EMCC=$(EMCC)
-	make -C ./src/tty DEBUG=$(DEBUG) EMCC=$(EMCC)
+SUBDIRS = av fb ip localfs netfs pipe resmgr tty
 
-clean:
-	make -C ./src/av clean
-	make -C ./src/fb clean
-	make -C ./src/ip clean
-	make -C ./src/localfs clean
-	make -C ./src/netfs clean
-	make -C ./src/pipe clean
-	make -C ./src/resmgr clean
-	make -C ./src/tty clean
+SUBDIRS_CLEAN = $(foreach dir,$(SUBDIRS),$(dir)-clean)
 
-.PHONY: all clean
+all: $(SUBDIRS)
+
+$(SUBDIRS):
+	$(MAKE) -C ./src/$@ DEBUG=$(DEBUG) EMCC=$(EMCC)
+
+clean: $(SUBDIRS_CLEAN)
+
+$(SUBDIRS_CLEAN):
+	$(MAKE) -C ./src/$(subst -clean,,$@) clean
+
+.PHONY: $(SUBDIRS) $(SUBDIRS_CLEAN) all clean
