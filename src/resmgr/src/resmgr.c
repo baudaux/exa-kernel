@@ -2348,6 +2348,11 @@ int main() {
 
       sendto(sock, buf, 256, 0, (struct sockaddr *)&addr, sizeof(struct sockaddr_un));
     }
+    else if (msg->msg_id == FSTATAT) {
+
+      emscripten_log(EM_LOG_CONSOLE, "FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.path);
+      
+    }
   }
   
   return 0;

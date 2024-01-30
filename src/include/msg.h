@@ -503,6 +503,28 @@ struct rmdir_message {
   unsigned short minor;
 };
 
+struct _stat {
+    unsigned int     st_dev;         /* Périphérique                     */
+    unsigned int     st_ino;         /* Numéro d’inœud                   */
+    unsigned int    st_mode;        /* Protection                       */
+    unsigned int   st_nlink;       /* Nombre de liens physiques        */
+    unsigned int     st_uid;         /* UID du propriétaire              */
+    unsigned int     st_gid;         /* GID du propriétaire              */
+    unsigned int     st_rdev;        /* Type de périphérique             */
+    unsigned int     st_size;        /* Taille totale en octets          */
+    unsigned int st_blksize;     /* Taille de bloc pour E/S          */
+    unsigned int  st_blocks;      /* Nombre de blocs de 512 o alloués */
+};
+  
+struct fstatat_message {
+
+  int dirfd;
+  int flags;
+  int len;
+  char path[1024];
+  struct _stat st;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -566,6 +588,7 @@ struct message {
     struct truncate_message truncate_msg;
     struct mkdirat_message mkdirat_msg;
     struct rmdir_message rmdir_msg;
+    struct fstatat_message fstatat_msg;
 
   } _u;
 };
