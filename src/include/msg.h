@@ -88,6 +88,7 @@ enum message_id {
   FTRUNCATE,
   MKDIRAT = 65,
   RMDIR,
+  FSTATAT,
 };
 
 enum dev_type {
