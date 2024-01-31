@@ -40,7 +40,7 @@
 
 #define UTS_SYSNAME    "EXA"
 #define UTS_NODENAME   "exaequos"
-#define UTS_RELEASE    "0.1.0"
+#define UTS_RELEASE    "0.2.0"
 #define UTS_VERSION    "#1"
 #ifdef __wasm64__
 #define UTS_MACHINE    "wasm64"
@@ -436,7 +436,7 @@ int main() {
     }
     else if (msg->msg_id == OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "OPEN from %d: %x %x %s", msg->pid, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname);
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: OPEN from %d: %d %x %x %s", msg->pid, msg->_u.open_msg.fd, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->_u.open_msg.pathname);
 
       char * path;
       char new_path[1024];
@@ -445,8 +445,8 @@ int main() {
 
 	path = msg->_u.open_msg.pathname;
       }
-      else {
-
+      else if ( (msg->_u.open_msg.fd == 0) || (msg->_u.open_msg.fd == AT_FDCWD) ) {
+	
 	char * cwd = process_getcwd(msg->pid);
 
 	if (cwd[strlen(cwd)-1] == '/')
@@ -455,6 +455,46 @@ int main() {
 	  sprintf(new_path, "%s/%s", cwd, msg->_u.open_msg.pathname);
 
 	path = &new_path[0];
+      }
+      else {
+
+	unsigned char type;
+	unsigned short major;
+	int remote_fd;
+	  
+	process_get_fd(msg->pid, msg->_u.open_msg.fd, &type, &major, &remote_fd);
+	
+	if ( (type == FS_DEV) && (major == vfs_major) ) {
+
+	  vfs_get_path(vfs_get_vnode(remote_fd), path);
+	  
+	  if (path[strlen(path)-1] != '/')
+	    strcat(path, "/");
+
+	  strcat(path, msg->_u.open_msg.pathname);
+	}
+	else {
+
+	  // Forward msg to driver
+
+	  msg->_u.open_msg.fd = remote_fd;
+	  msg->_u.open_msg.type = type;
+	  msg->_u.open_msg.major = major;
+	  msg->_u.open_msg.minor = 0;
+
+	  strcpy((char *)msg->_u.open_msg.peer, device_get_driver(type, major)->peer);
+	  
+	  struct sockaddr_un driver_addr;
+
+	  driver_addr.sun_family = AF_UNIX;
+	  strcpy(driver_addr.sun_path, msg->_u.open_msg.peer);
+
+	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &driver_addr, sizeof(driver_addr));
+
+	  continue;
+	  
+	}
+	
       }
       
       int remote_fd = vfs_open((const char *)path, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, vfs_minor);
@@ -2350,7 +2390,55 @@ int main() {
     }
     else if (msg->msg_id == FSTATAT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.path);
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.pathname_or_buf);
+
+      char path[1024];
+
+      if (msg->_u.fstatat_msg.dirfd != AT_FDCWD) {
+
+	vfs_get_path(vfs_get_vnode(msg->_u.fstatat_msg.dirfd), path);
+      }
+      else {
+
+	strcpy(path, process_getcwd(msg->pid));
+      }
+
+      if (path[strlen(path)-1] != '/')
+	strcat(path, "/");
+
+      strcat(path, msg->_u.fstatat_msg.pathname_or_buf);
+
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: FSTATAT: path=%s", path);
+
+      struct stat stat_buf;
+      struct vnode * vnode;
+      char * trail = NULL;
+
+      int res = vfs_stat((const char *)path, &stat_buf, &vnode, &trail);
+
+      if ( (res == 0) && (vnode == NULL) ) {
+
+	emscripten_log(EM_LOG_CONSOLE, "resmgr: FSTATAT from %d: %s found", msg->pid, path);
+
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
+
+	msg->_u.fstatat_msg.len = sizeof(struct stat);
+	memcpy(msg->_u.fstatat_msg.pathname_or_buf, &stat_buf, sizeof(struct stat));
+	  
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+	// Handle case when vnode is not null
+
+      }
+      else {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = ENOENT;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	
+      }
       
     }
   }

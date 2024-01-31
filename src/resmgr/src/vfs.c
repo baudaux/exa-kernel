@@ -701,11 +701,11 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
 
     fds[i].offset += bytes_read;
 
-    if (DEBUG) {
+    /*if (DEBUG) {
       for (int i=0; i < bytes_read; ++i) {
 	emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
       }
-    }
+      }*/
 
     return bytes_read;
   }
@@ -724,10 +724,10 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_write: %d %d off=%d", fd, len, fds[i].offset);
 
-  for (int i=0; i < len; ++i) {
+  /*for (int i=0; i < len; ++i) {
 
     emscripten_log(EM_LOG_CONSOLE, "* %c", ((char *)buf)[i]);
-  }
+    }*/
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_write: vnode = %x", vnode);
 
@@ -928,8 +928,10 @@ int vfs_stat(const char * pathname, struct stat * buf, struct vnode ** p_vnode, 
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
-	buf->st_size = vnode->_u.file.file_size;
 	buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+
+	buf->st_size = vnode->_u.file.file_size;
+	
 	break;
 	
       case VSYMLINK:
@@ -989,8 +991,10 @@ int vfs_lstat(const char * pathname, struct stat * buf, struct vnode ** p_vnode,
       case VFILE:
 
 	buf->st_mode |= S_IFREG;
-	buf->st_size = vnode->_u.file.file_size;
 	buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+
+	buf->st_size = vnode->_u.file.file_size;
+	
 	break;
 	
       case VSYMLINK:
@@ -1031,11 +1035,21 @@ int vfs_fstat(int fd, struct stat * buf) {
       buf->st_mode |= S_IFDIR;
       buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
       break;
+
+    case VFILE:
+
+      buf->st_mode |= S_IFREG;
+      buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+      
+      buf->st_size = vnode->_u.file.file_size;
+      
+      break;
 	
     default:
 
       buf->st_mode |= S_IFREG;
       buf->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+	
       break;
     }
       

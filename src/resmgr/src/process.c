@@ -421,7 +421,7 @@ int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * maj
       *major = processes[pid].fds[i].major;
       *remote_fd = processes[pid].fds[i].remote_fd;
 
-      emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d, %d (%d)", pid, *remote_fd, fd, i);
+      emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d, %d (%d), (%d;%d)", pid, *remote_fd, fd, i, *type, *major);
 
       return 0;
     }
