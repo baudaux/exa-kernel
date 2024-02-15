@@ -277,16 +277,26 @@ int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
   return -1;
 }
 
-EM_JS(int, do_connect_websocket, (), {
+EM_JS(int, do_connect_websocket, (const char * host), {
 
     let url;
 
-    if (window.location.protocol == "https")
+    console.log(window.location.protocol);
+
+    if (window.location.protocol == "https:")
       url = "wss://";
     else
       url = "ws://";
 
-    url += window.location.host;
+    let h = "";
+
+    if (host)
+      h = UTF8ToString(host);
+
+    if (h == "")
+      url += window.location.host;
+    else
+      url += h;
 
     console.log("Connecting to " + url);
 
@@ -299,6 +309,11 @@ EM_JS(int, do_connect_websocket, (), {
       console.log("[open] Connection established");
       
       Module.websocket.send("Hello, exaequos !");
+    };
+
+    Module.websocket.onerror = function(e) {
+
+      console.log(e);
     };
 
     Module.websocket.onmessage = function(event) {
@@ -345,8 +360,8 @@ EM_JS(int, do_send_websocket, (char * buf, int len), {
     Module.websocket.send(Module.HEAPU8.slice(buf, buf+len));
   });
 
-int main() {
-
+int main(int argc, char * argv[]) {
+  
   int sock;
   struct sockaddr_un local_addr, resmgr_addr, remote_addr, ioctl_addr;
   int bytes_rec;
@@ -435,7 +450,13 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
-      do_connect_websocket();
+      if (argc > 1) {
+	
+	do_connect_websocket(argv[1]);
+      }
+      else {
+	do_connect_websocket("vps-04ec407a.vps.ovh.net:443");
+      }
     }
     else if (msg->msg_id == SOCKET) {
       
@@ -490,7 +511,7 @@ int main() {
 
 	emscripten_log(EM_LOG_CONSOLE, "ip: addr %d -> %d", i, msg->_u.sendto_msg.addr[i]);
 	}*/
-
+      
       struct message * msg2 = msg;
 
       if (msg->_u.sendto_msg.len > (bytes_rec - 68)) {

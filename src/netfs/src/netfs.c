@@ -764,7 +764,7 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    //emscripten_log(EM_LOG_CONSOLE,"*** netfs: %d", msg->msg_id);
+    emscripten_log(EM_LOG_CONSOLE,"*** netfs: %d", msg->msg_id);
 
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -858,7 +858,42 @@ int main() {
     
     else if (msg->msg_id == OPEN) {
 
-      int remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+      int remote_fd = -ENOENT;
+
+      if ( (msg->_u.open_msg.fd == 0) || ((msg->_u.open_msg.fd == AT_FDCWD)) ) { // open absolute
+
+	remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+      }
+      else { // open at dir
+
+	int i = find_fd_entry(msg->_u.open_msg.fd);
+
+	if (i >= 0) {
+
+	  char path[1024];
+	
+	  strcpy(path, fds[i].pathname);
+
+	  int l = strlen(path);
+
+	  if (path[l-1] != '/') {
+
+	    if ( (l > 1) && (path[l-1] == '.') && (path[l-2] == '/') ) {
+
+	      path[l-1] = 0;
+	    }
+	    else {
+	      strcat(path, "/");
+	    }
+	  }
+
+	  strcat(path, msg->_u.open_msg.pathname);
+
+	  msg->_u.open_msg.minor = fds[i].minor;
+
+	  remote_fd = get_device(msg->_u.open_msg.minor)->open((const char *)path, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+	}
+      }
 
       if (remote_fd >= 0) {
 
@@ -1165,6 +1200,57 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == FSTATAT) {
+
+      emscripten_log(EM_LOG_CONSOLE, "netfs FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.pathname_or_buf);
+
+      char path[1024];
+      
+      int i = find_fd_entry(msg->_u.fstatat_msg.dirfd);
+
+      int _errno = ENOENT;
+      
+      if (i >= 0) {
+	
+	strcpy(path, fds[i].pathname);
+
+	int l = strlen(path);
+
+	if (path[l-1] != '/') {
+
+	  if ( (l > 1) && (path[l-1] == '.') && (path[l-2] == '/') ) {
+
+	    path[l-1] = 0;
+	  }
+	  else {
+	    strcat(path, "/");
+	  }
+	}
+
+	strcat(path, msg->_u.fstatat_msg.pathname_or_buf);
+
+	struct stat stat_buf;
+
+	stat_buf.st_dev = makedev(major, fds[i].minor);
+	stat_buf.st_ino = (ino_t)&devices[fds[i].minor];
+	stat_buf.st_nlink = 1;	
+	stat_buf.st_uid = 1;
+	stat_buf.st_gid = 1;
+
+	if ((_errno=get_device(fds[i].minor)->stat((const char *)path, &stat_buf, fds[i].minor)) == 0) {
+
+	  msg->_u.fstatat_msg.len = sizeof(struct stat);
+
+	  memcpy(msg->_u.fstatat_msg.pathname_or_buf, &stat_buf, sizeof(struct stat));
+	  }
+      }
+      
+      msg->_errno = _errno;
+
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      
     }
     
   }
