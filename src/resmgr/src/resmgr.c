@@ -1224,9 +1224,14 @@ int main() {
 	
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
-      else if (node->type == VDEV) {
+      else {
+
+	//TODO
 	
-	// TODO
+	msg->msg_id |= 0x80;
+	msg->_errno = EINVAL;
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
 
     }

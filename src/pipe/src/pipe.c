@@ -421,13 +421,28 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE from %d: fd=%d len=%d", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
+      char * buf1 = msg->_u.io_msg.buf;
+
+      if (msg->_u.io_msg.len > (bytes_rec - 20)) {
+
+	emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+
+	buf1 =(char *)malloc(msg->_u.io_msg.len);
+
+	memcpy(buf1, msg->_u.io_msg.buf, bytes_rec - 20);
+
+	int bytes_rec2 = recvfrom(sock, buf1+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
+
+	emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE %d read", bytes_rec2);
+      }
+
       int i = msg->_u.io_msg.fd / 2;
 
       if ( (i >= 0) && (i < NB_FD_MAX) ) {
 	
 	if ((msg->_u.io_msg.fd % 2) == 1) {
 
-	  int len = write_circular_buffer(&fds[i].buf, msg->_u.io_msg.len, msg->_u.io_msg.buf);
+	  int len = write_circular_buffer(&fds[i].buf, msg->_u.io_msg.len, buf1);
 
 	  emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE %d bytes written (%d)", len, count_circular_buffer(&fds[i].buf));
 
@@ -493,12 +508,33 @@ int main() {
 
 	    if (len > 0) {
 	      msg->_u.io_msg.len -= len;
-	      memmove(msg->_u.io_msg.buf, msg->_u.io_msg.buf+len, msg->_u.io_msg.len); // memmove is used as regions can overlap
+	      memmove(buf1, buf1+len, msg->_u.io_msg.len); // memmove is used as regions can overlap
 	    }
 	    
 	    msg->msg_id |= 0x80;
-	    
-	    add_pending_job(jobs, WRITE_JOB | IO_JOB | msg->_u.io_msg.fd, msg->pid, msg, bytes_rec, &remote_addr);
+
+	    if (buf1 == msg->_u.io_msg.buf) {
+	      add_pending_job(jobs, WRITE_JOB | IO_JOB | msg->_u.io_msg.fd, msg->pid, msg, msg->_u.io_msg.len+20, &remote_addr);
+	    }
+	    else {
+
+	      // Allocate msg2 that can be bigger than msg
+
+	      struct message * msg2 = malloc(msg->_u.io_msg.len+20);
+
+	      if (msg2) {
+
+		memmove(msg2, msg, 20);
+		memmove(msg2->_u.io_msg.buf, buf1, msg->_u.io_msg.len);
+
+		// using msg2 !!
+	      
+		add_pending_job(jobs, WRITE_JOB | IO_JOB | msg->_u.io_msg.fd, msg->pid, msg2, msg->_u.io_msg.len+20, &remote_addr);
+
+		free(msg2);
+	      }
+	      
+	    }
 	    
 	    continue; // do not send write ack since write is pending
 	  }
@@ -514,6 +550,11 @@ int main() {
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+
+      if (buf1 != msg->_u.io_msg.buf) {
+
+	free(buf1);
+      }
       
     }
     else if (msg->msg_id == SEEK) {
