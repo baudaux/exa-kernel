@@ -240,7 +240,14 @@ int main() {
 	      }
 	      else if ( (job & 0xC0000000) == SELECT_JOB) {
 
-		//TODO
+		struct message * msg2 = (struct message *)&buf2[0];
+
+		msg2->msg_id = (SELECT|0x80);
+
+		msg2->_errno = EPIPE; //TODO: or send signal
+		  
+		sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		del_pending_job(jobs, job, msg2->pid);
 	      }
 	    }
 	  }
@@ -290,7 +297,15 @@ int main() {
 	      }
 	      else if ( (job & 0xC0000000) == SELECT_JOB) {
 
-		//TODO
+		struct message * msg2 = (struct message *)&buf2[0];
+
+		msg2->msg_id = (SELECT|0x80);
+
+		msg2->_errno = EPIPE; //TODO: or send signal
+		
+		  
+		sendto(sock, buf2, buf2_size, 0, (struct sockaddr *) addr2, sizeof(*addr2));
+		del_pending_job(jobs, job, msg2->pid);
 	      }
 	    }
 	  }
@@ -384,7 +399,7 @@ int main() {
 	    }
 	    
 	  }
-	  else if (fds[i].write_fd == -1) {
+	  else if (fds[i].write_fd == -1) { // write end has been closed
 
 	    msg->_u.io_msg.len = 0;
 	    msg->_errno = 0;
@@ -613,6 +628,7 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: %d %d %d %d", msg->pid, msg->_u.select_msg.fd, msg->_u.select_msg.remote_fd, msg->_u.select_msg.read_write, msg->_u.select_msg.start_stop);
 
       int answer = 0;
+      msg->_errno = 0;
 
       int i = msg->_u.select_msg.remote_fd / 2;
 
@@ -636,7 +652,7 @@ int main() {
 	      }
 	    }
 	  }
-	  else {
+	  else { // read
 
 	    if ((msg->_u.select_msg.remote_fd % 2) == 0) {
 
@@ -645,6 +661,14 @@ int main() {
 		emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: %d bytes in queue %d (read)", msg->pid, count_circular_buffer(&fds[i].buf), i);
 		
 		answer = 1;
+	      }
+	      else if (fds[i].write_fd == -1) { // write end has been closed
+
+		emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: write end has been closed", msg->pid);
+		
+		answer = 1;
+		msg->_errno = EPIPE;
+		msg->_u.select_msg.once = 2; //POLLHUP
 	      }
 	      else if (!msg->_u.select_msg.once) {
 		
@@ -663,10 +687,9 @@ int main() {
 
 	emscripten_log(EM_LOG_CONSOLE, "pipe: SELECT from %d: answer remote_fd=%d", msg->pid, msg->_u.select_msg.remote_fd);
 
-	 msg->msg_id |= 0x80;
-
-	 msg->_errno = 0;
-	 sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	msg->msg_id |= 0x80;
+	
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
     }
   }
