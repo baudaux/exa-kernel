@@ -95,6 +95,7 @@ int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned sho
 int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * major, int * remote_fd);
 int process_close_fd(pid_t pid, int fd);
 int process_find_open_fd(unsigned char type, unsigned short major, int remote_fd);
+int process_clone_fd(pid_t pid, int fd, pid_t pid_dest);
 
 int process_set_fd_flags(pid_t pid, int fd, int flags);
 int process_get_fd_flags(pid_t pid, int fd);

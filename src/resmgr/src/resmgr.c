@@ -2446,6 +2446,20 @@ int main() {
       }
       
     }
+    else if (msg->msg_id == CLONEFD) {
+
+      emscripten_log(EM_LOG_CONSOLE, "CLONEFD from %d", msg->pid);
+
+      msg->_u.clonefd_msg.new_fd = process_clone_fd(msg->pid, msg->_u.clonefd_msg.fd, msg->_u.clonefd_msg.pid_dest);
+
+      // Add /proc/<pid>/fd/<fd> entry
+      process_add_proc_fd_entry(msg->_u.clonefd_msg.pid_dest, msg->_u.clonefd_msg.new_fd, "clone");
+
+      msg->msg_id |= 0x80;
+      msg->_errno = 0;
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
   }
   
   return 0;

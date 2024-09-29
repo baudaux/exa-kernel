@@ -476,6 +476,54 @@ int process_find_open_fd(unsigned char type, unsigned short major, int remote_fd
   return -1;
 }
 
+int process_clone_fd(pid_t pid, int fd, pid_t pid_dest) {
+
+  emscripten_log(EM_LOG_CONSOLE,"process_clone_fd: %d %d %d", pid, fd, pid_dest);
+
+  pid = pid & 0xffff;
+
+  for (int i = 0; i < NB_FILES_MAX; ++i) {
+
+    if (processes[pid].fds[i].fd == fd) {
+
+      pid_dest = pid_dest & 0xffff;
+
+      int j;
+  
+      for (j = 0; j < NB_FILES_MAX; ++j) {
+
+	if (processes[pid_dest].fds[j].fd == -1)
+	  break;
+      }
+
+      if (j >= NB_FILES_MAX)
+	return -1;
+
+      int new_fd = process_find_smallest_fd(pid_dest);
+
+      emscripten_log(EM_LOG_CONSOLE,"process_clone_fd: new fd = %d", new_fd);
+
+      processes[pid_dest].fd_map[new_fd/8] |= (1 << (new_fd%8));
+
+      processes[pid_dest].fds[j].fd = new_fd;
+      processes[pid_dest].fds[j].remote_fd = processes[pid].fds[i].remote_fd;
+      processes[pid_dest].fds[j].type = processes[pid].fds[i].type;
+      processes[pid_dest].fds[j].major = processes[pid].fds[i].major;
+      processes[pid_dest].fds[j].minor = processes[pid].fds[i].minor;
+      processes[pid_dest].fds[j].fs_flags = processes[pid].fds[i].fs_flags;
+      processes[pid_dest].fds[j].fd_flags = processes[pid].fds[i].fd_flags;
+
+      emscripten_log(EM_LOG_CONSOLE,"process_clone_fd: clone done for pid %d -> %d", pid_dest, new_fd);
+      
+      return new_fd;
+    }
+  }
+
+  emscripten_log(EM_LOG_CONSOLE,"process_clone_fd: %d, %d not found", pid, fd);
+
+  return -1;
+}
+
 int process_set_fd_flags(pid_t pid, int fd, int flags) {
 
   pid = pid & 0xffff;

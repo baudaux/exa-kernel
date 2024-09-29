@@ -89,6 +89,7 @@ enum message_id {
   MKDIRAT = 65,
   RMDIR,
   FSTATAT,
+  CLONEFD,
 };
 
 enum dev_type {
@@ -511,6 +512,13 @@ struct fstatat_message {
   char pathname_or_buf[1024];
 };
 
+struct clonefd_message {
+  
+  int fd;
+  pid_t pid_dest;
+  int new_fd;
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -575,6 +583,7 @@ struct message {
     struct mkdirat_message mkdirat_msg;
     struct rmdir_message rmdir_msg;
     struct fstatat_message fstatat_msg;
+    struct clonefd_message clonefd_msg;
 
   } _u;
 };
