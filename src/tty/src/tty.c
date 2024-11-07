@@ -67,6 +67,7 @@ struct device_ops {
 
   int (*open)(const char * pathname, int flags, mode_t mode, unsigned short minor, pid_t pid, pid_t sid);
   ssize_t (*read)(int fd, void * buf, size_t len);
+  ssize_t (*avail)(int fd);
   ssize_t (*write)(int fd, const void * buf, size_t len);
   int (*ioctl)(int fd, int op, unsigned char * buf, size_t len, pid_t pid, pid_t sid, pid_t pgrp);
   int (*close)(int fd);
@@ -115,8 +116,12 @@ struct device_desc {
   struct circular_buffer rx_buf;
   struct circular_buffer tx_buf;
 
-  int timer;
-  int timer_started;
+  int write_timer;
+  int write_timer_started;
+
+  int read_timer;
+  int read_timer_started;
+  int read_timer_duration;
 
   int data_written;
   
@@ -316,12 +321,21 @@ int register_device(unsigned short m, struct device_ops * dev_ops, enum tty_dev_
     init_circular_buffer(&devices[m].tx_buf, TTY_BUF_SIZE);
   }
   
-  if ( (type == TTY) || (type == PTS) )
-    devices[m].timer = timerfd_create(CLOCK_MONOTONIC, 0);
+  if (type == TTY)
+    devices[m].write_timer = timerfd_create(CLOCK_MONOTONIC, 0);
   else
-    devices[m].timer = -1;
+    devices[m].write_timer = -1;
       
-  devices[m].timer_started = 0;
+  devices[m].write_timer_started = 0;
+
+  if (type == PTS)
+    devices[m].read_timer =  timerfd_create(CLOCK_MONOTONIC, 0);
+  else
+    devices[m].read_timer = -1;
+  
+  devices[m].read_timer_started = 0;
+  devices[m].read_timer_duration = 0;
+  
   devices[m].data_written = 0;
 
   devices[m].read_pending.fd = -1;
@@ -378,15 +392,15 @@ EM_JS(int, write_terminal, (char * buf, unsigned long len), {
     return len;
   });
 
-static void start_timer(struct device_desc * dev) {
+static void start_write_timer(struct device_desc * dev) {
 
   struct itimerspec ts;
   
-  if (!dev->timer_started) {
+  if (!dev->write_timer_started && (dev->write_timer >= 0) ) {
 
     //emscripten_log(EM_LOG_CONSOLE,"start_timer");
 
-    dev->timer_started = 1;
+    dev->write_timer_started = 1;
      
     unsigned long long val_msec = TTY_TIMEOUT;
     unsigned long long int_msec = TTY_TIMEOUT;
@@ -396,27 +410,126 @@ static void start_timer(struct device_desc * dev) {
     ts.it_value.tv_sec = val_msec / 1000ull;
     ts.it_value.tv_nsec = (val_msec % 1000ull) * 1000000ull;
      
-    timerfd_settime(dev->timer, 0, &ts, NULL);
+    timerfd_settime(dev->write_timer, 0, &ts, NULL);
   }
 }
 
-static void stop_timer(struct device_desc * dev) {
+static void stop_write_timer(struct device_desc * dev) {
 
   struct itimerspec ts;
   
-  if (dev->timer_started) {
+  if (dev->write_timer_started) {
     
     //emscripten_log(EM_LOG_CONSOLE,"stop_timer");
     
-    dev->timer_started = 0;
+    dev->write_timer_started = 0;
     
     ts.it_interval.tv_sec = 0;
     ts.it_interval.tv_nsec = 0;
     ts.it_value.tv_sec = 0;
     ts.it_value.tv_nsec = 0;
      
-    timerfd_settime(dev->timer, 0, &ts, NULL);
+    timerfd_settime(dev->write_timer, 0, &ts, NULL);
   }
+}
+
+static void start_read_timer(struct device_desc * dev, int dur) {
+
+  struct itimerspec ts;
+  
+  if (!dev->read_timer_started && (dev->read_timer >= 0) ) {
+
+    //emscripten_log(EM_LOG_CONSOLE,"start_timer");
+
+    dev->read_timer_started = 1;
+    
+    unsigned long long val_msec = dur*100; // 1 dur is 0.1 sec
+    unsigned long long int_msec = 0;
+     
+    ts.it_interval.tv_sec = int_msec / 1000ull;
+    ts.it_interval.tv_nsec = (int_msec % 1000ull) * 1000000ull;
+    ts.it_value.tv_sec = val_msec / 1000ull;
+    ts.it_value.tv_nsec = (val_msec % 1000ull) * 1000000ull;
+     
+    timerfd_settime(dev->read_timer, 0, &ts, NULL);
+  }
+}
+
+static void stop_read_timer(struct device_desc * dev) {
+
+  struct itimerspec ts;
+  
+  if (dev->read_timer_started) {
+    
+    //emscripten_log(EM_LOG_CONSOLE,"stop_timer");
+    
+    dev->read_timer_started = 0;
+    
+    ts.it_interval.tv_sec = 0;
+    ts.it_interval.tv_nsec = 0;
+    ts.it_value.tv_sec = 0;
+    ts.it_value.tv_nsec = 0;
+     
+    timerfd_settime(dev->read_timer, 0, &ts, NULL);
+  }
+}
+
+static int can_tty_read_reply(struct device_desc * dev, int fd, int len, int * reply, int * timer, int next) {
+
+  int read = 0;
+
+  *reply = 0;
+  *timer = 0;
+
+  if (dev->ctrl.c_lflag & ICANON) {
+
+    read = 1;
+  }
+  else {
+
+    int count_avail = dev->ops->avail(fd);
+
+    if (count_avail >= len) {
+
+      *reply = 1;
+      read = 1;
+    }
+    else if ( (dev->ctrl.c_cc[VMIN] == 0) && (dev->ctrl.c_cc[VTIME] == 0) ) {
+
+      *reply = 1;
+      read = 1;
+    }
+    else if ( (dev->ctrl.c_cc[VMIN] == 0) && (dev->ctrl.c_cc[VTIME] > 0) ) {
+
+      if (count_avail > 0) {
+	read = 1;
+      }
+      else {
+
+	*timer = dev->ctrl.c_cc[VTIME]; // timer > 0 means overall timeout
+      }
+    }
+    else if ( (dev->ctrl.c_cc[VMIN] > 0) && (dev->ctrl.c_cc[VTIME] == 0) ) {
+
+      if (count_avail >= dev->ctrl.c_cc[VMIN]) {
+	read = 1;
+      }
+    }
+    else if ( (dev->ctrl.c_cc[VMIN] > 0) && (dev->ctrl.c_cc[VTIME] > 0) ) {
+
+      if (count_avail >= dev->ctrl.c_cc[VMIN]) {
+	read = 1;
+      }
+      else if (next) {
+
+	// timer is started after the first char received
+
+	*timer = -dev->ctrl.c_cc[VTIME]; // timer < 0 means interchar timeout
+      }
+    }
+  }
+
+  return read;
 }
 
 static int local_tty_open(const char * pathname, int flags, mode_t mode, unsigned short m, pid_t pid, pid_t sid) {
@@ -440,7 +553,7 @@ static ssize_t local_tty_read(int fd, void * buf, size_t len) {
   
   size_t len2 = 0;
 
-  if (dev->ctrl.c_lflag & ICANON) {
+  if (dev->ctrl.c_lflag & ICANON) { 
 
     // Search EOL
     int i;
@@ -465,6 +578,32 @@ static ssize_t local_tty_read(int fd, void * buf, size_t len) {
   }
     
   return 0;
+}
+
+static ssize_t local_tty_avail(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_avail: fd=%d", fd);
+  
+  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  
+  size_t len = 0;
+
+  if (dev->ctrl.c_lflag & ICANON) {
+
+    // Search EOL
+    int i;
+
+    if (find_eol_circular_buffer(&dev->rx_buf, &i) > 0) {
+
+      len = count_circular_buffer_index(&dev->rx_buf, i)+1;
+    }
+  }
+  else {
+
+    len = count_circular_buffer(&dev->rx_buf);
+  }
+
+  return len;
 }
 
 static int local_tty_flush(int fd) {
@@ -549,7 +688,7 @@ static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
     dev->data_written = 1;
     
-    start_timer(dev);
+    start_write_timer(dev);
   }
   
   return count;
@@ -805,26 +944,20 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
       
       emscripten_log(EM_LOG_CONSOLE, "enqueue: pending read %d", dev->read_pending.len);
       
-      size_t len = 0;
+      size_t len = 0; 
 
-      if (dev->ctrl.c_lflag & ICANON) {
+      int reply = 0;
+      int read = 0;
+      int timer;
 
-	// Search EOL
-	int i;
-
-	if (find_eol_circular_buffer(&dev->rx_buf, &i) > 0) {
-
-	  len = count_circular_buffer_index(&dev->rx_buf, i)+1;
-	}
-      }
-      else {
-
-	len = count_circular_buffer(&dev->rx_buf);
-      }
+      read = can_tty_read_reply(dev, dev->read_pending.fd, dev->read_pending.len, &reply, &timer, 1);
+      
+      if (read)
+	len = dev->ops->avail(dev->read_pending.fd);
 
       emscripten_log(EM_LOG_CONSOLE, "enqueue: pending read len=%d", len);
 
-      if (len > 0) {
+      if ((len > 0) || reply) {
 
 	reply_msg->msg_id = READ|0x80;
 	reply_msg->pid = dev->read_pending.pid;
@@ -842,6 +975,11 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
 	//emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: after pending read sent_len=%d remaining=%d", sent_len, count_circular_buffer(&dev->rx_buf));
 
 	return sent_len;
+      }
+      else if (timer > 0) {
+
+	stop_read_timer(dev);
+	start_read_timer(dev, timer);
       }
     }
     else if (dev->read_select_pending.fd >= 0) {
@@ -947,6 +1085,7 @@ static struct device_ops local_tty_ops = {
 
   .open = local_tty_open,
   .read = local_tty_read,
+  .avail = local_tty_avail,
   .write = local_tty_write,
   .ioctl = local_tty_ioctl,
   .close = local_tty_close,
@@ -967,6 +1106,13 @@ static ssize_t pts_read(int fd, void * buf, size_t len) {
   emscripten_log(EM_LOG_CONSOLE, "pts_read: %d bytes", len);
   
   return local_tty_read(fd, buf, len);
+}
+
+static ssize_t pts_avail(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "pts_avail: fd=%d", fd);
+  
+  return local_tty_avail(fd);
 }
 
 static int notify_ptm(struct device_desc * pts_dev) {
@@ -1112,6 +1258,7 @@ static struct device_ops pts_ops = {
 
   .open = pts_open,
   .read = pts_read,
+  .avail = pts_avail,
   .write = pts_write,
   .ioctl = pts_ioctl,
   .close = pts_close,
@@ -1221,6 +1368,24 @@ static ssize_t ptmx_read(int fd, void * buf, size_t len) {
   }
   
   return 0;
+}
+
+static ssize_t ptmx_avail(int fd) {
+  
+  struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  
+  struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
+
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_avail: fd=%d", fd);
+
+  size_t len = 0;
+
+  if (pts_dev->state == 1) { // device open
+  
+    len = count_circular_buffer(&pts_dev->tx_buf);
+  }
+  
+  return len;
 }
 
 static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
@@ -1402,6 +1567,7 @@ static struct device_ops ptmx_ops = {
 
   .open = ptmx_open,
   .read = ptmx_read,
+  .avail = ptmx_avail,
   .write = ptmx_write,
   .ioctl = ptmx_ioctl,
   .close = ptmx_close,
@@ -1410,9 +1576,9 @@ static struct device_ops ptmx_ops = {
   .flush = NULL,
 };
 
-static void add_read_pending_request(pid_t pid, int fd, size_t len, struct sockaddr_un * sock_addr) {
+static void add_read_pending_request(pid_t pid, int fd, size_t len, struct sockaddr_un * sock_addr, int timer) {
 
-  emscripten_log(EM_LOG_CONSOLE, "--> add_read_pending_request from pid=%d: fd=%d len=%d", pid, fd, len);
+  emscripten_log(EM_LOG_CONSOLE, "--> add_read_pending_request from pid=%d: fd=%d len=%d timer=%d", pid, fd, len, timer);
 
   struct device_desc * dev = get_device_from_fd(fd);
 
@@ -1420,6 +1586,11 @@ static void add_read_pending_request(pid_t pid, int fd, size_t len, struct socka
   dev->read_pending.fd = fd;
   dev->read_pending.len = len;
   memcpy(&dev->read_pending.client_addr, sock_addr, sizeof(struct sockaddr_un));
+
+  if (timer > 0) {
+    
+    start_read_timer(dev, timer);
+  }
 }
 
 static void add_write_pending_request(pid_t pid, int fd, size_t len, size_t orig_len, char * buf, struct sockaddr_un * sock_addr) {
@@ -1495,12 +1666,20 @@ int main() {
     
     for (int i=0; i < NB_TTY_MAX; ++i) {
 
-      if (devices[i].state && devices[i].timer_started) {
+      if (devices[i].state && devices[i].write_timer_started) {
 	
-	FD_SET(devices[i].timer, &rfds);
+	FD_SET(devices[i].write_timer, &rfds);
 
-	if (devices[i].timer > timer_fd_max)
-	  timer_fd_max = devices[i].timer;
+	if (devices[i].write_timer > timer_fd_max)
+	  timer_fd_max = devices[i].write_timer;
+      }
+
+      if (devices[i].state && devices[i].read_timer_started) {
+	
+	FD_SET(devices[i].read_timer, &rfds);
+
+	if (devices[i].read_timer > timer_fd_max)
+	  timer_fd_max = devices[i].read_timer;
       }
     }
     
@@ -1513,13 +1692,13 @@ int main() {
 
       for (int i=0; i < NB_TTY_MAX; ++i) {
 
-	if (devices[i].state && devices[i].timer_started) {
+	if (devices[i].state && devices[i].write_timer_started) {
 	
-	  if (FD_ISSET(devices[i].timer, &rfds)) {
+	  if (FD_ISSET(devices[i].write_timer, &rfds)) {
 
 	    uint64_t count; // Be careful, shall read 8 bytes otherwise read fails
 
-	    read(devices[i].timer, &count, sizeof(count));
+	    read(devices[i].write_timer, &count, sizeof(count));
 	    
 	    int j = 0;
 
@@ -1532,7 +1711,7 @@ int main() {
 		
 		if (!devices[i].ops->flush(j)) {
 
-		  stop_timer(&devices[i]);
+		  stop_write_timer(&devices[i]);
 		}
 		
 		break;
@@ -1542,6 +1721,53 @@ int main() {
 	    break;
 	  }
 	}
+
+	if (devices[i].state && devices[i].read_timer_started) {
+	
+	  if (FD_ISSET(devices[i].read_timer, &rfds)) {
+
+	    uint64_t count; // Be careful, shall read 8 bytes otherwise read fails
+
+	    read(devices[i].read_timer, &count, sizeof(count));
+
+	    devices[i].read_timer_started = 0;
+
+	    struct device_desc * dev = &devices[i];
+	    
+	    if ( (dev->read_pending.fd >= 0) && (dev->read_pending.len > 0) ) { // Pending read
+      
+	      emscripten_log(EM_LOG_CONSOLE, "read timeout: pending read %d", dev->read_pending.len);
+      
+	      size_t len = 0;
+
+	      len = dev->ops->avail(dev->read_pending.fd);
+
+	      size_t sent_len = (len <= dev->read_pending.len)?len:dev->read_pending.len;
+
+	      int buf_size = 20+sent_len;
+
+	      unsigned char * reply_buf = (unsigned char * )malloc(buf_size);
+	      struct message * reply_msg = (struct message *)&reply_buf[0];
+	      
+	      reply_msg->msg_id = READ|0x80;
+	      reply_msg->pid = dev->read_pending.pid;
+	      reply_msg->_errno = 0;
+	      reply_msg->_u.io_msg.fd = dev->read_pending.fd;
+	      
+	      reply_msg->_u.io_msg.len = sent_len;
+
+	      if (sent_len > 0)
+		read_circular_buffer(&dev->rx_buf, sent_len, (char *)reply_msg->_u.io_msg.buf);
+	      
+	      sendto(sock, reply_buf, buf_size, 0, (struct sockaddr *) &dev->read_pending.client_addr, sizeof(dev->read_pending.client_addr));
+
+	      free(reply_buf);
+	    }
+
+	    break;
+	  }
+	}
+	
       }
      
       continue;
@@ -1703,17 +1929,28 @@ int main() {
     else if (msg->msg_id == READ) {
 
       emscripten_log(EM_LOG_CONSOLE, "tty: READ from %d: %d", msg->pid, msg->_u.io_msg.len);
-
+      
       struct device_desc * dev = get_device_from_fd(msg->_u.io_msg.fd);
+
+      emscripten_log(EM_LOG_CONSOLE, "tty: ICANON=%d VMIN=%d VTIME=%d", dev->ctrl.c_lflag & ICANON, dev->ctrl.c_cc[VMIN], dev->ctrl.c_cc[VTIME]);
 
       int buf_size = 20+msg->_u.io_msg.len;
 
       unsigned char * reply_buf = (unsigned char * )malloc(buf_size);
       struct message * reply_msg = (struct message *)&reply_buf[0];
 
-      int count = dev->ops->read(msg->_u.io_msg.fd, reply_msg->_u.io_msg.buf, msg->_u.io_msg.len);
+      int reply = 0;
+      int read = 0;
+      int timer = 0;
+
+      read = can_tty_read_reply(dev, msg->_u.io_msg.fd, msg->_u.io_msg.len, &reply, &timer, 0);
+
+      int count = 0;
+
+      if (read)
+	count = dev->ops->read(msg->_u.io_msg.fd, reply_msg->_u.io_msg.buf, msg->_u.io_msg.len);
       
-      if (count > 0) {
+      if ((count > 0) || reply) {
 	
 	reply_msg->msg_id = READ|0x80;
 	reply_msg->pid = msg->pid;
@@ -1737,7 +1974,7 @@ int main() {
       }
       else {
 
-	add_read_pending_request(msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len, &remote_addr);
+	add_read_pending_request(msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len, &remote_addr, timer);
       }
 
       free(reply_buf);
