@@ -71,7 +71,7 @@ struct device_ops {
   ssize_t (*write)(int fd, const void * buf, size_t len);
   int (*ioctl)(int fd, int op, unsigned char * buf, size_t len, pid_t pid, pid_t sid, pid_t pgrp);
   int (*close)(int fd);
-  ssize_t (*enqueue)(int fd, void * buf, size_t len, struct message * reply_msg);
+  ssize_t (*enqueue)(int fd, void * buf, size_t len, struct message * reply_msg, int * sig);
   int (*select)(pid_t pid, int remote_fd, int fd, int read_write, int start_stop, int once, struct sockaddr_un * sock_addr);
   int (*flush)(int fd);
 };
@@ -789,11 +789,13 @@ static int local_tty_close(int fd) {
   return 0;
 }
 
-static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, struct message * reply_msg, ssize_t (*write)(int, const void *, size_t)) {
+static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, struct message * reply_msg, ssize_t (*write)(int, const void *, size_t), int * sig) {
 
   unsigned char * data = (unsigned char *)buf;
 
   unsigned char echo_buf[1024];
+
+  *sig = 0;
   
   int j = 0;
 
@@ -801,17 +803,41 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
 
     if (data[i] == dev->ctrl.c_cc[VINTR]) { // Ctrl-C (if not changed)
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: enqueue -> SIGINT !!!");
-
-      // Send SGINT to foreground process group
+      // Send SIGINT to foreground process group
       
-      reply_msg->msg_id = KILL;
+      /*reply_msg->msg_id = KILL;
       reply_msg->pid = 2; // PID of TTY driver
       reply_msg->_u.kill_msg.pid = dev->fg_pgrp | 0x20000000; // meaning process group id
-      reply_msg->_u.kill_msg.sig = SIGINT;
+      reply_msg->_u.kill_msg.sig = SIGINT;*/
 
-      return 0;
+      if (dev->ctrl.c_lflag & ISIG) {
+
+	emscripten_log(EM_LOG_CONSOLE, "tty: enqueue -> SIGINT !!!");
+
+	*sig = dev->fg_pgrp | 0x20000000;
+      }
+      else {
+
+	data[j] = data[i];
+	++j;
+      }
     }
+    /*else if (data[i] == dev->ctrl.c_cc[VQUIT]) { // Ctrl-\ (if not changed)
+
+      emscripten_log(EM_LOG_CONSOLE, "tty: enqueue -> SIGQUIT !!!");
+
+      // Send SIGINT to foreground process group
+
+      if (dev->ctrl.c_cc[ISIG]) {
+
+	*sig = dev->fg_pgrp | 0x20000000;
+      }
+      else {
+
+	data[j] = data[i];
+	++j;
+      }
+      }*/
     else if (data[i] == dev->ctrl.c_cc[VEOF]) { // Ctrl-D (if not changed)
 
       return -1; // EOF
@@ -1004,13 +1030,13 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
   return 0;
 }
 
-static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct message * reply_msg) {
+static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct message * reply_msg, int * sig) {
 
   struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
 
   emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
-  int len = enqueue(dev, fd, buf, count, reply_msg, &local_tty_write);
+  int len = enqueue(dev, fd, buf, count, reply_msg, &local_tty_write, sig);
   
   return len;
 }
@@ -1406,7 +1432,22 @@ static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
 
   reply_msg->msg_id = 0;
 
-  int len = enqueue(pts_dev, fd, buf, count, reply_msg, &pts_write);
+  int sig;
+
+  int len = enqueue(pts_dev, fd, buf, count, reply_msg, &pts_write, &sig);
+
+  if (sig) {
+
+    unsigned char sig_buf[256];
+    struct message * sig_msg = (struct message *)&sig_buf[0];
+
+    sig_msg->msg_id = KILL;
+    sig_msg->pid = 2; // PID of TTY driver
+    sig_msg->_u.kill_msg.pid = sig; // meaning process group id
+    sig_msg->_u.kill_msg.sig = SIGINT;
+
+    sendto(sock, sig_buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+  }
 
   if (len == -1) { // EOF
 
@@ -1827,7 +1868,22 @@ int main() {
       
       reply_msg->msg_id = 0;
 
-      get_device(1)->ops->enqueue(-1, msg->_u.read_tty_msg.buf, msg->_u.read_tty_msg.len, reply_msg);
+      int sig;
+
+      get_device(1)->ops->enqueue(-1, msg->_u.read_tty_msg.buf, msg->_u.read_tty_msg.len, reply_msg, &sig);
+
+      if (sig) {
+
+	unsigned char sig_buf[256];
+	struct message * sig_msg = (struct message *)&sig_buf[0];
+
+	sig_msg->msg_id = KILL;
+	sig_msg->pid = 2; // PID of TTY driver
+	sig_msg->_u.kill_msg.pid = sig; // meaning process group id
+	sig_msg->_u.kill_msg.sig = SIGINT;
+
+	sendto(sock, sig_buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+      }
 
       if (reply_msg->msg_id == (READ|0x80)) {
 
