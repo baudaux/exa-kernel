@@ -70,6 +70,8 @@ static struct pipe fds[NB_FD_MAX];
 
 static int major;
 
+static int last_fd = 0;
+
 void init_fds() {
 
   for (int i=0; i < NB_FD_MAX; ++i) {
@@ -79,18 +81,35 @@ void init_fds() {
   }
 }
 
-int find_fd(int fd[2], int flags) {
+int find_free_fd(int fd[2], int flags) {
 
   for (int i=0; i < NB_FD_MAX; ++i) {
 
     if ( (fds[i].read_fd < 0) && ((fds[i].write_fd < 0)) ) {
 
-      fds[i].read_fd = fd[0] = 2*i;
-      fds[i].write_fd = fd[1] = 2*i+1;
+      last_fd += 2;
+      
+      fds[i].read_fd = fd[0] = last_fd;
+      fds[i].write_fd = fd[1] = last_fd+1;
       fds[i].flags = flags;
 
       init_circular_buffer(&fds[i].buf, PIPE_SIZE);
       
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+int find_fd(int fd) {
+
+  int read_fd = fd-(fd%2); // read fd is even
+
+  for (int i=0; i < NB_FD_MAX; ++i) {
+
+    if (fds[i].read_fd == read_fd) {
+
       return i;
     }
   }
@@ -169,7 +188,7 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "pipe: PIPE");
 
-      if (find_fd(msg->_u.pipe_msg.remote_fd, msg->_u.pipe_msg.flags) >= 0) {
+      if (find_free_fd(msg->_u.pipe_msg.remote_fd, msg->_u.pipe_msg.flags) >= 0) {
 
 	emscripten_log(EM_LOG_CONSOLE, "pipe: PIPE %d %d", msg->_u.pipe_msg.remote_fd[0], msg->_u.pipe_msg.remote_fd[1]);
 
@@ -192,9 +211,9 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE %d", msg->_u.close_msg.fd);
 
-      int i = msg->_u.close_msg.fd / 2;
+      int i = find_fd(msg->_u.close_msg.fd); /*msg->_u.close_msg.fd / 2*/
 
-      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+      if (i >= 0) {
 
 	if ((msg->_u.close_msg.fd % 2) == 0) { // read end is closed
 	  
@@ -210,7 +229,7 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, msg->_u.close_msg.fd+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
 
@@ -266,7 +285,7 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x1fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, msg->_u.close_msg.fd-1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: CLOSE -> pending job = %lu", job);
 
@@ -325,9 +344,9 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "pipe: READ from %d: fd=%d", msg->pid, msg->_u.io_msg.fd);
 
-      int i = msg->_u.io_msg.fd / 2;
+      int i = find_fd(msg->_u.io_msg.fd); //msg->_u.io_msg.fd / 2;
 
-      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+      if (i >= 0) {
 	
 	if ((msg->_u.io_msg.fd % 2) == 0) {
 
@@ -344,7 +363,7 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, msg->_u.io_msg.fd+1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE -> pending job = %lu", job);
 
@@ -451,9 +470,9 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "pipe: WRITE %d read", bytes_rec2);
       }
 
-      int i = msg->_u.io_msg.fd / 2;
+      int i = find_fd(msg->_u.io_msg.fd); //msg->_u.io_msg.fd / 2;
 
-      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+      if (i >= 0) {
 	
 	if ((msg->_u.io_msg.fd % 2) == 1) {
 
@@ -467,7 +486,7 @@ int main() {
 	    int buf2_size;
 	    struct sockaddr_un * addr2;
 
-	    unsigned long job = get_pending_job_by_type(jobs, 2*i, 0x1fffffff, &buf2, &buf2_size, &addr2);
+	    unsigned long job = get_pending_job_by_type(jobs, msg->_u.io_msg.fd-1, 0x1fffffff, &buf2, &buf2_size, &addr2);
 
 	    emscripten_log(EM_LOG_CONSOLE,"pipe: WRITE -> pending job = %lu", job);
 
@@ -609,13 +628,11 @@ int main() {
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
 
-	for (int i=0; i<NB_FD_MAX; ++i) {
-    
-	  if ( (fds[i].read_fd == msg->_u.fcntl_msg.fd) || (fds[i].write_fd == msg->_u.fcntl_msg.fd) ) {
+	int i = find_fd(msg->_u.fcntl_msg.fd);
 
-	    fds[i].flags = flags;
-	    break;
-	  }
+	if (i >= 0) {
+
+	  fds[i].flags = flags;
 	}
       }
 
@@ -630,9 +647,9 @@ int main() {
       int answer = 0;
       msg->_errno = 0;
 
-      int i = msg->_u.select_msg.remote_fd / 2;
+      int i = find_fd(msg->_u.select_msg.remote_fd);  //msg->_u.select_msg.remote_fd / 2;
 
-      if ( (i >= 0) && (i < NB_FD_MAX) ) {
+      if (i >= 0) {
       
 	if (msg->_u.select_msg.start_stop) { // start
 

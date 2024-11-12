@@ -137,6 +137,7 @@ struct device_desc {
 
 struct client {
 
+  int fd;
   pid_t pid;
   unsigned short minor;
   int flags;
@@ -156,7 +157,35 @@ static int last_fd = 0;
 
 static struct client clients[NB_CLIENT_MAX];
 
-// TODO : do not use fd as index
+void init_clients() {
+
+  for (int i = 0; i < NB_CLIENT_MAX; ++i) {
+
+    clients[i].fd = -1;
+  }
+}
+
+int find_client(int fd) {
+
+  for (int i = 0; i < NB_CLIENT_MAX; ++i) {
+
+    if (clients[i].fd == fd)
+      return i;
+  }
+
+  return -1;
+}
+
+int find_free_client() {
+
+  for (int i = 0; i < NB_CLIENT_MAX; ++i) {
+    
+    if (clients[i].fd == -1)
+      return i;
+  }
+
+  return -1;
+}
 
 struct device_desc * get_device(unsigned short m) {
 
@@ -165,7 +194,12 @@ struct device_desc * get_device(unsigned short m) {
 
 struct device_desc * get_device_from_fd(int fd) {
 
-  return &devices[clients[fd].minor];
+  int i = find_client(fd);
+
+  if (i < 0)
+    return NULL;
+
+  return &devices[clients[i].minor];
 }
 
 struct device_desc * get_device_from_session(pid_t sid, unsigned short * min) {
@@ -184,26 +218,39 @@ struct device_desc * get_device_from_session(pid_t sid, unsigned short * min) {
 
 static int add_client(int fd, pid_t pid, unsigned short m, int flags, unsigned short mode) {
 
-  clients[fd].pid = pid;
-  clients[fd].minor = m;
-  clients[fd].flags = flags;
-  clients[fd].mode = mode;
-  clients[fd].pts_dev_minor = -1;
+  int i = find_free_client();
+
+  if (i < 0)
+    return -1;
+
+  clients[i].fd = fd;
+  clients[i].pid = pid;
+  clients[i].minor = m;
+  clients[i].flags = flags;
+  clients[i].mode = mode;
+  clients[i].pts_dev_minor = -1;
   
   devices[m].state = 1;
 
-  return fd;
+  return i;
 }
 
 static int del_pts_client(int fd) {
 
-  clients[fd].pid = -1;
+  int i = find_client(fd);
+
+  if (i < 0)
+    return -1;
+
+  clients[i].fd = -1;
+  clients[i].pid = -1;
+  
   
   int found = 0;
   
-  for (int i = 1; i <= last_fd; ++i) {
+  for (int j = 1; j < NB_CLIENT_MAX; ++j) {
 
-    if ( (clients[i].pid >= 0) && (clients[fd].minor == clients[i].minor) )
+    if ( (clients[j].fd >= 0) && (clients[j].pid >= 0) && (clients[j].minor == clients[i].minor) )
       found = 1;
   }
 
@@ -211,9 +258,9 @@ static int del_pts_client(int fd) {
     
     emscripten_log(EM_LOG_CONSOLE,"!! pts closed: need to notify other side i.e ptm");
 
-    devices[clients[fd].minor].state = 0;
+    devices[clients[i].minor].state = 0;
 
-    struct device_desc * ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
+    struct device_desc * ptm_dev = get_device_from_fd(devices[clients[i].minor].ptm_fd);
 
     unsigned char reply_buf[256];
     struct message * reply_msg = (struct message *)&reply_buf[0];
@@ -255,25 +302,31 @@ static int del_pts_client(int fd) {
     }
   }
 
-  return fd;
+  return i;
 }
 
 static int del_ptmx_client(int fd) {
 
-  clients[fd].pid = -1;
+  int i = find_client(fd);
 
-  emscripten_log(EM_LOG_CONSOLE, "!! ptm closed: need to notify other side i.e processes belonging to the session %d", devices[clients[fd].pts_dev_minor].session);
+  if (i < 0)
+    return -1;
+
+  clients[i].fd = -1;
+  clients[i].pid = -1;
+
+  emscripten_log(EM_LOG_CONSOLE, "!! ptm closed: need to notify other side i.e processes belonging to the session %d", devices[clients[i].pts_dev_minor].session);
   char buf[256];
   struct message * msg = (struct message *)&buf[0];
       
   msg->msg_id = KILL;
   msg->pid = 2; // PID of TTY driver
-  msg->_u.kill_msg.pid = devices[clients[fd].pts_dev_minor].session | 0x40000000; // meaning session id
+  msg->_u.kill_msg.pid = devices[clients[i].pts_dev_minor].session | 0x40000000; // meaning session id
   msg->_u.kill_msg.sig = SIGHUP;
   
   sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
-  return fd;
+  return i;
 }
 
 static void init_ctrl(struct termios * ctrl) {
@@ -786,6 +839,14 @@ static int local_tty_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_
 
 static int local_tty_close(int fd) {
 
+  int i = find_client(fd);
+
+  if (i < 0)
+    return -1;
+
+  clients[i].fd = -1;
+  clients[i].pid = -1;
+
   return 0;
 }
 
@@ -1213,16 +1274,21 @@ static ssize_t pts_write(int fd, const void * buf, size_t count) {
   struct device_desc * ptm_dev;
   int ptm_fd;
 
+  int i = find_client(fd);
+
+  if (i < 0)
+    return 0;
+
   if (dev->ptm_fd < 0) { // Not a pts but a ptm, case when ptmx_write calls enqueue that calls pts_write
 
-    dev = &devices[clients[fd].pts_dev_minor]; // dev is now pts dev
+    dev = &devices[clients[i].pts_dev_minor]; // dev is now pts dev
     ptm_dev = get_device_from_fd(fd);
     ptm_fd = fd;
   }
   else {
 
-    ptm_dev = get_device_from_fd(devices[clients[fd].minor].ptm_fd);
-    ptm_fd = devices[clients[fd].minor].ptm_fd;
+    ptm_dev = get_device_from_fd(devices[clients[i].minor].ptm_fd);
+    ptm_fd = devices[clients[i].minor].ptm_fd;
   }
 
   unsigned char * data = (unsigned char *)buf;
@@ -1297,9 +1363,9 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
   
   ++last_fd;
   
-  add_client(last_fd, pid, m, flags, mode);
+  int i = add_client(last_fd, pid, m, flags, mode);
 
-  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: fd=%d", last_fd);
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: fd=%d i=%d", last_fd, i);
   
   minor += 1;
   
@@ -1307,9 +1373,9 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
 
   devices[minor].ptm_fd = last_fd; // pts dev stores fd of ptm client
   
-  clients[last_fd].pts_dev_minor = minor; // ptm client stores minor of pts dev
+  clients[i].pts_dev_minor = minor; // ptm client stores minor of pts dev
 
-  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: create PTM fd=%d & PTS minor=%d", devices[minor].ptm_fd, clients[last_fd].pts_dev_minor);
+  emscripten_log(EM_LOG_CONSOLE, "ptmx_open: create PTM fd=%d & PTS minor=%d", devices[minor].ptm_fd, clients[i].pts_dev_minor);
   
   char buf[1256];
   struct message * msg = (struct message *)&buf[0];
@@ -1331,8 +1397,13 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
 static ssize_t ptmx_read(int fd, void * buf, size_t len) {
   
   struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+
+  int i = find_client(fd);
+
+  if (i < 0)
+    return 0;
   
-  struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
+  struct device_desc * pts_dev = &devices[clients[i].pts_dev_minor];
 
   emscripten_log(EM_LOG_CONSOLE, "ptmx_read: len=%d", len);
 
@@ -1399,8 +1470,13 @@ static ssize_t ptmx_read(int fd, void * buf, size_t len) {
 static ssize_t ptmx_avail(int fd) {
   
   struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+
+  int i = find_client(fd);
+
+  if (i < 0)
+    return 0;
   
-  struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
+  struct device_desc * pts_dev = &devices[clients[i].pts_dev_minor];
 
   emscripten_log(EM_LOG_CONSOLE, "ptmx_avail: fd=%d", fd);
 
@@ -1422,7 +1498,12 @@ static ssize_t ptmx_write(int fd, const void * buf, size_t count) {
 
   emscripten_log(EM_LOG_CONSOLE, "ptmx_write: fd=%d count=%d", fd, count);
 
-  struct device_desc * pts_dev = &devices[clients[fd].pts_dev_minor];
+  int i = find_client(fd);
+
+  if (i < 0)
+    return 0;
+
+  struct device_desc * pts_dev = &devices[clients[i].pts_dev_minor];
 
   if (pts_dev->state == 0)  // closed
     return 0;
@@ -1508,12 +1589,17 @@ static int ptmx_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_t pid
 
   emscripten_log(EM_LOG_CONSOLE,"ptmx_ioctl: fd=%d op=%d", fd, op);
 
+  int i = find_client(fd);
+
+  if (i < 0)
+    return 0;
+
   switch (op) {
 
   case TIOCGPTN:
     {
 
-      int ptn = clients[fd].pts_dev_minor;
+      int ptn = clients[i].pts_dev_minor;
 
       memcpy(buf, &ptn, sizeof(int));
 
@@ -1529,8 +1615,8 @@ static int ptmx_ioctl(int fd, int op, unsigned char * buf, size_t len, pid_t pid
   case TIOCSWINSZ:
     {
 
-      memcpy(&(devices[clients[fd].pts_dev_minor].ws), buf, sizeof(struct winsize));
-      emscripten_log(EM_LOG_CONSOLE,"ptmx_ioctl: TIOCSWINSZ row=%d col=%d", devices[clients[fd].pts_dev_minor].ws.ws_row, devices[clients[fd].pts_dev_minor].ws.ws_col);
+      memcpy(&(devices[clients[i].pts_dev_minor].ws), buf, sizeof(struct winsize));
+      emscripten_log(EM_LOG_CONSOLE,"ptmx_ioctl: TIOCSWINSZ row=%d col=%d", devices[clients[i].pts_dev_minor].ws.ws_row, devices[clients[i].pts_dev_minor].ws.ws_col);
       
       break;
     }
@@ -1560,7 +1646,12 @@ static int ptmx_select(pid_t pid, int remote_fd, int fd, int read_write, int sta
 
   struct device_desc * dev = get_device_from_fd(remote_fd);
 
-  struct device_desc * pts_dev = &devices[clients[remote_fd].pts_dev_minor];
+  int i = find_client(remote_fd);
+
+  if (i < 0)
+    return 0;
+
+  struct device_desc * pts_dev = &devices[clients[i].pts_dev_minor];
 
   emscripten_log(EM_LOG_CONSOLE, "!!! ptmx_select: fd=%d rw=%d start=%d %x %d", fd, read_write, start_stop, pts_dev, pts_dev->state);
 
@@ -1694,6 +1785,8 @@ int main() {
   sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
   struct device_desc * dev1 = get_device(1);
+  
+  init_clients();
 
   while (1) {
 
@@ -1748,9 +1841,9 @@ int main() {
 	    
 	    for (j=0; j < NB_CLIENT_MAX; ++j) {
 
-	      if (clients[j].minor == i) {
+	      if ( (clients[j].fd >= 0) && (clients[j].minor == i) ) {
 		
-		if (!devices[i].ops->flush(j)) {
+		if (!devices[i].ops->flush(clients[j].fd)) {
 
 		  stop_write_timer(&devices[i]);
 		}
@@ -2005,6 +2098,8 @@ int main() {
 
       if (read)
 	count = dev->ops->read(msg->_u.io_msg.fd, reply_msg->_u.io_msg.buf, msg->_u.io_msg.len);
+
+      int i = find_client(msg->_u.io_msg.fd);
       
       if ((count > 0) || reply) {
 	
@@ -2022,7 +2117,7 @@ int main() {
 	msg->_errno = 0;
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
-      else if (clients[msg->_u.io_msg.fd].flags & O_NONBLOCK) {
+      else if ( (i >= 0) && (clients[i].flags & O_NONBLOCK) ) {
 
 	msg->msg_id |= 0x80;
 	msg->_errno = EAGAIN;
@@ -2144,8 +2239,8 @@ int main() {
 
       msg->_errno = get_device_from_fd(msg->_u.close_msg.fd)->ops->close(msg->_u.close_msg.fd);
 
-      // very temporary
-      clients[msg->_u.close_msg.fd].pid = -1;
+      // TODO remove this: very temporary
+      //clients[msg->_u.close_msg.fd].pid = -1;
 
       msg->msg_id |= 0x80;
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
@@ -2224,7 +2319,12 @@ int main() {
 
       struct stat stat_buf;
 
-      int min = clients[msg->_u.fstat_msg.fd].minor;
+      int i = find_client(msg->_u.fstat_msg.fd);
+
+      if (i < 0)
+	return 0;
+
+      int min = clients[i].minor;
 
       stat_buf.st_dev = makedev(major, min);
       stat_buf.st_ino = (ino_t)&devices[min];
@@ -2272,13 +2372,18 @@ int main() {
       msg->_u.fcntl_msg.ret = 0;
       msg->_errno = 0;
 
+      int i = find_client(msg->_u.fcntl_msg.fd);
+
+      if (i < 0)
+	return 0;
+
       if (msg->_u.fcntl_msg.cmd == F_SETFL) {
 
 	int flags;
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
 
-	clients[msg->_u.fcntl_msg.fd].flags = flags;
+	clients[i].flags = flags;
       }
 
       msg->msg_id |= 0x80;

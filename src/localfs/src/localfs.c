@@ -794,7 +794,7 @@ int main() {
       }
       else {
 
-	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
+	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[i].minor);
 	reply->_errno = ENXIO;
       }
       

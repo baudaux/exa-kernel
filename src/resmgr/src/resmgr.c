@@ -608,7 +608,7 @@ int main() {
 	process_del_proc_fd_entry(msg->pid, msg->_u.close_msg.fd);
 
 	// Find fd in other processes
-	if (process_find_open_fd(type, major, remote_fd) < 0) {
+	if ( (remote_fd >= 0) && (process_find_open_fd(type, major, remote_fd) < 0) ) {
 
 	  // No more fd, close the fd in the driver
 
@@ -648,6 +648,7 @@ int main() {
 	  emscripten_log(EM_LOG_CONSOLE, "CLOSE: do not close");
 
 	  // Other fd are there, do not close fd in the driver
+	  // or socket or timer
 
 	  msg->msg_id |= 0x80;
 	  msg->_errno = 0;
@@ -2500,7 +2501,7 @@ int close_opened_fd(int job, int sock, char * buf) {
 
 	vfs_close(remote_fd);
       }
-      else { // Send close  msg to driver
+      else if (remote_fd >= 0) { // Send close  msg to driver
 
 	struct message * msg2 = malloc(256); // do not change msg
 
