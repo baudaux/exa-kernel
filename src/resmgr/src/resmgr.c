@@ -2591,8 +2591,6 @@ int finish_exit(int sock, struct message * msg) {
   char buf2[256];
   struct message * msg2 = &buf2[0];
 
-  //TOFIX: bash does not display prompt after child exit
-
   if (ppid > 1) {
     
     if (process_kill(ppid, SIGCHLD, &msg2->_u.kill_msg.act, sock) == 2) {

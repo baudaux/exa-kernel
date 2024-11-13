@@ -265,8 +265,10 @@ pid_t process_fork(pid_t pid, pid_t ppid, const char * name) {
   
   emscripten_log(EM_LOG_CONSOLE,"--> process_fork: %d %d", pid, ppid);
   
-  if (pid < 0)
+  if (pid < 0) {
+    
     pid = ++last_pid;
+  }
   else {
 
     pid = pid & 0xffff;
@@ -577,7 +579,7 @@ int process_clone_fd(pid_t pid, int fd, pid_t pid_dest) {
 
       emscripten_log(EM_LOG_CONSOLE,"process_clone_fd: new fd = %d", new_fd);
 
-      processes[pid_dest].fd_map[new_fd/8] |= (1 << (new_fd%8));
+      processes[p_dest].fd_map[new_fd/8] |= (1 << (new_fd%8));
 
       processes[p_dest].fds[j].fd = new_fd;
       processes[p_dest].fds[j].remote_fd = processes[p].fds[i].remote_fd;
@@ -727,7 +729,7 @@ pid_t process_group_exists(pid_t pgid) {
       return processes[i].pid;
   }
 
-  return 0;
+  return -1;
 }
 
 pid_t process_setsid(pid_t pid) {
@@ -849,7 +851,7 @@ int process_dup(pid_t pid, int fd, int new_fd) {
 
       process_close_fd(pid, new_fd);
 
-      // TODO inform tty driver
+      // TODO inform driver if needed
     }
   }
   else {
@@ -947,9 +949,8 @@ void process_terminate(pid_t pid) {
 
 	emscripten_log(EM_LOG_CONSOLE, "process_wait: attach process %d to resmgr", i);
 
-	processes[i].ppid = 1; // attach process to resmgr
+	processes[i].ppid = RESMGR_ID; // attach process to resmgr
       }
-    
     }
   }
 }
@@ -977,7 +978,7 @@ pid_t process_wait(pid_t ppid, pid_t pid, int options, int * status) {
       if ( (pid == -1) || // any process
 	   ( (pid > 0) && (pid == processes[i].pid) ) ||  // exact pid
 	   ( (pid == 0) && (processes[i].pgid == processes[pp].pgid) ) ||  // same group
-	   ( (pid < -1) && (processes[i].pgid = -pid) ) ) {
+	   ( (pid <= -1) && (processes[i].pgid == -pid) ) ) {
 
 	emscripten_log(EM_LOG_CONSOLE, "process_wait: found child pid %d", processes[i].pid);
 	
@@ -1022,6 +1023,8 @@ void process_to_zombie(pid_t pid, int status) {
 
 pid_t process_exit(pid_t pid, int sock) {
 
+  pid = pid & 0xffff;
+
   int p = find_process(pid);
 
   if (p < 0)
@@ -1054,7 +1057,7 @@ pid_t process_exit(pid_t pid, int sock) {
 
     processes[pp].wait_child = 0;
 
-    if (ppid > 1) { // parent (except resmgr) is waiting child's exit 
+    if (ppid > 1) { // parent (except resmgr ? TODO) is waiting child's exit 
 
       char buf[256];
       struct message * msg = &buf[0];
@@ -1230,7 +1233,7 @@ int process_kill(pid_t pid, int signum, struct sigaction * act, int sock) {
 	struct message * msg = &buf[0];
 
 	msg->msg_id = KILL;
-	msg->pid = 1;
+	msg->pid = RESMGR_ID;
 	msg->_u.kill_msg.pid = pid;
 	msg->_u.kill_msg.sig = signum;
 	memcpy(&msg->_u.kill_msg.act, &processes[p].sigactions[signum-1], sizeof(struct sigaction));
