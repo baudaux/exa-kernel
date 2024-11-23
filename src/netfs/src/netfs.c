@@ -137,26 +137,30 @@ EM_JS(int, do_fetch_head, (const char * root, const char * pathname), {
       if (path[0] == '/')
 	sep = "";
       
-      fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
+	fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
 
-	  //console.log(response);
-	  //console.log(response.headers);
-	  //console.log(response.headers.get('Accept-Ranges'));
-	  //console.log(response.headers.get('Content-Length'));
+	    //console.log(response);
+	    //console.log(response.headers);
+	    //console.log(response.headers.get('Accept-Ranges'));
+	    //console.log(response.headers.get('Content-Length'));
 
-	  if (response.ok) {
+	    if (response.ok) {
 
-	    let contentLength = 0;
+	      let contentLength = 0;
 
-	    if (typeof response.headers.get('Content-Length') == 'string') {
-	      contentLength = parseInt(response.headers.get('Content-Length'));
-	    }
+	      if (typeof response.headers.get('Content-Length') == 'string') {
+		contentLength = parseInt(response.headers.get('Content-Length'));
+	      }
 	    
-	    wakeUp(contentLength);
-	  }
-	  else
-	    wakeUp(-2); // NOENT
-    });
+	      wakeUp(contentLength);
+	    }
+	    else
+	      wakeUp(-2); // NOENT
+	  }).catch((error) => {
+
+	      wakeUp(-2); // NOENT
+	      
+	    });
   });
 });
 
@@ -164,7 +168,12 @@ EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int off
     
   return Asyncify.handleSleep(function (wakeUp) {
 
-      var myHeaders = new Headers({'Range': 'bytes='+offset+'-'+(offset+count-1)});
+      let range = {};
+
+      if (count > 0)
+	range = {'Range': 'bytes='+offset+'-'+(offset+count-1)};
+
+      var myHeaders = new Headers(range);
 
       var myInit = { method: 'GET',
 	headers: myHeaders,
@@ -177,30 +186,32 @@ EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int off
       if (path[0] == '/')
 	sep = "";
       
-      fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
+	fetch(UTF8ToString(root) + sep + path, myInit).then(function (response) {
 	  
-	  /*console.log(response.headers.get('Accept-Ranges'));
-	  console.log(response.headers.get('Content-Length'));
-	  console.log(response.headers.get('Content-Size'));*/
+	    /*console.log(response.headers.get('Accept-Ranges'));
+	      console.log(response.headers.get('Content-Length'));
+	      console.log(response.headers.get('Content-Size'));*/
 
-	  //console.log(response);
-	  //console.log(response.headers);
+	    //console.log(response);
+	    //console.log(response.headers);
 
-	  if (response.ok) {
+	    if (response.ok) {
 	    
-	    response.arrayBuffer().then(buffer => {
+	      response.arrayBuffer().then(buffer => {
 
-		Module.HEAPU8.set(new Uint8Array(buffer), buf);
+		  Module.HEAPU8.set(new Uint8Array(buffer), buf);
 		
-		wakeUp(buffer.byteLength);
-	      });
+		  wakeUp(buffer.byteLength);
+		});
 	    
-	  }
-	  else
-	    wakeUp(-2); // NOENT
-	}).catch((error) => {
-	    //console.error("Error:", error);
-	  });
+	    }
+	    else
+	      wakeUp(-2); // NOENT
+	  }).catch((error) => {
+
+	      wakeUp(-2); // NOENT
+	      
+	    });
   });
 });
 
@@ -231,7 +242,7 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
       return -ENOMEM;
     }
     
-    size = do_fetch(devices[fds[i].minor]->root, fds[i].pathname, 0, data, fds[i].size);
+    size = do_fetch(devices[fds[i].minor]->root, fds[i].pathname, 0, data, 0); // count=0 means all file i.e no range
 
     emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes fetched (/%d)", size, fds[i].size);
 
