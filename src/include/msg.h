@@ -90,6 +90,8 @@ enum message_id {
   RMDIR,
   FSTATAT,
   CLONEFD,
+  NEW_EXT_TTY,
+  NEW_PROCESS = 70,
 };
 
 enum dev_type {
@@ -223,7 +225,8 @@ struct probe_tty_message {
 };
 
 struct read_tty_message {
-  
+
+  unsigned short minor;
   unsigned long len;
   unsigned char buf[];
 };
@@ -519,6 +522,12 @@ struct clonefd_message {
   int new_fd;
 };
 
+struct new_process_message {
+
+  char path[256];
+  char args[128];
+};
+
 struct message {
 
   unsigned char msg_id; /* enum message_id on 7 bits, for answer the most significant bit is set to 1 */
@@ -584,6 +593,7 @@ struct message {
     struct rmdir_message rmdir_msg;
     struct fstatat_message fstatat_msg;
     struct clonefd_message clonefd_msg;
+    struct new_process_message new_process_msg;
 
   } _u;
 };

@@ -28,12 +28,14 @@
 
 #include "msg.h"
 
+#include <emscripten.h>
+
 #ifndef DEBUG
 #define DEBUG 0
 #endif
 
 #if DEBUG
-#include <emscripten.h>
+
 #else
 #define emscripten_log(...)
 #endif
@@ -2460,6 +2462,65 @@ int main() {
       msg->_errno = 0;
 
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == NEW_PROCESS) {
+
+      emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS from %d: %s %s", msg->pid, msg->_u.new_process_msg.path, msg->_u.new_process_msg.args);
+
+      pid_t pid = process_fork(-1, 1 /*RESMGR_ID*/, msg->_u.new_process_msg.path);
+
+      emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS: pid=%d", pid);
+
+      EM_ASM({
+
+	  Module.child_pid = $0; // it will be incremented by 1
+
+	}, pid-1);
+      
+      pid_t pid2 = fork();
+  
+      if (pid2 == 0) { // Child process
+
+	emscripten_log(EM_LOG_CONSOLE,"starting new child process...");
+
+	int i = 0;
+
+	while (msg->_u.new_process_msg.args[i] != 32)
+	  ++i;
+
+	msg->_u.new_process_msg.args[i] = 0;
+
+	++i;
+
+	int arg1 = i;
+
+	while (msg->_u.new_process_msg.args[i] != 32)
+	  ++i;
+
+	msg->_u.new_process_msg.args[i] = 0;
+
+	++i;
+
+	int arg2 = i;
+
+	while (msg->_u.new_process_msg.args[i] != 32)
+	  ++i;
+
+	msg->_u.new_process_msg.args[i] = 0;
+
+	++i;
+
+	int arg3 = i;
+
+	emscripten_log(EM_LOG_CONSOLE,"%s %s %s %s", msg->_u.new_process_msg.args, msg->_u.new_process_msg.args+arg1, msg->_u.new_process_msg.args+arg2, msg->_u.new_process_msg.args+arg3);
+	
+
+	execl(msg->_u.new_process_msg.path, msg->_u.new_process_msg.args, msg->_u.new_process_msg.args+arg1, msg->_u.new_process_msg.args+arg2, msg->_u.new_process_msg.args+arg3, (void*)0);
+      }
+      else {
+
+	emscripten_log(EM_LOG_CONSOLE,"starting new process %d...", pid2);
+      }
     }
   }
   

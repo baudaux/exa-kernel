@@ -49,6 +49,8 @@
 #define TTY_PATH "/var/tty.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
+#define STARTUP_CHANNEL "channel.startup"
+
 #define NB_TTY_MAX       32
 #define NB_CLIENT_MAX    64
 
@@ -133,6 +135,8 @@ struct device_desc {
   int ptm_fd; // used for pts dev
 
   int state; // 0: closed; 1: open
+
+  unsigned short minor;
 };
 
 struct client {
@@ -156,6 +160,8 @@ static struct device_desc devices[NB_TTY_MAX];
 static int last_fd = 0;
 
 static struct client clients[NB_CLIENT_MAX];
+
+static int register_ext_tty = 0;
 
 void init_clients() {
 
@@ -364,6 +370,10 @@ static void init_ctrl(struct termios * ctrl) {
 
 int register_device(unsigned short m, struct device_ops * dev_ops, enum tty_dev_type type) {
 
+  emscripten_log(EM_LOG_CONSOLE,"tty: register_device %d", m);
+  
+  devices[m].minor = m;
+  
   devices[m].ops = dev_ops;
 
   if ( (type == TTY) || (type == PTS) ) {
@@ -374,10 +384,15 @@ int register_device(unsigned short m, struct device_ops * dev_ops, enum tty_dev_
     init_circular_buffer(&devices[m].tx_buf, TTY_BUF_SIZE);
   }
   
-  if (type == TTY)
+  if (type == TTY) {
+    
     devices[m].write_timer = timerfd_create(CLOCK_MONOTONIC, 0);
-  else
+
+    emscripten_log(EM_LOG_CONSOLE,"tty: write timer %d", devices[m].write_timer);
+  }
+  else {
     devices[m].write_timer = -1;
+  }
       
   devices[m].write_timer_started = 0;
 
@@ -428,17 +443,18 @@ EM_JS(int, probe_terminal, (), {
     bc.postMessage(msg);
   });
 
-EM_JS(int, write_terminal, (char * buf, unsigned long len), {
+EM_JS(int, write_terminal, (unsigned short minor, char * buf, unsigned long len), {
 
     let msg = {
 
        from: "/var/tty.peer",
        write: 1,
        buf: Module.HEAPU8.slice(buf, buf+len),
-       len: len
+       len: len,
+       tty: minor
     };
 
-    let bc = Module.get_broadcast_channel("/dev/tty1");
+    let bc = Module.get_broadcast_channel("/dev/tty"+minor);
     
     bc.postMessage(msg);
 
@@ -451,7 +467,7 @@ static void start_write_timer(struct device_desc * dev) {
   
   if (!dev->write_timer_started && (dev->write_timer >= 0) ) {
 
-    //emscripten_log(EM_LOG_CONSOLE,"start_timer");
+    emscripten_log(EM_LOG_CONSOLE,"tty: start_timer: %d", dev->write_timer);
 
     dev->write_timer_started = 1;
      
@@ -602,7 +618,9 @@ static ssize_t local_tty_read(int fd, void * buf, size_t len) {
 
   emscripten_log(EM_LOG_CONSOLE, "local_tty_read: len=%d", len);
   
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  // if fd < 0, -fd is the minor of the device
+  
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
   
   size_t len2 = 0;
 
@@ -636,8 +654,10 @@ static ssize_t local_tty_read(int fd, void * buf, size_t len) {
 static ssize_t local_tty_avail(int fd) {
 
   emscripten_log(EM_LOG_CONSOLE, "local_tty_avail: fd=%d", fd);
+
+  // if fd < 0, -fd is the minor of the device
   
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
   
   size_t len = 0;
 
@@ -661,7 +681,9 @@ static ssize_t local_tty_avail(int fd) {
 
 static int local_tty_flush(int fd) {
 
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  // if fd < 0, -fd is the minor of the device
+  
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
   
   struct itimerspec ts;
 
@@ -671,13 +693,13 @@ static int local_tty_flush(int fd) {
 
   if (count > 0) {
     
-    write_terminal(ptr, count);
+    write_terminal(dev->minor, ptr, count);
 
     count = get_circular_buffer_tail(&dev->tx_buf, &ptr);
 
     if (count > 0) {
 
-      write_terminal(ptr, count);
+      write_terminal(dev->minor, ptr, count);
     }
 
     empty_circular_buffer(&dev->tx_buf);
@@ -718,11 +740,13 @@ static int tty_write_char(struct device_desc * dev, char c) {
 
 static ssize_t local_tty_write(int fd, const void * buf, size_t count) {
 
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  // if fd < 0, -fd is the minor of the device
+  
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
 
   unsigned char * data = (unsigned char *)buf;
 
-  emscripten_log(EM_LOG_CONSOLE, "local_tty_write: count=%d", count);
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_write: fd=%d count=%d", fd, count);
 
   if (count_circular_buffer(&dev->tx_buf) > (TTY_BUF_SIZE-count-5)) {
 
@@ -930,7 +954,7 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
     }
   }
 
-  emscripten_log(EM_LOG_CONSOLE, "enqueue: j=%d", j);
+  emscripten_log(EM_LOG_CONSOLE, "tty: enqueue: j=%d", j);
 
   for (int i = 0; i < j; ++i) {
     
@@ -1071,11 +1095,13 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
     }
     else if (dev->read_select_pending.fd >= 0) {
 
-      emscripten_log(EM_LOG_CONSOLE, "enqueue: pending read select");
+      emscripten_log(EM_LOG_CONSOLE, "tty: enqueue: pending read select");
       
       int i;
 
       if ( !(dev->ctrl.c_lflag & ICANON) || (find_eol_circular_buffer(&dev->rx_buf, &i) > 0) ) {
+
+	emscripten_log(EM_LOG_CONSOLE, "tty: enqueue: pending read select -> reply !");
 
 	reply_msg->msg_id = SELECT|0x80;
 	reply_msg->pid = dev->read_select_pending.pid;
@@ -1093,7 +1119,9 @@ static int enqueue(struct device_desc * dev, int fd, void * buf, size_t count, s
 
 static ssize_t local_tty_enqueue(int fd, void * buf, size_t count, struct message * reply_msg, int * sig) {
 
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  // if fd < 0, -fd is the minor of the device
+  
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
 
   emscripten_log(EM_LOG_CONSOLE, "local_tty_enqueue: count=%d %d", count, count_circular_buffer(&dev->rx_buf));
 
@@ -1269,7 +1297,9 @@ static ssize_t pts_write(int fd, const void * buf, size_t count) {
   
   emscripten_log(EM_LOG_CONSOLE, "pts_write: fd=%d %d bytes", fd, count);
 
-  struct device_desc * dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  // if fd < 0, -fd is the minor of the device
+  
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
 
   struct device_desc * ptm_dev;
   int ptm_fd;
@@ -1395,8 +1425,10 @@ static int ptmx_open(const char * pathname, int flags, mode_t mode, unsigned sho
 }
 
 static ssize_t ptmx_read(int fd, void * buf, size_t len) {
+
+  // if fd < 0, -fd is the minor of the device
   
-  struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  struct device_desc * ptm_dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
 
   int i = find_client(fd);
 
@@ -1468,8 +1500,10 @@ static ssize_t ptmx_read(int fd, void * buf, size_t len) {
 }
 
 static ssize_t ptmx_avail(int fd) {
+
+  // if fd < 0, -fd is the minor of the device
   
-  struct device_desc * ptm_dev = (fd == -1)?get_device(1):get_device_from_fd(fd);
+  struct device_desc * ptm_dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
 
   int i = find_client(fd);
 
@@ -1957,13 +1991,13 @@ int main() {
       unsigned char reply_buf[1256];
       struct message * reply_msg = (struct message *)&reply_buf[0];
 
-      //emscripten_log(EM_LOG_CONSOLE, "tty: READ_TTY");
+      emscripten_log(EM_LOG_CONSOLE, "tty: READ_TTY -> minor=%d len=%d", msg->_u.read_tty_msg.minor, msg->_u.read_tty_msg.len);
       
       reply_msg->msg_id = 0;
 
       int sig;
 
-      get_device(1)->ops->enqueue(-1, msg->_u.read_tty_msg.buf, msg->_u.read_tty_msg.len, reply_msg, &sig);
+      get_device(msg->_u.read_tty_msg.minor)->ops->enqueue(-msg->_u.read_tty_msg.minor, msg->_u.read_tty_msg.buf, msg->_u.read_tty_msg.len, reply_msg, &sig);
 
       if (sig) {
 
@@ -1978,9 +2012,11 @@ int main() {
 	sendto(sock, sig_buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
       }
 
+      emscripten_log(EM_LOG_CONSOLE, "tty: READ_TTY -> reply msg_id=%d", reply_msg->msg_id);
+
       if (reply_msg->msg_id == (READ|0x80)) {
 
-	struct device_desc * dev = get_device(1);
+	struct device_desc * dev = get_device(msg->_u.read_tty_msg.minor);
 
 	dev->read_pending.len = 0; // unset read pending
 	dev->read_pending.fd = -1;
@@ -1989,7 +2025,7 @@ int main() {
       }
       else if (reply_msg->msg_id == (SELECT|0x80)) {
 
-	struct device_desc * dev = get_device(1);
+	struct device_desc * dev = get_device(msg->_u.read_tty_msg.minor);
 
 	//emscripten_log(EM_LOG_CONSOLE, "Reply to select: %s", dev->read_select_pending.client_addr.sun_path);
 
@@ -2005,7 +2041,7 @@ int main() {
       if (msg->_errno)
 	continue;
 
-      //emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
       if (msg->_u.dev_msg.minor == 1) { // first tty has been registered
 
@@ -2022,6 +2058,18 @@ int main() {
 	strcpy(msg->_u.dev_msg.dev_name, "ptmx");
   
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+      }
+      else if (register_ext_tty) {
+
+	register_ext_tty = 0;
+
+	struct sockaddr_un startup_addr;
+
+	memset(&startup_addr, 0, sizeof(startup_addr));
+	startup_addr.sun_family = AF_UNIX;
+	strcpy(startup_addr.sun_path, STARTUP_CHANNEL);
+
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &startup_addr, sizeof(startup_addr));
       }
     }
     else if (msg->msg_id == OPEN) {
@@ -2389,6 +2437,34 @@ int main() {
       msg->msg_id |= 0x80;
       
       sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
+    else if (msg->msg_id == NEW_EXT_TTY) {
+      
+      emscripten_log(EM_LOG_CONSOLE, "tty: NEW_EXT_TTY");
+
+      minor += 1;
+      
+      register_device(minor, &local_tty_ops, TTY);
+
+      //get_device(1)->ws.ws_row = msg->_u.probe_tty_msg.rows;
+      //get_device(1)->ws.ws_col = msg->_u.probe_tty_msg.cols;
+      
+      //local_tty_write(-1, TTY_VERSION, strlen(TTY_VERSION));
+
+      // Terminal probed: minor = 1
+
+      register_ext_tty = 1;
+      
+      msg->msg_id = REGISTER_DEVICE;
+
+      msg->_u.dev_msg.dev_type = CHR_DEV;
+      msg->_u.dev_msg.major = major;
+      msg->_u.dev_msg.minor = minor;
+
+      memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
+      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "tty%d", msg->_u.dev_msg.minor);
+  
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
   }
   
