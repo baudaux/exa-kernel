@@ -2483,39 +2483,40 @@ int main() {
 
 	emscripten_log(EM_LOG_CONSOLE,"starting new child process...");
 
-	int i = 0;
+	int j = 1;
 
-	while (msg->_u.new_process_msg.args[i] != 32)
-	  ++i;
+	char * args[128];
 
-	msg->_u.new_process_msg.args[i] = 0;
+	args[0] = msg->_u.new_process_msg.args;
 
-	++i;
+	for (int i = 0; msg->_u.new_process_msg.args[i]; ) {
 
-	int arg1 = i;
+	  while (msg->_u.new_process_msg.args[i] && msg->_u.new_process_msg.args[i] != 32)
+	    ++i;
 
-	while (msg->_u.new_process_msg.args[i] != 32)
-	  ++i;
+	  if (msg->_u.new_process_msg.args[i] == 32) {
+	    
+	    msg->_u.new_process_msg.args[i] = 0;
 
-	msg->_u.new_process_msg.args[i] = 0;
+	    ++i;
+	    
+	    while (msg->_u.new_process_msg.args[i] == 32)
+	      ++i;
+	    
+	    args[j++] = msg->_u.new_process_msg.args+i;
 
-	++i;
+	    emscripten_log(EM_LOG_CONSOLE, "arg %d: %s", j-2, args[j-2]);
+	  }
 
-	int arg2 = i;
+	  else {
 
-	while (msg->_u.new_process_msg.args[i] != 32)
-	  ++i;
+	    emscripten_log(EM_LOG_CONSOLE, "arg %d: %s", j-1, args[j-1]);
+	  }
+	}
 
-	msg->_u.new_process_msg.args[i] = 0;
+	args[j] = 0;
 
-	++i;
-
-	int arg3 = i;
-
-	emscripten_log(EM_LOG_CONSOLE,"%s %s %s %s", msg->_u.new_process_msg.args, msg->_u.new_process_msg.args+arg1, msg->_u.new_process_msg.args+arg2, msg->_u.new_process_msg.args+arg3);
-	
-
-	execl(msg->_u.new_process_msg.path, msg->_u.new_process_msg.args, msg->_u.new_process_msg.args+arg1, msg->_u.new_process_msg.args+arg2, msg->_u.new_process_msg.args+arg3, (void*)0);
+	execv(msg->_u.new_process_msg.path, args);
       }
       else {
 
