@@ -609,6 +609,11 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
     }
     else {
 
+      if ( (vnode->type == VFILE) && (flags & (O_RDWR|O_WRONLY)) && (flags & O_TRUNC) ) {
+
+	vnode->_u.file.file_size = 0;
+      }
+
       ++last_fd;
 
       add_fd_entry(last_fd, pid, minor, pathname, flags, mode, 0, vnode);
@@ -698,7 +703,7 @@ ssize_t vfs_read(int fd, void * buf, size_t len) {
     ssize_t bytes_read = ((fds[i].offset+len) <= vnode->_u.file.file_size)?len:vnode->_u.file.file_size-fds[i].offset;
 
     memcpy(buf, vnode->_u.file.buffer+fds[i].offset, bytes_read);
-
+    
     fds[i].offset += bytes_read;
 
     /*if (DEBUG) {

@@ -467,7 +467,7 @@ static void start_write_timer(struct device_desc * dev) {
   
   if (!dev->write_timer_started && (dev->write_timer >= 0) ) {
 
-    emscripten_log(EM_LOG_CONSOLE,"tty: start_timer: %d", dev->write_timer);
+    emscripten_log(EM_LOG_CONSOLE,"tty: start_write_timer: %d", dev->write_timer);
 
     dev->write_timer_started = 1;
      
@@ -489,7 +489,7 @@ static void stop_write_timer(struct device_desc * dev) {
   
   if (dev->write_timer_started) {
     
-    //emscripten_log(EM_LOG_CONSOLE,"stop_timer");
+    emscripten_log(EM_LOG_CONSOLE,"tty: stop_write_timer");
     
     dev->write_timer_started = 0;
     
@@ -680,6 +680,8 @@ static ssize_t local_tty_avail(int fd) {
 }
 
 static int local_tty_flush(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "local_tty_flush: fd=%d", fd);
 
   // if fd < 0, -fd is the minor of the device
   
@@ -1361,8 +1363,8 @@ static int pts_select(pid_t pid, int remote_fd, int fd, int read_write, int star
 static int pts_flush(int fd) {
 
   emscripten_log(EM_LOG_CONSOLE, "pts_flush: fd=%d", fd);
-  
-  struct device_desc * dev = get_device_from_fd(fd);
+
+  struct device_desc * dev = (fd < 0)?get_device(-fd):get_device_from_fd(fd);
   
   return notify_ptm(dev);
 }
@@ -1858,7 +1860,7 @@ int main() {
 
     if (!FD_ISSET(sock, &rfds) ) { // A timer has elapsed
 
-      for (int i=0; i < NB_TTY_MAX; ++i) {
+      for (int i=1; i < NB_TTY_MAX; ++i) {
 
 	if (devices[i].state && devices[i].write_timer_started) {
 	
@@ -1867,23 +1869,10 @@ int main() {
 	    uint64_t count; // Be careful, shall read 8 bytes otherwise read fails
 
 	    read(devices[i].write_timer, &count, sizeof(count));
-	    
-	    int j = 0;
 
-	    // Find a client of the pts dev for passing to to flush
-	    // Whatever the client, only the pts dev is needed
-	    
-	    for (j=0; j < NB_CLIENT_MAX; ++j) {
+	    if (!devices[i].ops->flush(-i)) {
 
-	      if ( (clients[j].fd >= 0) && (clients[j].minor == i) ) {
-		
-		if (!devices[i].ops->flush(clients[j].fd)) {
-
-		  stop_write_timer(&devices[i]);
-		}
-		
-		break;
-	      }
+	      stop_write_timer(&devices[i]);
 	    }
 
 	    break;

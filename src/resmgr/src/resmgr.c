@@ -93,6 +93,8 @@ static int process_index = 0;
 static int nb_processes_to_kill = 0;
 static int process_sig;
 
+static pid_t new_process_pid = -1;
+
 int main() {
 
   int sock;
@@ -2467,15 +2469,15 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS from %d: %s %s", msg->pid, msg->_u.new_process_msg.path, msg->_u.new_process_msg.args);
 
-      pid_t pid = process_fork(-1, 1 /*RESMGR_ID*/, msg->_u.new_process_msg.path);
-
-      emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS: pid=%d", pid);
+      new_process_pid = process_fork(-1, 1 /*RESMGR_ID*/, msg->_u.new_process_msg.path);
+      
+      emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS: pid=%d", new_process_pid);
 
       EM_ASM({
 
 	  Module.child_pid = $0; // it will be incremented by 1
 
-	}, pid-1);
+	}, new_process_pid-1);
       
       pid_t pid2 = fork();
   
@@ -2664,6 +2666,25 @@ int finish_exit(int sock, struct message * msg) {
   }
 
   int ret = process_exit(pid, sock);
+
+  if (pid == new_process_pid) {
+
+    emscripten_log(EM_LOG_CONSOLE, "NEW_PROCESS finished pid=%d", pid);
+
+    EM_ASM({
+
+	let m = new Object();
+	    
+	m.type = 70+128;   // return new_process
+	m.pid = $0;
+        m.status = $1;
+
+	window.parent.postMessage(m);
+      
+    }, new_process_pid, exit_status);
+
+    new_process_pid = -1;
+  }
   
   emscripten_log(EM_LOG_CONSOLE, "finish_exit: <-- process_exit %d", ret);
 
