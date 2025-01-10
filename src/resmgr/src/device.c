@@ -56,6 +56,9 @@ void device_init() {
 
   // Add /etc for netfs
   vfs_add_dir(vnode, "etc");
+
+  // Add /lib64 for netfs
+  vfs_add_dir(vnode, "lib64");
   
   // Add /var
   struct vnode * var = vfs_add_dir(vnode, "var");

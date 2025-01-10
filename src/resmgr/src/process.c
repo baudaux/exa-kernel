@@ -425,6 +425,24 @@ int process_find_smallest_fd(pid_t pid) {
   return -1;
 }
 
+int process_find_smallest_fd_from(pid_t pid, int fd_min) {
+
+  pid = pid & 0xffff;
+
+  int p = find_process(pid);
+
+  if (p < 0)
+    return -1;
+
+  for (int i = fd_min; i < NB_FILES_MAX; ++i) {
+
+    if ((processes[p].fd_map[i/8] & 1 << (i%8)) == 0)
+      return i;
+  }
+
+  return -1;
+}
+
 int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned short major, unsigned short minor, int flags) {
   
   int i;
@@ -858,6 +876,52 @@ int process_dup(pid_t pid, int fd, int new_fd) {
     
     new_fd = process_find_smallest_fd(pid);
   }
+  
+  int j;
+  
+  for (j = 0; j < NB_FILES_MAX; ++j) {
+
+    if (processes[p].fds[j].fd == -1)
+      break;
+  }
+
+  if (j >= NB_FILES_MAX)
+    return -1;
+
+  processes[p].fds[j].fd = new_fd;
+  processes[p].fds[j].remote_fd = processes[p].fds[i].remote_fd;
+  processes[p].fds[j].type = processes[p].fds[i].type;
+  processes[p].fds[j].major = processes[p].fds[i].major;
+  processes[p].fds[j].minor = processes[p].fds[i].minor;
+  processes[p].fds[j].fd_flags = processes[p].fds[i].fd_flags & ~FD_CLOEXEC; // deactivate FD_CLOEXEC for the copy
+  processes[p].fds[j].fs_flags = processes[p].fds[i].fs_flags;
+
+  processes[p].fd_map[new_fd/8] |= (1 << (new_fd%8));
+  
+  return new_fd;
+}
+
+int process_dup_min(pid_t pid, int fd, int new_fd_min) {
+
+  int i;
+
+  pid = pid & 0xffff;
+
+  int p = find_process(pid);
+
+  if (p < 0)
+    return -1;
+  
+  for (i = 0; i < NB_FILES_MAX; ++i) {
+
+    if (processes[p].fds[i].fd == fd)
+      break;
+  }
+
+  if (i >= NB_FILES_MAX)
+    return -1;
+  
+  int new_fd = process_find_smallest_fd_from(pid, new_fd_min);
   
   int j;
   

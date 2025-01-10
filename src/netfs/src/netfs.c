@@ -47,6 +47,8 @@
 #define NB_NETFS_MAX  16
 #define NB_FD_MAX     128
 
+#define LOCALHOST_MINOR 5
+
 struct device_ops {
 
   int (*open)(const char *pathname, int flags, mode_t mode, pid_t pid, unsigned short minor);
@@ -788,7 +790,7 @@ int main() {
 
       minor += 1;
 	
-      register_device(minor, (minor < 4)?&netfs_ops:&localhost_ops);
+      register_device(minor, (minor < LOCALHOST_MINOR)?&netfs_ops:&localhost_ops);
       
       msg->msg_id = REGISTER_DEVICE;
       msg->_u.dev_msg.minor = minor;
@@ -833,6 +835,11 @@ int main() {
 
       case 4:
 
+	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/lib64");
+	break;
+
+      case LOCALHOST_MINOR:
+
 	strcpy((char *)&msg->_u.mount_msg.pathname[0], "/media/localhost");
 	break;
 
@@ -849,11 +856,11 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "MOUNT successful: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
 
-      if (msg->_u.mount_msg.minor < 4) {
+      if (msg->_u.mount_msg.minor < LOCALHOST_MINOR) {
 	
 	minor += 1;
 	
-	register_device(minor, (minor < 4)?&netfs_ops:&localhost_ops);
+	register_device(minor, (minor < LOCALHOST_MINOR)?&netfs_ops:&localhost_ops);
       
 	msg->msg_id = REGISTER_DEVICE;
 	msg->_u.dev_msg.dev_type = FS_DEV;	

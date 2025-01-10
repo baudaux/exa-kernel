@@ -909,22 +909,22 @@ int main() {
 	}
 	else if (msg->_u.fcntl_msg.cmd == F_DUPFD) {
 
-	  int fd;
+	  int fd_min;
 
-	  memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+	  memcpy(&fd_min, msg->_u.fcntl_msg.buf, sizeof(int));
 
-	  msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+	  msg->_u.fcntl_msg.ret = process_dup_min(msg->pid, msg->_u.fcntl_msg.fd, fd_min);
 
 	  // Add /proc/<pid>/fd/<fd> entry
 	  process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
 	}
 	else if (msg->_u.fcntl_msg.cmd == F_DUPFD_CLOEXEC) {
 
-	  int fd;
+	  int fd_min;
 
-	  memcpy(&fd, msg->_u.fcntl_msg.buf, sizeof(int));
+	  memcpy(&fd_min, msg->_u.fcntl_msg.buf, sizeof(int));
 
-	  msg->_u.fcntl_msg.ret = process_dup(msg->pid, fd, -1);
+	  msg->_u.fcntl_msg.ret = process_dup_min(msg->pid, msg->_u.fcntl_msg.fd, fd_min);
 
 	  // Add /proc/<pid>/fd/<fd> entry
 	  process_add_proc_fd_entry(msg->pid, msg->_u.fcntl_msg.ret, "dup");
@@ -938,6 +938,15 @@ int main() {
 	  msg->_u.fcntl_msg.ret = process_get_fs_flags(msg->pid, msg->_u.fcntl_msg.fd);
 	}
 
+	if (msg->_u.fcntl_msg.ret < 0) {
+
+	  msg->_errno = EINVAL;
+	}
+	else {
+	  
+	  msg->_errno = 0;
+	}
+	
 	msg->msg_id |= 0x80;
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }

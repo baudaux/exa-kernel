@@ -23,7 +23,7 @@
 #include "vfs.h"
 
 #define NB_PROCESSES_MAX  64
-#define NB_FILES_MAX      64
+#define NB_FILES_MAX      256
 
 struct file_desc {
 
@@ -113,6 +113,7 @@ pid_t process_getpgid(pid_t pid);
 int process_setpgid(pid_t pid, pid_t pgid);
 
 int process_dup(pid_t pid, int fd, int new_fd);
+int process_dup_min(pid_t pid, int fd, int new_fd_min);
 
 char * process_getcwd(pid_t pid);
 int process_chdir(pid_t pid, char * dir);
