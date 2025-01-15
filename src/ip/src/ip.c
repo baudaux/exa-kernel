@@ -55,11 +55,13 @@ struct packet {
 struct queue {
 
   int fd;
+  int type;
   int flags;
   int pending_read_select; // 0: none, 1: recv, 2: select, 3: read
   int pending_process_fd;
   int pending_pid;
   int pending_len;
+  int pending_flags;
   struct packet * first_packet;
   struct packet * last_packet;
 };
@@ -77,14 +79,15 @@ static void init_queues() {
   }
 }
 
-static int queue_alloc(int fd, int flags) {
+static int queue_alloc(int fd, int type) {
 
   for (int i = 0; i < NB_QUEUES_MAX; ++i) {
 
     if (queues[i].fd < 0) {
 
       queues[i].fd = fd;
-      queues[i].flags = flags;
+      queues[i].type = type;
+      queues[i].flags = 0;
       queues[i].pending_read_select = 0;
       queues[i].pending_pid = -1;
       queues[i].pending_process_fd = -1;
@@ -182,7 +185,7 @@ static int queue_set_nonblock(int fd, int onoff) {
   return 0;
 }
 
-static int queue_set_pending(int fd, int read_select, int pid, int arg) {
+static int queue_set_pending(int fd, int read_select, int pid, int arg, int flags) {
 
   for (int i = 0; i < NB_QUEUES_MAX; ++i) {
 
@@ -190,6 +193,7 @@ static int queue_set_pending(int fd, int read_select, int pid, int arg) {
       
       queues[i].pending_read_select = read_select;
       queues[i].pending_pid = pid;
+      queues[i].pending_flags = flags;
 
       if ( (read_select == 1) || (read_select == 3) ){ // recv/read
 
@@ -207,7 +211,7 @@ static int queue_set_pending(int fd, int read_select, int pid, int arg) {
   return -1;
 }
 
-static int queue_pending(int fd, int * pid, int * arg) {
+static int queue_pending(int fd, int * pid, int * arg, int * flags) {
 
   for (int i = 0; i < NB_QUEUES_MAX; ++i) {
 
@@ -216,6 +220,7 @@ static int queue_pending(int fd, int * pid, int * arg) {
       if (queues[i].pending_read_select) {
 
 	*pid = queues[i].pending_pid;
+	*flags = queues[i].pending_flags;
 
 	if ( (queues[i].pending_read_select == 1) || (queues[i].pending_read_select == 3) )
 	  *arg = queues[i].pending_len;
@@ -236,7 +241,7 @@ static int queue_pending(int fd, int * pid, int * arg) {
   return 0;
 }
 
-int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
+int queue_read(int fd, char * addr, int * addr_len, char * buf, int len, int flags) {
 
   for (int i = 0; i < NB_QUEUES_MAX; ++i) {
 
@@ -247,30 +252,80 @@ int queue_read(int fd, char * addr, int * addr_len, char * buf, int len) {
       if (addr_len)
 	*addr_len = queues[i].first_packet->addr_len;
 
-      int read_len = ((queues[i].first_packet->len-queues[i].first_packet->offset)<=len)?queues[i].first_packet->len-queues[i].first_packet->offset:len;
+      struct packet * p = queues[i].first_packet;
+
+      int read_len = 0;
+
+      while (p) {
+	
+	int l = ((read_len+p->len-p->offset)<=len)?p->len-p->offset:len-read_len;
       
-      if (buf && (read_len > 0))
-	memmove(buf, queues[i].first_packet->buf+queues[i].first_packet->offset, read_len);
+	if (buf && (l > 0))
+	  memmove(buf+read_len, p->buf+p->offset, l);
 
-      if (read_len < (queues[i].first_packet->len-queues[i].first_packet->offset)) {
-	queues[i].first_packet->offset += read_len;
-      }
-      else {
+	if (l < (p->len-p->offset)) {
 
-	if (queues[i].first_packet->buf)
-	  free(queues[i].first_packet->buf);
+	  if (!(flags & MSG_PEEK)) {
+	    p->offset += l;
+	  }
+	  
+	  read_len += l;
+	  break;
+	}
+
+	if (!(flags & MSG_PEEK)) {
+
+	  if (p->buf)
+	    free(p->buf);
 	
-	struct packet * p = queues[i].first_packet;
-
-	queues[i].first_packet = p->next;
+	  queues[i].first_packet = p->next;
 	
-	free(p);
+	  free(p);
 
-	if (queues[i].last_packet == p)
-	  queues[i].last_packet = NULL;
+	  if (queues[i].last_packet == p)
+	    queues[i].last_packet = NULL;
+
+	  p = queues[i].first_packet;
+	}
+	else {
+
+	  p = p->next;
+	}
+
+	read_len += l;
+
+	if (queues[i].type == SOCK_DGRAM) // Stop at first packet
+	  break;
       }
 
       return read_len;
+    }
+  }
+
+  return -1;
+}
+
+int queue_size(int fd) {
+
+  for (int i = 0; i < NB_QUEUES_MAX; ++i) {
+
+    if (queues[i].fd == fd) {
+
+      struct packet * p = queues[i].first_packet;
+
+      int size = 0;
+      
+      while (p) {
+
+	size += p->len-p->offset;
+
+	if (queues[i].type == SOCK_DGRAM) // Stop at first packet
+	  break;
+
+	p = p->next;
+      }
+
+      return size;
     }
   }
 
@@ -555,7 +610,7 @@ int main(int argc, char * argv[]) {
 	emscripten_log(EM_LOG_CONSOLE, "and additional %d bytes", bytes_rec2);
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "%.*s", msg2->len, msg2->buf);
+      //emscripten_log(EM_LOG_CONSOLE, "%.*s", msg2->len, msg2->buf);
 
       queue_add_packet(msg2);
 
@@ -564,11 +619,11 @@ int main(int argc, char * argv[]) {
 	free(msg2);
       }
 
-      int pid, arg;
+      int pid, arg, flags;
       
-      int read_select = queue_pending(msg->_u.readsocket_msg.fd, &pid, &arg);
+      int read_select = queue_pending(msg->_u.readsocket_msg.fd, &pid, &arg, &flags);
       
-      queue_set_pending(msg->_u.readsocket_msg.fd, 0, 0, 0);
+      queue_set_pending(msg->_u.readsocket_msg.fd, 0, 0, 0, 0);
       
       if (read_select == 1) { // recv pending
 	
@@ -581,7 +636,7 @@ int main(int argc, char * argv[]) {
 	char * buf2 = malloc(buf2_size);
 	struct message * msg2 = (struct message *)&buf2[0];
 
-	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.readsocket_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, len);
+	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.readsocket_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, len, flags);
 
 	emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d --> %d bytes read", pid, msg2->_u.recvfrom_msg.len);
 
@@ -612,7 +667,7 @@ int main(int argc, char * argv[]) {
 	char * buf2 = malloc(buf2_size);
 	struct message * msg2 = (struct message *)&buf2[0];
 
-	msg2->_u.io_msg.len = queue_read(msg->_u.readsocket_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, len);
+	msg2->_u.io_msg.len = queue_read(msg->_u.readsocket_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, len, flags);
 
 	emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d --> %d bytes read", pid, msg2->_u.io_msg.len);
 
@@ -668,7 +723,7 @@ int main(int argc, char * argv[]) {
 
 	    emscripten_log(EM_LOG_CONSOLE, "ip: SELECT --> queue not empty !!!!!");
 	    
-	    queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0);
+	    queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0, 0);
 
 	    msg->msg_id |= 0x80;
 
@@ -677,12 +732,12 @@ int main(int argc, char * argv[]) {
 	  }
 	  else { // set select pending
 
-	    queue_set_pending(msg->_u.select_msg.remote_fd, 2, msg->pid, msg->_u.select_msg.fd);
+	    queue_set_pending(msg->_u.select_msg.remote_fd, 2, msg->pid, msg->_u.select_msg.fd, 0);
 	  }
 	}
 	else { // stop
 
-	  queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0);
+	  queue_set_pending(msg->_u.select_msg.remote_fd, 0, 0, 0, 0);
 	}
       }
       else { // write
@@ -698,7 +753,7 @@ int main(int argc, char * argv[]) {
     }
     else if (msg->msg_id == RECVFROM) {
       
-      emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d: %d %d", msg->pid, msg->_u.recvfrom_msg.fd, msg->_u.recvfrom_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d: %d %d %d", msg->pid, msg->_u.recvfrom_msg.fd, msg->_u.recvfrom_msg.len, msg->_u.recvfrom_msg.flags);
 
       if (queue_not_empty(msg->_u.recvfrom_msg.fd)) {
 
@@ -706,7 +761,7 @@ int main(int argc, char * argv[]) {
 	char * buf2 = malloc(buf2_size);
 	struct message * msg2 = (struct message *)&buf2[0];
 
-	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.recvfrom_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, msg->_u.recvfrom_msg.len);
+	msg2->_u.recvfrom_msg.len = queue_read(msg->_u.recvfrom_msg.fd, msg2->_u.recvfrom_msg.addr, &msg2->_u.recvfrom_msg.addr_len, msg2->_u.recvfrom_msg.buf, msg->_u.recvfrom_msg.len, msg->_u.recvfrom_msg.flags);
 
 	emscripten_log(EM_LOG_CONSOLE, "ip: RECVFROM from %d --> %d bytes read", msg->pid, msg2->_u.recvfrom_msg.len);
 
@@ -732,7 +787,7 @@ int main(int argc, char * argv[]) {
       }
       else { // set read pending
 
-	queue_set_pending(msg->_u.recvfrom_msg.fd, 1, msg->pid, msg->_u.recvfrom_msg.len);
+	queue_set_pending(msg->_u.recvfrom_msg.fd, 1, msg->pid, msg->_u.recvfrom_msg.len, msg->_u.recvfrom_msg.flags);
       }
     }
     else if (msg->msg_id == CONNECT) {
@@ -791,7 +846,7 @@ int main(int argc, char * argv[]) {
 	char * buf2 = malloc(buf2_size);
 	struct message * msg2 = (struct message *)&buf2[0];
 
-	msg2->_u.io_msg.len = queue_read(msg->_u.io_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, msg->_u.io_msg.len);
+	msg2->_u.io_msg.len = queue_read(msg->_u.io_msg.fd, NULL, NULL, msg2->_u.io_msg.buf, msg->_u.io_msg.len, 0);
 
 	emscripten_log(EM_LOG_CONSOLE, "ip: READ from %d --> %d bytes read", msg->pid, msg2->_u.io_msg.len);
 
@@ -817,7 +872,7 @@ int main(int argc, char * argv[]) {
       }
       else { // set read pending
 
-	queue_set_pending(msg->_u.io_msg.fd, 3, msg->pid, msg->_u.io_msg.len);
+	queue_set_pending(msg->_u.io_msg.fd, 3, msg->pid, msg->_u.io_msg.len, 0);
       }
     }
     else if (msg->msg_id == CLOSE) {
@@ -844,6 +899,8 @@ int main(int argc, char * argv[]) {
 	int flags;
 
 	memcpy(&flags, msg->_u.fcntl_msg.buf, sizeof(int));
+
+	emscripten_log(EM_LOG_CONSOLE, "ip: FCNTL F_SETFL %x", flags);
 
 	for (int i = 0; i < NB_QUEUES_MAX; ++i) {
 
@@ -903,6 +960,17 @@ int main(int argc, char * argv[]) {
 	
 	msg->msg_id |= 0x80;
 	msg->_errno = 0;
+      
+	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+      }
+      else if (msg->_u.ioctl_msg.op == FIONREAD) {
+
+	msg->msg_id |= 0x80;
+	msg->_errno = 0;
+
+	int size = queue_size(msg->_u.ioctl_msg.fd);
+
+	memcpy(msg->_u.ioctl_msg.buf, &size, sizeof(size));
       
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }

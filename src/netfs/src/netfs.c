@@ -389,6 +389,9 @@ static int netfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, 
   struct stat stat;
 
   if ((_errno=netfs_stat(pathname, &stat, minor)) == 0) {
+
+    if ( (flags & O_DIRECTORY) && (!S_ISDIR(stat.st_mode)) )    // Error pathname is not a directory
+	return -ENOTDIR;
     
     int remote_fd =  add_fd_entry(pid, minor, pathname, flags, mode, stat.st_size);
 

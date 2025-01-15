@@ -96,15 +96,15 @@ struct vnode * vfs_add_node(struct vnode * parent, enum vnode_type type, const c
     }
     else {
       struct vnode * p = parent->_u.link.vnode;
-
-      if (strcmp(p->name, name) == 0)
+      
+      if ( (p->linked) && (strcmp(p->name, name) == 0) )
 	return NULL;
 
       while (p->next) {
-
+	
 	p = p->next;
 
-	if (strcmp(p->name, name) == 0)
+	if ( (p->linked) && (strcmp(p->name, name) == 0) )
 	  return NULL;
       }
 
@@ -121,6 +121,11 @@ struct vnode * vfs_add_node(struct vnode * parent, enum vnode_type type, const c
   n->type = type;
 
   strcpy(n->name, name);
+  
+  if (name[0] == 0)
+    n->linked = 0;
+  else
+    n->linked = 1;
   
   n->next = NULL;
 
@@ -578,7 +583,7 @@ int add_fd_entry(int fd, pid_t pid, unsigned short minor, const char * pathname,
   fds[i].mode = mode;
   fds[i].offset = 0;
   fds[i].vnode = vnode;
-  fds[i].unlink_pending = 0;
+  fds[i].unlink_pending = (vnode->linked == 0);
   
   return i;
 }
@@ -607,11 +612,21 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
       else
 	fds[remote_fd].pathname[0] = 0;
     }
+    else if (vnode->type != VDIR && (flags & O_DIRECTORY)) {
+
+      remote_fd = -1;
+    }
     else {
 
       if ( (vnode->type == VFILE) && (flags & (O_RDWR|O_WRONLY)) && (flags & O_TRUNC) ) {
 
 	vnode->_u.file.file_size = 0;
+      }
+      else if ( (vnode->type == VDIR) && (flags & O_TMPFILE) ) { // We have to create a temporary file
+
+	struct vnode * vfile = vfs_add_file(vnode, ""); // unlinked node as empty name
+
+	vnode = vfile;
       }
 
       ++last_fd;
@@ -785,6 +800,8 @@ ssize_t vfs_write(int fd, const void * buf, size_t len) {
 
 ssize_t vfs_getdents(int fd, void * buf, size_t len) {
 
+  //TODO remove unlinked nodes
+
   emscripten_log(EM_LOG_CONSOLE, "vfs_getdents: sizeof off_t=%d", sizeof(off_t));
   
   int i = get_fd_entry(fd);
@@ -808,7 +825,7 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
   int off;
   
   for (off = 0; off < fds[i].offset; ++off) {
-
+    
     child = child->next;
   }
 
@@ -860,7 +877,7 @@ ssize_t vfs_getdents(int fd, void * buf, size_t len) {
       ptr->d_ino = (ino_t)child;
 
       strcpy(ptr->d_name, child->name);
-
+      
       ptr->d_reclen = sizeof(struct __dirent) + strlen(child->name);
 
       count += ptr->d_reclen;

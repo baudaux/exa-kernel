@@ -33,6 +33,7 @@ struct vnode {
   
   enum vnode_type type;
   char name[FILENAME_MAX];
+  int linked;
   
   union {
     struct {

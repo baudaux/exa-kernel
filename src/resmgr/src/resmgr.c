@@ -83,6 +83,8 @@ static struct job jobs[NB_JOBS_MAX];
 static unsigned short vfs_major;
 static unsigned short vfs_minor;
 
+static unsigned short ip_major;
+
 int close_opened_fd(int job, int sock, char * buf);
 int do_exit(int sock, struct itimer * itimers, struct message * msg, int len, struct sockaddr_un * remote_addr);
 int finish_exit(int sock, struct message * msg);
@@ -246,6 +248,10 @@ int main() {
 	
 	vfs_add_dev(vnode, "tty", CHR_DEV, 1, 0);
       }
+      else if (strcmp(msg->_u.dev_msg.dev_name, "ip") == 0) {
+
+	ip_major = msg->_u.dev_msg.major;
+      }
       else if (strcmp(msg->_u.dev_msg.dev_name, "pipe") == 0) {
 
 	create_init_process();
@@ -381,18 +387,19 @@ int main() {
 
 	sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       }
-      
     }
     else if (msg->msg_id == (SOCKET|0x80)) {
 
       if (msg->_errno == 0) {
 
-	msg->_u.socket_msg.fd = process_create_fd(msg->pid, msg->_u.socket_msg.remote_fd, (unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
+	msg->_u.socket_msg.fd = process_create_fd(msg->pid, msg->_u.socket_msg.remote_fd, CHR_DEV, ip_major, (unsigned short)(msg->_u.socket_msg.domain & 0xffff), msg->_u.socket_msg.type);
+
+        //(unsigned char)(msg->_u.socket_msg.type & 0xff), (unsigned short)(msg->_u.socket_msg.domain & 0xffff), (unsigned short)(msg->_u.socket_msg.protocol & 0xffff), msg->_u.socket_msg.type); // type contains flags
 
 	// Add /proc/<pid>/fd/<fd> entry
 	process_add_proc_fd_entry(msg->pid, msg->_u.socket_msg.fd, "socket");
 
-	emscripten_log(EM_LOG_CONSOLE, "SOCKET created %d", msg->_u.socket_msg.fd);
+	emscripten_log(EM_LOG_CONSOLE, "SOCKET created fd=%d remote_fd=%d", msg->_u.socket_msg.fd, msg->_u.socket_msg.remote_fd);
       }
       
       // Forward response to process
@@ -855,14 +862,22 @@ int main() {
 
 	    emscripten_log(EM_LOG_CONSOLE, "FCNTL from %d: type=%d major=%d remote_fd=%d", msg->pid, type, major, remote_fd);
 	    
-	    if ( (type == FS_DEV) && (major == vfs_major) ) { // vfs
+	    if (remote_fd == -2) { // Socket
+
+	      //TODO
+
+	      msg->_errno = 0;
+
+	      msg->msg_id |= 0x80;
+	      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+	    }
+	    else if ( (type == FS_DEV) && (major == vfs_major) ) { // vfs
 
 	      if (vfs_set_fs_flags(remote_fd, flags) < 0)
 		msg->_errno = EBADFD;
 
 	      msg->msg_id |= 0x80;
 	      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
-		
 	    }
 	    else { // Send message to driver
 

@@ -388,11 +388,18 @@ static int localfs_open(const char * pathname, int flags, mode_t mode, pid_t pid
     }
     else if (stat.st_mode & S_IFDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
+      /*if (flags & O_TMPFILE) {
 
-      lfs_handle = malloc(sizeof(lfs_dir_t));
+	//TODO
+      }
+      else {*/
 
-      _errno = localfs_errno(lfs_dir_open(&lfs, lfs_handle, pathname));
+	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
+
+	lfs_handle = malloc(sizeof(lfs_dir_t));
+
+	_errno = localfs_errno(lfs_dir_open(&lfs, lfs_handle, pathname));
+	/*}*/
     }
 
     if (_errno == 0) {
