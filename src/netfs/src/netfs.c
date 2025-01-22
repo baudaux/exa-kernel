@@ -217,6 +217,38 @@ EM_JS(int, do_fetch, (const char * root, const char * pathname, unsigned int off
   });
 });
 
+static void encode(char * buf, const char * pathname) {
+
+  int offset = strlen(buf);
+
+  int j = 0;
+  
+  for (; pathname[j]; ++j) { // starts after =
+    
+    if (pathname[j] == '+') {
+
+      buf[offset+j] = '%';
+      buf[offset+j+1] = '2';
+      buf[offset+j+2] = 'B';
+      
+      offset+=2;
+    }
+    else if (pathname[j] == '&') {
+
+      buf[offset+j] = '%';
+      buf[offset+j+1] = '2';
+      buf[offset+j+2] = '6';
+      
+      offset+=2;
+    }
+    else {
+      buf[offset+j] = pathname[j];
+    }
+  }
+
+  buf[offset+j] = 0;
+}
+
 static ssize_t netfs_read(int fd, void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
@@ -243,8 +275,14 @@ static ssize_t netfs_read(int fd, void * buf, size_t count) {
 
       return -ENOMEM;
     }
+
+    char buf2[1256];
+
+    buf2[0] = 0;
+
+    encode(buf2, fds[i].pathname);
     
-    size = do_fetch(devices[fds[i].minor]->root, fds[i].pathname, 0, data, 0); // count=0 means all file i.e no range
+    size = do_fetch(devices[fds[i].minor]->root, buf2/*fds[i].pathname*/, 0, data, 0); // count=0 means all file i.e no range
 
     emscripten_log(EM_LOG_CONSOLE,"netfs_read: %d bytes fetched (/%d)", size, fds[i].size);
 
@@ -327,7 +365,10 @@ static int netfs_stat(const char * pathname, struct stat * stat, unsigned short 
 
   emscripten_log(EM_LOG_CONSOLE, "netfs_stat: do_fetch minor=%d root=%s", minor, devices[minor]->root);
   
-  sprintf(buf, "../query?stat=%s", pathname);
+  //sprintf(buf, "../query?stat=%s", pathname);
+  strcpy(buf, "../query?stat=");
+
+  encode(buf, pathname);
   
   int size = do_fetch(devices[minor]->root, buf, 0, buf, 1256);
   
@@ -431,7 +472,10 @@ static ssize_t netfs_getdents(int fd, char * data_buf, ssize_t count) {
 
     char buf2[2048];
     
-    sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
+    //sprintf(buf2, "../query?getdents=%s", fds[i].pathname);
+    strcpy(buf2, "../query?getdents=");
+
+    encode(buf2, fds[i].pathname);
 
     int tmp_size = 8192;
     char * tmp = (char *)malloc(tmp_size+1);
@@ -665,7 +709,13 @@ static int netfs_faccess(const char * pathname, int amode, int flags, unsigned s
   if (amode & W_OK)
     return EACCES;
 
-  if (do_fetch_head(devices[minor]->root, pathname) < 0)
+  char buf[1256];
+
+  buf[0] = 0;
+
+  encode(buf, pathname);
+
+  if (do_fetch_head(devices[minor]->root, buf/*pathname*/) < 0)
     return EACCES;
       
   return 0;
@@ -993,7 +1043,10 @@ int main() {
     }
     else if (msg->msg_id == IOCTL) {
 
-      //TODO
+      msg->_errno = EPERM;
+      
+      msg->msg_id |= 0x80;
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
     }
     else if (msg->msg_id == CLOSE) {
 
