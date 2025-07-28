@@ -241,6 +241,14 @@ static void encode(char * buf, const char * pathname) {
       
       offset+=2;
     }
+    else if (pathname[j] == 0x20) { // space
+
+      buf[offset+j] = '%';
+      buf[offset+j+1] = '2';
+      buf[offset+j+2] = '0';
+      
+      offset+=2;
+    }
     else {
       buf[offset+j] = pathname[j];
     }

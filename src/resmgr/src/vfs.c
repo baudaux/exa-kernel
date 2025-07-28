@@ -81,8 +81,13 @@ int vfs_init() {
 
 struct vnode * vfs_add_node(struct vnode * parent, enum vnode_type type, const char * name) {
 
+  emscripten_log(EM_LOG_CONSOLE, "vfs_add_node: parent=%p type=%d name=%s", parent, type, name);
+
   if (!parent && (type != VDIR))
     return NULL;
+
+  if (parent)
+    emscripten_log(EM_LOG_CONSOLE, "vfs_add_node: parent->name=%s parent->type=%d", parent->name, parent->type);
 
   if (parent && parent->type != VDIR)
     return NULL;
@@ -597,6 +602,13 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
   struct vnode * vnode = vfs_find_node(pathname, &trail);
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x", pathname, flags, mode);
+
+  if (vnode && (vnode->type == VSYMLINK) ) {
+
+    emscripten_log(EM_LOG_CONSOLE, "vfs_open: type of vnode %p is VSYMLINK !!", vnode);
+
+    vnode = vnode->_u.link.symlink;
+  }      
 
   if (vnode) {
 
@@ -1178,14 +1190,14 @@ int vfs_unlink(struct vnode * vnode) {
     if ( (fds[i].fd >= 0) && (fds[i].vnode == vnode) ) {
 
       emscripten_log(EM_LOG_CONSOLE, "vfs_unlink: %d is opened -> unlink_pending=1", fds[i].fd);
-
+      
       fds[i].unlink_pending = 1;
       unlink_pending_set = 1;
     }
   }
   
   if (unlink_pending_set)
-    return EBUSY;
+    return 0;
 
   vfs_del_node(vnode);
 

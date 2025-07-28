@@ -2318,7 +2318,8 @@ int main() {
 	  }
 	  else {
 	  
-	    struct vnode * vnode = vfs_add_dir(dir_vnode, msg->_u.mkdirat_msg.path);
+	    struct vnode * vnode = vfs_add_dir(dir_v
+node, msg->_u.mkdirat_msg.path);
 	  
 	    emscripten_log(EM_LOG_CONSOLE, "MKDIRAT from %d: dir_vnode=%p -> vnode=%p", msg->pid, dir_vnode, vnode);
 

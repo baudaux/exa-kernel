@@ -480,7 +480,7 @@ int process_create_fd(pid_t pid, int remote_fd, unsigned char type, unsigned sho
   return fd;
 }
 
-int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * major, int * remote_fd) {
+int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * major, unsigned short * minor, int * remote_fd) {
 
   pid = pid & 0xffff;
 
@@ -495,6 +495,7 @@ int process_get_fd(pid_t pid, int fd, unsigned char * type, unsigned short * maj
       
       *type = processes[p].fds[i].type;
       *major = processes[p].fds[i].major;
+      *minor = processes[p].fds[i].minor;
       *remote_fd = processes[p].fds[i].remote_fd;
 
       emscripten_log(EM_LOG_CONSOLE,"process_get_fd: %d, %d, %d (%d), (%d;%d)", pid, *remote_fd, fd, i, *type, *major);
