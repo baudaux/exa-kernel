@@ -2063,7 +2063,7 @@ int main() {
     }
     else if (msg->msg_id == OPEN) {
 
-      emscripten_log(EM_LOG_CONSOLE, "tty: OPEN from %d (%d), %d", msg->pid, msg->_u.open_msg.sid, msg->_u.open_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "tty: OPEN from %d (%d), %d, %d, %d", msg->pid, msg->_u.open_msg.sid, msg->_u.open_msg.minor,msg->_u.open_msg.flags, msg->_u.open_msg.mode);
 
       if (msg->_u.open_msg.minor == 0) { // /dev/tty
 
@@ -2285,7 +2285,7 @@ int main() {
     }
     else if (msg->msg_id == STAT) {
       
-      //emscripten_log(EM_LOG_CONSOLE, "tty: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "tty: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       char * tty = strrchr(msg->_u.stat_msg.pathname_or_buf, '/')+1;
 
@@ -2318,7 +2318,7 @@ int main() {
     }
     else if (msg->msg_id == LSTAT) {
       
-      //emscripten_log(EM_LOG_CONSOLE, "tty: LSTAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "tty: LSTAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       char * tty = strrchr(msg->_u.stat_msg.pathname_or_buf, '/')+1;
 
@@ -2352,7 +2352,7 @@ int main() {
     }
     else if (msg->msg_id == FSTAT) {
       
-      //emscripten_log(EM_LOG_CONSOLE, "tty: FSTAT from %d: %d -> minor=%d", msg->pid, msg->_u.fstat_msg.fd, clients[msg->_u.fstat_msg.fd].minor);
+      emscripten_log(EM_LOG_CONSOLE, "tty: FSTAT from %d: %d -> minor=%d", msg->pid, msg->_u.fstat_msg.fd, clients[msg->_u.fstat_msg.fd].minor);
 
       struct stat stat_buf;
 
@@ -2364,8 +2364,25 @@ int main() {
       int min = clients[i].minor;
 
       stat_buf.st_dev = makedev(major, min);
-      stat_buf.st_ino = (ino_t)&devices[min];
+      stat_buf.st_ino = 0; //(ino_t)&devices[min];
       stat_buf.st_mode = S_IFCHR;
+
+      if ((clients[i].flags & 0x03) != 0x01) {
+
+	stat_buf.st_mode |= S_IRUSR | S_IRGRP | S_IROTH;
+      }
+
+      if ((clients[i].flags & 0x03) != 0x00) {
+
+	stat_buf.st_mode |= S_IWUSR | S_IWGRP | S_IWOTH;
+      }
+      
+      stat_buf.st_size = 0;
+
+      stat_buf.st_nlink = 0;
+      
+      stat_buf.st_uid = 1;
+      stat_buf.st_gid = 1;
 
       //emscripten_log(EM_LOG_CONSOLE, "tty: FSTAT -> %d %lld", stat_buf.st_dev, stat_buf.st_ino);
 

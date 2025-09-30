@@ -478,12 +478,14 @@ int main() {
 	
 	if ( (type == FS_DEV) && (major == vfs_major) ) {
 
-	  vfs_get_path(vfs_get_vnode(remote_fd), path);
-	  
-	  if (path[strlen(path)-1] != '/')
-	    strcat(path, "/");
+	  vfs_get_path(vfs_get_vnode(remote_fd), new_path);
 
-	  strcat(path, msg->_u.open_msg.pathname);
+	  if (new_path[strlen(new_path)-1] != '/')
+	    strcat(new_path, "/");
+
+	  strcat(new_path, msg->_u.open_msg.pathname);
+
+	  path = &new_path[0];
 	}
 	else {
 
@@ -513,8 +515,6 @@ int main() {
 
       if (remote_fd >= 0) {
 
-	char new_path[1024];
-	
 	vfs_get_path(vfs_get_vnode(remote_fd), new_path);
 
 	emscripten_log(EM_LOG_CONSOLE, "vfs_get_path: new_path=%s remote_fd=%d", new_path, remote_fd);

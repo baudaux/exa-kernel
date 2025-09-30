@@ -219,13 +219,19 @@ static ssize_t localfs_read(int fd, void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
+  if (i < 0) {
     return -1;
+  }
 
+  if ((fds[i].flags & O_ACCMODE) == O_WRONLY) { // Not opened with read access
+    return -EACCES;
+  }
+  
   ssize_t ret = lfs_file_read(&lfs, fds[i].lfs_handle, buf, count);
 
-  if (ret < 0)
+  if (ret < 0) {
     ret = -localfs_errno(ret); // Negative value if error
+  }
   
   return ret;
 }
@@ -234,8 +240,13 @@ static ssize_t localfs_write(int fd, const void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
+  if (i < 0) {
     return -1;
+  }
+
+  if ((fds[i].flags & O_ACCMODE) == 0) { // Not opened with write access
+    return -EACCES;
+  }
 
   ssize_t ret = lfs_file_write(&lfs, fds[i].lfs_handle, buf, count);
   
@@ -811,12 +822,12 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
-
+	
 	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 = (char *)malloc(msg->_u.io_msg.len);
@@ -840,6 +851,7 @@ int main() {
       if (dev) {
 	
 	msg->_u.io_msg.len = dev->write(msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
+	
 	if (msg->_u.io_msg.len >= 0) {
 	  msg->_errno = 0;
 	}

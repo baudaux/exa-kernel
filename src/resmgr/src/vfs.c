@@ -601,7 +601,7 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
   
   struct vnode * vnode = vfs_find_node(pathname, &trail);
 
-  emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x", pathname, flags, mode);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x -> node=%p", pathname, flags, mode, vnode);
 
   if (vnode && (vnode->type == VSYMLINK) ) {
 
@@ -624,7 +624,7 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
       else
 	fds[remote_fd].pathname[0] = 0;
     }
-    else if (vnode->type != VDIR && (flags & O_DIRECTORY)) {
+    else if ((vnode->type != VDIR) && (flags & O_DIRECTORY)) {
 
       remote_fd = -1;
     }
@@ -643,9 +643,14 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
 
       ++last_fd;
 
-      add_fd_entry(last_fd, pid, minor, pathname, flags, mode, 0, vnode);
+      int i = add_fd_entry(last_fd, pid, minor, pathname, flags, mode, 0, vnode);
       
       remote_fd = last_fd;
+
+      if ((vnode->type == VFILE) && (flags & O_APPEND)) {
+
+	fds[i].offset = vnode->_u.file.file_size;
+      }
     }
   }
   else if (flags & O_CREAT) {
