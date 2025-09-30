@@ -1024,12 +1024,17 @@ int main() {
 	reply->_u.io_msg.len = dev->read(msg->_u.io_msg.fd, reply->_u.io_msg.buf, msg->_u.io_msg.len);
 
 	if (reply->_u.io_msg.len >= 0) {
+	  
 	  reply->_errno = 0;
+
+	  reply_size = 12+sizeof(struct io_message)+reply->_u.io_msg.len;
 	}
 	else {
 
 	  reply->_errno = -reply->_u.io_msg.len;
 	  reply->_u.io_msg.len = 0;
+
+	  reply_size = 256;
 	}
 
 	emscripten_log(EM_LOG_CONSOLE, "READ successful: %d bytes", reply->_u.io_msg.len);
@@ -1039,6 +1044,8 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "READ error: %d %d", msg->_u.io_msg.fd, fds[msg->_u.io_msg.fd].minor);
 	
 	reply->_errno = ENXIO;
+
+	reply_size = 256;
       }
       
       sendto(sock, reply, reply_size, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
