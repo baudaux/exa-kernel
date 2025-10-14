@@ -83,11 +83,13 @@ struct vnode * vfs_add_node(struct vnode * parent, enum vnode_type type, const c
 
   emscripten_log(EM_LOG_CONSOLE, "vfs_add_node: parent=%p type=%d name=%s", parent, type, name);
 
-  if (!parent && (type != VDIR))
+  if (!parent && (type != VDIR)) {
     return NULL;
+  }
 
-  if (parent)
+  if (parent) {
     emscripten_log(EM_LOG_CONSOLE, "vfs_add_node: parent->name=%s parent->type=%d", parent->name, parent->type);
+  }
 
   if (parent && parent->type != VDIR)
     return NULL;
@@ -352,28 +354,33 @@ struct vnode * vfs_find_node_in_subnodes(struct vnode * vnode, const char * path
   struct vnode * prev_node;
   const char * path = pathname;
 
-  if (vfs_debug)
+  if (vfs_debug) {
     emscripten_log(EM_LOG_CONSOLE, "*** vfs_find_node_in_subnodes: %s %s (%d)", vnode->name, pathname, strlen(pathname));
+  }
 
   while (vnode) {
 
-    if (vfs_debug)
+    if (vfs_debug) {
       emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: %s (%d) == %s ?", vnode->name, strlen(vnode->name), path);
+    }
 
     if (strncmp(vnode->name, path, strlen(vnode->name)) == 0) {
 
-      if (vfs_debug)
+      if (vfs_debug) {
 	emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: same name %d %d",strlen(path),strlen(vnode->name));
+      }
 
       if (strlen(path) == strlen(vnode->name)) {
 
-	if (vfs_debug)
+	if (vfs_debug) {
 	  emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: found");
+	}
 
 	if (vnode->type == VSYMLINK) {
 
-	  if (vfs_debug)
+	  if (vfs_debug) {
 	    emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: VSYMLINK 2 : %s", path);
+	  }
 	  
 	  if (vnode->_u.link.vnode)
 	    vnode = vnode->_u.link.vnode;
@@ -398,16 +405,18 @@ struct vnode * vfs_find_node_in_subnodes(struct vnode * vnode, const char * path
 
 	  if (vnode2) {
 
-	    if (vfs_debug)
+	    if (vfs_debug) {
 	      emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: found");
+	    }
 	    
 	    return vnode2;
 	  }
 	}
 	else if (vnode->type == VSYMLINK) {
 
-	  if (vfs_debug)
+	  if (vfs_debug) {
 	    emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: VSYMLINK %s", path);
+	  }
 
 	  if (vnode->_u.link.vnode) {
 
@@ -416,8 +425,9 @@ struct vnode * vfs_find_node_in_subnodes(struct vnode * vnode, const char * path
 	    if (strcmp(vnode->name, "/"))
 	      ++path;
 
-	    if (vfs_debug)
+	    if (vfs_debug) {
 	      emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: VSYMLINK has vnode %s %s", vnode->_u.link.vnode->name, path);
+	    }
 
 	    if (strlen(path) == 0)
 	      return vnode;
@@ -426,8 +436,9 @@ struct vnode * vfs_find_node_in_subnodes(struct vnode * vnode, const char * path
 
 	    if (vnode2) {
 
-	      if (vfs_debug)
+	      if (vfs_debug) {
 		emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: VSYMLINK found");
+	      }
 	    
 	      return vnode2;
 	    }
@@ -440,14 +451,16 @@ struct vnode * vfs_find_node_in_subnodes(struct vnode * vnode, const char * path
 	}
 	else if (vnode->type == VMOUNT) {
 
-	  if (vfs_debug)
+	  if (vfs_debug) {
 	    emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: found mount");
+	  }
 
 	  if (trail) {
 	    *trail = path+strlen(vnode->name);
 
-	    if (vfs_debug)
+	    if (vfs_debug) {
 	      emscripten_log(EM_LOG_CONSOLE, "vfs_find_node_in_subnodes: trail=%s", *trail);
+	    }
 	  }
 
 	  return vnode;
@@ -601,17 +614,17 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
   
   struct vnode * vnode = vfs_find_node(pathname, &trail);
 
-  emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x -> node=%p", pathname, flags, mode, vnode);
+  emscripten_log(EM_LOG_CONSOLE, "vfs_open: %s flags=%x mode=%x -> node=%p type=%d", pathname, flags, mode, vnode, (vnode)?vnode->type:-1);
 
   if (vnode && (vnode->type == VSYMLINK) ) {
 
     emscripten_log(EM_LOG_CONSOLE, "vfs_open: type of vnode %p is VSYMLINK !!", vnode);
 
-    vnode = vnode->_u.link.symlink;
-  }      
+    vnode = vnode->_u.link.vnode;
+  }
 
   if (vnode) {
-
+    
     if ( (vnode->type == VDEV) || (vnode->type == VMOUNT) ) {
 
       emscripten_log(EM_LOG_CONSOLE, "vfs_open: type=%d trail=%x", vnode->type, trail);
@@ -634,7 +647,9 @@ int vfs_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned 
 
 	vnode->_u.file.file_size = 0;
       }
-      else if ( (vnode->type == VDIR) && (flags & O_TMPFILE) ) { // We have to create a temporary file
+      else if ( (vnode->type == VDIR) && ( (flags & O_TMPFILE) == O_TMPFILE) ) { // We have to create a temporary file
+
+	emscripten_log(EM_LOG_CONSOLE, "vfs_open: create temp file");
 
 	struct vnode * vfile = vfs_add_file(vnode, ""); // unlinked node as empty name
 
