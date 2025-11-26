@@ -77,6 +77,9 @@ void device_init() {
   
   // Add /media/localhost
   vfs_add_dir(media, "localhost");
+
+  // Add /mnt for remotefs
+  vfs_add_dir(vnode, "mnt");
 }
 
 unsigned short device_register_driver(unsigned char type, const char * name, const char * peer) {
@@ -123,32 +126,29 @@ int device_register_device(unsigned char type, unsigned short major, unsigned sh
     d->next = dev;
   }
 
-  if ( (type == CHR_DEV) || ((type == BLK_DEV)) ) {
+  // name can be a path, so find last '/'
 
-    // name can be a path, so find last '/'
+  char * s = strrchr(name, '/');
 
-    char * s = strrchr(name, '/');
+  char root[128] = "/dev";
 
-    char root[128] = "/dev";
+  if (s) {
 
-    if (s) {
-
-      strcat(root, "/");
-      strncat(root, name, s-name);
-      root[5+s-name] = 0;
+    strcat(root, "/");
+    strncat(root, name, s-name);
+    root[5+s-name] = 0;
       
-      name = s+1;
-    }
+    name = s+1;
+  }
     
-    // add device in /dev or /dev/...
-    struct vnode * vnode = vfs_find_node(root, NULL);
+  // add device in /dev or /dev/...
+  struct vnode * vnode = vfs_find_node(root, NULL);
     
-    if (vnode) {
-      vfs_add_dev(vnode, name, type, major, minor);
+  if (vnode) {
+    vfs_add_dev(vnode, name, type, major, minor);
 
-      if ( (type == CHR_DEV) && (major == 1) && (!vfs_find_node("/dev/console", NULL)) ) {
-	vfs_add_dev(vnode, "console", type, major, minor);
-      }
+    if ( (type == CHR_DEV) && (major == 1) && (!vfs_find_node("/dev/console", NULL)) ) {
+      vfs_add_dev(vnode, "console", type, major, minor);
     }
   }
   

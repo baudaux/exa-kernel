@@ -7,6 +7,8 @@
 #define LFS_BLK_NB (256*1024)
 #define LFS_CACHE_SIZE 4096
 
+void lfs_blk_set(const char * v);
+
 int lfs_blk_read(const struct lfs_config *c, lfs_block_t block,
             lfs_off_t off, void *buffer, lfs_size_t size);
 

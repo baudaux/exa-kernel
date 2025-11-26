@@ -27,8 +27,13 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 	      request.onerror = function(event) {
 
 		//console.log("*** lfs_blk_read: error");
+
+		const buf3 = new Uint8Array(size);
+		buf3.fill(0xFF);
 		
-		wakeUp(-1);
+		Module.HEAPU8.set(buf3, buffer);
+		
+		wakeUp(0);
 	      };
 	      
 	      request.onsuccess = function(event) {
@@ -37,7 +42,7 @@ EM_JS(int, lfs_blk_read, (const struct lfs_config * c, lfs_block_t block,
 
 		if (request.result) {
 
-		  Module.HEAPU8.set(request.result.data.slice(off, off+size), buffer);
+		  Module.HEAPU8.set(request.result.data, buffer);
 		}
 
 		wakeUp(0);
@@ -91,57 +96,62 @@ EM_JS(int, lfs_blk_prog, (const struct lfs_config * c, lfs_block_t block,
 	    if (!window.indexedDB)
 	      return -1;
 
-	    //console.log("*** lfs_blk_prog: "+block);
+	    let do_prog = () => {
 
-	    let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
+	      let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
 
-	    let request = store.get(block);
+	      let request = store.put({block: block, data: Module.HEAPU8.subarray(buffer, buffer+size)});
 	      
-	    request.onerror = function(event) {
+	      request.onerror = function(event) {
 
-	      //console.log("*** lfs_blk_prog: error");
+		//console.log("*** lfs_blk_erase: error");
 		
-	      wakeUp(-1);
-	    };
+		wakeUp(-1);
+	      };
 	      
-	    request.onsuccess = function(event) {
+	      request.onsuccess = function(event) {
 
-	      if (request.result) {
+		wakeUp(0);
+	      };
 
-		request.result.data.set(Module.HEAPU8.slice(buffer, buffer+size), off);
-
-		let requestUpdate = store.put(request.result);
-		
-		  requestUpdate.onerror = function(event) {
-
-		  wakeUp(-1);
-		  };
-		
-		  requestUpdate.onsuccess = function(event) {
-
-		  wakeUp(0);
-		  };
-	      }
-	      else {
-
-		let data = new Uint8Array(4096);
-
-		data.set(Module.HEAPU8.slice(buffer, buffer+size), off);
-
-		let requestUpdate = store.add({block: block, data: data});
-		
-		requestUpdate.onerror = function(event) {
-
-		  wakeUp(-1);
-		};
-		
-		requestUpdate.onsuccess = function(event) {
-
-		  wakeUp(0);
-		};
-	      }
 	    };
-	  });
+
+	    if (!Module.lfsDB) {
+	      
+	      let request = window.indexedDB.open("LocalFS", 1);
+
+	      request.onerror = function(event) {
+
+		//console.log("*** Error while opening indexedDB of LocalFS");
+
+		wakeUp(-1);
+	      };
+
+	      request.onupgradeneeded = function(event) {
+
+		//console.log("*** Upgrade indexedDB of LocalFS");
+
+		let db = event.target.result;
+
+		db.createObjectStore("blocks", { keyPath: "block" });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		//console.log("*** indexedDB of LocalFS opened");
+		
+		Module.lfsDB = event.target.result;
+
+		do_prog();
+		
+	      };
+	    }
+	    else {
+
+	      do_prog();
+	    }
+
+	  }); 
 });
 
 EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
@@ -153,53 +163,67 @@ EM_JS(int, lfs_blk_erase, (const struct lfs_config * c, lfs_block_t block), {
 
 	//console.log("*** lfs_blk_erase: "+block);
 
-	let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
+	let do_erase = () => {
 
-	let request = store.get(block);
+	  let store = Module.lfsDB.transaction(["blocks"], "readwrite").objectStore("blocks");
+
+	  const buf3 = new Uint8Array(4096);
+	  buf3.fill(0xFF);
+
+	  let request = store.put({block: block, data: buf3});
 	      
-	request.onerror = function(event) {
+	  request.onerror = function(event) {
 
-	  //console.log("*** lfs_blk_erase: error");
+	    //console.log("*** lfs_blk_erase: error");
 		
-	  wakeUp(-1);
+	    wakeUp(-1);
+	  };
+	      
+	  request.onsuccess = function(event) {
+
+	    wakeUp(0);
+	  };
+
 	};
+
+	if (!Module.lfsDB) {
 	      
-	request.onsuccess = function(event) {
+	      let request = window.indexedDB.open("LocalFS", 1);
 
-	  if (request.result) {
+	      request.onerror = function(event) {
 
-	    request.result.data = new Uint8Array(4096);
+		//console.log("*** Error while opening indexedDB of LocalFS");
 
-	    let requestUpdate = store.put(request.result);
-		
-	    requestUpdate.onerror = function(event) {
-
-	      wakeUp(-1);
-	    };
-		
-	    requestUpdate.onsuccess = function(event) {
-
-	      wakeUp(0);
+		wakeUp(-1);
 	      };
-	  }
-	  else {
 
-	    let requestUpdate = store.add({block: block, data: new Uint8Array(4096)});
+	      request.onupgradeneeded = function(event) {
+
+		//console.log("*** Upgrade indexedDB of LocalFS");
+
+		let db = event.target.result;
+
+		db.createObjectStore("blocks", { keyPath: "block" });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		//console.log("*** indexedDB of LocalFS opened");
 		
-	    requestUpdate.onerror = function(event) {
+		Module.lfsDB = event.target.result;
 
-	      wakeUp(-1);
-	    };
+		do_erase();
 		
-	    requestUpdate.onsuccess = function(event) {
+	      };
+	    }
+	    else {
 
-	      wakeUp(0);
-	    };
-	  }
-	};
-      });
+	      do_erase();
+	    }
+	
+    });
   
-  });
+});
 
 int lfs_blk_sync(const struct lfs_config *c) {
 

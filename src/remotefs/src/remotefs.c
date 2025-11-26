@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Benoit Baudaux
+ * Copyright (C) 2025 Benoit Baudaux
  *
  * This file is part of EXA.
  *
@@ -39,12 +39,12 @@
 #define emscripten_log(...)
 #endif
 
-#define LOCALFS_VERSION "localfs v0.1.0"
+#define REMOTEFS_VERSION "remotefs v0.1.0"
 
-#define LOCALFS_PATH "/var/localfs.peer"
+#define REMOTEFS_PATH "/var/remotefs.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
-#define NB_LOCALFS_MAX  16
+#define NB_REMOTEFS_MAX  16
 #define NB_FD_MAX     128
 
 struct device_ops {
@@ -81,12 +81,16 @@ struct fd_entry {
   int unlink_pending;
 };
 
+static char current_fs[128];
+
 static unsigned short major;
 static unsigned short minor = 0;
 
+static int sock;
+
 static lfs_t lfs;
 
-static struct device_ops * devices[NB_LOCALFS_MAX];
+static struct device_ops * devices[NB_REMOTEFS_MAX];
 
 static int last_fd = 0;
 
@@ -122,7 +126,7 @@ static struct lfs_config lfs_config = {
 
 int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
 
-  emscripten_log(EM_LOG_CONSOLE,"localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
+  emscripten_log(EM_LOG_CONSOLE, "localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
   
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
@@ -142,7 +146,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].lfs_handle = lfs_handle;
       fds[i].unlink_pending = 0;
 
-      emscripten_log(EM_LOG_CONSOLE,"<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
+      emscripten_log(EM_LOG_CONSOLE, "<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
 
       return last_fd;
     }
@@ -279,6 +283,7 @@ static int localfs_unlink(const char * path, int flags) {
   
   return localfs_errno(lfs_remove(&lfs, path));
 }
+
 static int localfs_close(int fd) {
 
   int i = find_fd_entry(fd);
@@ -576,15 +581,169 @@ struct device_ops * get_device_from_fd(int fd) {
   return devices[fds[i].minor];
 }
 
-int main() {
+static int remotefs_ctl_open(const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  int sock;
+  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_open: %s", pathname);
+
+  if (strcmp(pathname, "/dev/remotefs_ctl") == 0) {
+
+    int fd = add_fd_entry(pid, minor, pathname, flags, mode, 0, 0, NULL);
+
+    if (fd >= 0)
+      return fd;
+  }
+      
+  int _errno = ENOMEM;
+  
+  return -_errno; // Negative value if error
+}
+
+static ssize_t remotefs_ctl_read(int fd, void * buf, size_t count) {
+  
+  return 0;
+}
+
+static ssize_t remotefs_ctl_write(int fd, const void * buf, size_t count) {
+
+  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_write: (%d) %s", count, buf);
+
+  if (strncmp(buf, "mkfs", 4) == 0) {
+
+    char * fs = strchr(buf, ':');
+    char * view = strrchr(buf, ':');
+
+    if (fs && view) {
+
+      fs++;
+      strncpy(current_fs, fs, view-fs);
+      current_fs[view-fs] = 0;
+
+      view++;
+
+      emscripten_log(EM_LOG_CONSOLE, "view: %s", view);
+
+      lfs_blk_set(view);
+      
+      int res = lfs_format(&lfs, &lfs_config);
+
+      emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
+
+      if (res == 0) {
+
+	res = lfs_mount(&lfs, &lfs_config);
+
+	emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
+
+	if (res == 0) {
+
+	  res = lfs_mkdir(&lfs, "/mnt");
+	  emscripten_log(EM_LOG_CONSOLE, "lfs_mkdir /mnt: res=%d", res);
+
+	  char mnt_path[256];
+
+	  sprintf(mnt_path, "/mnt/%s", current_fs);
+	
+	  res = lfs_mkdir(&lfs, mnt_path);
+	  
+	  emscripten_log(EM_LOG_CONSOLE, "lfs_mkdir %s: res=%d", mnt_path, res);
+	  
+	  lfs_unmount(&lfs);
+	}
+
+	return count;
+      }
+    }
+  }
+  else if (strncmp(buf, "mount", 5) == 0) {
+
+    char * fs = strchr(buf, ':');
+    char * view = strrchr(buf, ':');
+
+    if (fs && view) {
+
+      fs++;
+      strncpy(current_fs, fs, view-fs);
+      current_fs[view-fs] = 0;
+      
+      view++;
+
+      lfs_blk_set(view);
+
+      int res = lfs_mount(&lfs, &lfs_config);
+
+      emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
+
+      if (res == 0) {
+
+	minor += 1;
+	
+	register_device(minor, &localfs_ops);
+
+	char buf2[1256];
+	struct message * msg = (struct message *)&buf2[0];
+      
+	msg->msg_id = REGISTER_DEVICE;
+	msg->_u.dev_msg.dev_type = FS_DEV;
+	msg->_u.dev_msg.major = major;
+	msg->_u.dev_msg.minor = minor;
+
+	memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
+	sprintf((char *)&msg->_u.dev_msg.dev_name[0], "remotefs%d", msg->_u.dev_msg.minor);
+
+	struct sockaddr_un resmgr_addr;
+	memset(&resmgr_addr, 0, sizeof(resmgr_addr));
+	resmgr_addr.sun_family = AF_UNIX;
+	strcpy(resmgr_addr.sun_path, RESMGR_PATH);
+  
+	sendto(sock, buf2, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+
+	return count;
+      }
+      
+    }
+    
+  }
+  
+  return -EINVAL;
+}
+
+static int remotefs_ctl_ioctl(int fildes, int request, ... /* arg */) {
+
+  return EINVAL;
+}
+
+static int remotefs_ctl_close(int fd) {
+
+  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_close: %d", fd);
+  
+  return 0;
+}
+
+static struct device_ops remotefs_ctl_ops = {
+
+  .open = remotefs_ctl_open,
+  .read = remotefs_ctl_read,
+  .write = remotefs_ctl_write,
+  .ioctl = remotefs_ctl_ioctl,
+  .close = remotefs_ctl_close,
+  .stat = NULL,
+  .getdents = NULL,
+  .seek = NULL,
+  .faccess = NULL,
+  .unlink = NULL,
+  .rename = NULL,
+  .ftruncate = NULL,
+  .mkdir = NULL,
+};
+
+int main() {
+  
   struct sockaddr_un local_addr, resmgr_addr, remote_addr;
   int bytes_rec;
   socklen_t len;
   char buf[1256];
   
-  emscripten_log(EM_LOG_CONSOLE, "Starting " LOCALFS_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " REMOTEFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -595,7 +754,7 @@ int main() {
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
   
   if (fd >= 0)
-    write(fd, "\n\r[" LOCALFS_VERSION "]", strlen("\n\r[" LOCALFS_VERSION "]")+1);
+    write(fd, "\n\r[" REMOTEFS_VERSION "]", strlen("\n\r[" REMOTEFS_VERSION "]")+1);
 
   close(fd);
   
@@ -605,10 +764,10 @@ int main() {
     return -1;
   }
 
-  /* Bind server socket to LOCALFS_PATH */
+  /* Bind server socket to REMOTEFS_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
   local_addr.sun_family = AF_UNIX;
-  strcpy(local_addr.sun_path, LOCALFS_PATH);
+  strcpy(local_addr.sun_path, REMOTEFS_PATH);
   
   if (bind(sock, (struct sockaddr *) &local_addr, sizeof(struct sockaddr_un))) {
     
@@ -626,7 +785,7 @@ int main() {
   
   memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
   
-  strcpy((char *)&msg->_u.dev_msg.dev_name[0], "localfs");
+  strcpy((char *)&msg->_u.dev_msg.dev_name[0], "remotefs");
   
   sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
@@ -634,7 +793,7 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    emscripten_log(EM_LOG_CONSOLE, "*** localfs: %d", msg->msg_id);
+    emscripten_log(EM_LOG_CONSOLE, "*** remotefs: %d", msg->msg_id);
     
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -645,38 +804,17 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
-      int res = lfs_mount(&lfs, &lfs_config);
-
-      emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
-
-      if (res < 0) {
-
-	res = lfs_format(&lfs, &lfs_config);
-
-	emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
-
-	if (res == 0) {
-
-	  res = lfs_mount(&lfs, &lfs_config);
-	  
-	  emscripten_log(EM_LOG_CONSOLE, "second lfs_mount: res=%d", res);
-	}
-      }
-
-      if (res == 0) {
-
-	minor += 1;
+      minor += 1;
 	
-	register_device(minor, &localfs_ops);
+      register_device(minor, &remotefs_ctl_ops);
       
-	msg->msg_id = REGISTER_DEVICE;
-	msg->_u.dev_msg.minor = minor;
+      msg->msg_id = REGISTER_DEVICE;
+      msg->_u.dev_msg.minor = minor;
 
-	memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-	sprintf((char *)&msg->_u.dev_msg.dev_name[0], "localfs%d", msg->_u.dev_msg.minor);
-  
-	sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
-      }
+      memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
+      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "remotefs_ctl");
+      
+      sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
     else if (msg->msg_id == (REGISTER_DEVICE|0x80)) {
 
@@ -685,43 +823,40 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
-      unsigned short minor = msg->_u.dev_msg.minor;
+      if (msg->_u.dev_msg.minor > 1) {
 
-      msg->msg_id = MOUNT;
-      msg->_u.mount_msg.dev_type = FS_DEV;
-      msg->_u.mount_msg.major = major;
-      msg->_u.mount_msg.minor = minor;
+	char mnt_path[256];
 
-      memset(msg->_u.mount_msg.pathname, 0, sizeof(msg->_u.mount_msg.pathname));
+	sprintf(mnt_path, "/mnt/%s", current_fs);
 
-      if (minor == 1) {
+	mkdirat(AT_FDCWD, mnt_path, 0777);
 
-	int res = lfs_mkdir(&lfs, "/home");
+	msg->msg_id = MOUNT;
+	msg->_u.mount_msg.dev_type = FS_DEV;
+	msg->_u.mount_msg.major = major;
+	msg->_u.mount_msg.minor = msg->_u.dev_msg.minor;
 
-	emscripten_log(EM_LOG_CONSOLE, "mkdir /home: res=%d", res);
-
-	if (res == LFS_ERR_EXIST) {
-	  res = 0;
-	}
-
-	if (res == 0) {
-	  strcpy((char *)&msg->_u.mount_msg.pathname[0], "/home");
+	memset(msg->_u.mount_msg.pathname, 0, sizeof(msg->_u.mount_msg.pathname));
 	
-	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
-	}
+	strcpy((char *)&msg->_u.mount_msg.pathname[0], mnt_path);
+	
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
       }
-      
     }
     else if (msg->msg_id == (MOUNT|0x80)) {
 
-      if (msg->_errno)
-	continue;
+      if (msg->_errno) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+	emscripten_log(EM_LOG_CONSOLE, "remotefs device not mounted: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+	
+	continue;
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "remotefs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     else if (msg->msg_id == OPEN) {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
 
       int remote_fd = -ENOENT;
 
@@ -761,7 +896,7 @@ int main() {
 	}
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: OPEN -> remote_fd=%d", remote_fd);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: OPEN -> remote_fd=%d", remote_fd);
 
       if (remote_fd >= 0) {
 
@@ -779,7 +914,7 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
       struct message * reply = (struct message *) malloc(12+sizeof(struct io_message)+msg->_u.io_msg.len);
 
@@ -822,13 +957,13 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 	
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 = (char *)malloc(msg->_u.io_msg.len);
 
@@ -836,7 +971,7 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+	emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE %d read", bytes_rec2);
       }
       
       struct device_ops * dev = NULL;
@@ -897,7 +1032,7 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
       struct device_ops * dev = NULL;
 
@@ -919,7 +1054,7 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -944,7 +1079,7 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
       struct device_ops * dev = NULL;
       
@@ -987,7 +1122,7 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 
@@ -1036,7 +1171,7 @@ int main() {
     }
     else if (msg->msg_id == FSTAT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
 
       struct stat stat_buf;
 
@@ -1073,7 +1208,7 @@ int main() {
     }
     else if (msg->msg_id == FSYNC) {
       
-      emscripten_log(EM_LOG_CONSOLE, "localfs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
       
       msg->_errno = 0;
       msg->msg_id |= 0x80;
@@ -1123,7 +1258,7 @@ int main() {
     }
     else if (msg->msg_id == FTRUNCATE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: FTRUNCATE from %d: fd=%d length=%d", msg->pid, msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: FTRUNCATE from %d: fd=%d length=%d", msg->pid, msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
 
       struct device_ops * dev = NULL;
 
@@ -1150,7 +1285,7 @@ int main() {
     }
     else if (msg->msg_id == MKDIRAT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
       
       struct device_ops * dev = NULL;
 
@@ -1171,7 +1306,7 @@ int main() {
     }
     else if (msg->msg_id == RMDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "localfs: RMDIR from %d: path=%s", msg->pid, msg->_u.rmdir_msg.path);
+      emscripten_log(EM_LOG_CONSOLE, "remotefs: RMDIR from %d: path=%s", msg->pid, msg->_u.rmdir_msg.path);
       
       struct device_ops * dev = NULL;
 
@@ -1237,7 +1372,7 @@ int main() {
       }
       
       msg->_errno = _errno;
-
+      
       msg->msg_id |= 0x80;
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
       

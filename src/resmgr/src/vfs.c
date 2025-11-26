@@ -1085,6 +1085,7 @@ int vfs_fstat(int fd, struct stat * buf) {
     switch(vnode->type) {
 
     case VDIR:
+    case VMOUNT:
 
       buf->st_mode |= S_IFDIR;
       buf->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
