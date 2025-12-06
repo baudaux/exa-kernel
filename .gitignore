@@ -1,4 +1,5 @@
 /doc
+/src/littlefs
 *.o
 *.a
 *.wasm
