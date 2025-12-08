@@ -2,7 +2,7 @@
 
 #include <emscripten.h>
 
-EM_JS(int, lfs_cluster_read, (int cluster, void * buffer, int size), {
+EM_JS(int, lfs_cluster_read, (int view_id, int cluster, void * buffer, int size), {
 
 	//console.log("lfs_cluster_read: cluster="+cluster+" size="+size);
   
@@ -12,8 +12,10 @@ EM_JS(int, lfs_cluster_read, (int cluster, void * buffer, int size), {
 	      method: 'GET',
 	      cache: 'no-store'
 	    };
+
+	    const view = window.views[view_id];
 	    
-	    fetch("/exafs_views/read_cls.php?view="+window.view+"&cls="+cluster, myInit).then(function (response) {
+	    fetch("/exafs_views/read_cls.php?view="+view+"&cls="+cluster, myInit).then(function (response) {
 
 		if (response.ok) {
 	    
@@ -53,7 +55,7 @@ EM_JS(int, lfs_cluster_read, (int cluster, void * buffer, int size), {
 	  });
 });
 
-EM_JS(int, lfs_cluster_write, (int cluster, char * buffer, int size), {
+EM_JS(int, lfs_cluster_write, (int view_id, int cluster, char * buffer, int size), {
 
     //console.log("lfs_cluster_write: cluster="+cluster+" size="+size);
 
@@ -64,7 +66,9 @@ EM_JS(int, lfs_cluster_write, (int cluster, char * buffer, int size), {
 	      body: Module.HEAPU8.subarray(buffer, buffer+size)
 	    };
 
-	    fetch("/exafs_views/write_cls.php?view="+window.view+"&cls="+cluster, myInit).then(function (response) {
+	    const view = window.views[view_id];
+
+	    fetch("/exafs_views/write_cls.php?view="+view+"&cls="+cluster, myInit).then(function (response) {
 
 		if (response.ok) {
 
