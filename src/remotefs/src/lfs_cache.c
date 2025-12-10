@@ -1,8 +1,30 @@
+/*
+ * Copyright (C) 2025 Benoit Baudaux
+ *
+ * This file is part of EXA.
+ *
+ * EXA is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundationt, either version 3 of the License, or (at your option) any later version.
+ *
+ * EXA is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with EXA. If not, sees <https://www.gnu.org/licenses/>.
+ */
+
 #include "lfs_block.h"
 #include "lfs_cache.h"
 #include "lfs_cluster.h"
 
 #include <emscripten.h>
+
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
+
+#else
+#define emscripten_log(...)
+#endif
 
 int lfs_set_view(const char * view) {
 
@@ -56,12 +78,15 @@ void free_cache(struct blk_cache * cache) {
 
 int add_dirty_cluster(struct blk_cache * cache, int cluster) {
 
-  cache->cluster_cache[cluster].dirty = 1;
-  cache->dirty_clusters[cache->dirty_index++] = cluster;
+  if (!cache->cluster_cache[cluster].dirty) {
     
-  if (cache->dirty_index >= NB_DIRTY_MAX) {
+    cache->cluster_cache[cluster].dirty = 1;
+    cache->dirty_clusters[cache->dirty_index++] = cluster;
+    
+    if (cache->dirty_index >= NB_DIRTY_MAX) {
 
-    lfs_cache_block_sync(cache);
+      lfs_cache_block_sync(cache);
+    }
   }
 
   return 0;
@@ -129,6 +154,8 @@ int lfs_cache_block_sync(struct blk_cache * cache) {
 
   emscripten_log(EM_LOG_CONSOLE,"!!! lfs_cache_block_sync !!! (%d)", cache->dirty_index);
 
+  lfs_cluster_bulk_start(cache->view_index);
+
   for (int i=0; i < cache->dirty_index; i++) {
 
     int cls = cache->dirty_clusters[i];
@@ -140,7 +167,11 @@ int lfs_cache_block_sync(struct blk_cache * cache) {
     }
   }
 
+  lfs_cluster_bulk_end(cache->view_index);
+
   cache->dirty_index = 0;
+
+  emscripten_log(EM_LOG_CONSOLE,"!!! lfs_cache_block_sync !!! done");
 
   return 0;
 }
