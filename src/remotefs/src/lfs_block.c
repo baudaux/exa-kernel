@@ -15,7 +15,7 @@ int lfs_blk_prog(const struct lfs_config * c, lfs_block_t block, lfs_off_t off, 
 
 int lfs_blk_erase(const struct lfs_config * c, lfs_block_t block) {
 
-    return lfs_cache_block_erase(c->context, block);
+  return lfs_cache_block_erase(c->context, block);
 }
 
 int lfs_blk_sync(const struct lfs_config * c) {

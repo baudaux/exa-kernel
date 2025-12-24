@@ -24,6 +24,12 @@
 #include <sys/sysmacros.h>
 #include <dirent.h>
 
+#include <emscripten.h>
+
+#include <sodium/core.h>
+#include <sodium/randombytes.h>
+#include <sodium/crypto_pwhash.h>
+
 #include "msg.h"
 
 #include "lfs.h"
@@ -34,7 +40,6 @@
 #endif
 
 #if DEBUG
-#include <emscripten.h>
 #else
 #define emscripten_log(...)
 #endif
@@ -613,6 +618,150 @@ static ssize_t remotefs_ctl_read(struct lfs_dev * dev, int fd, void * buf, size_
   return 0;
 }
 
+EM_JS(int, store_salt, (char * view, int view_len, char * salt, int size), {
+    
+      return Asyncify.handleSleep(function (wakeUp) {
+	  
+	    var myInit = {
+	    method: 'POST',
+	    body: Module.HEAPU8.subarray(salt, salt+size)
+	    };
+
+	    const v = UTF8ToString(view, view_len);
+
+	    console.log("remotefs: store_salt "+v);
+
+	    fetch("/exafs_views/store_salt.php?view="+v, myInit).then(function (response) {
+
+		if (response.ok) {
+
+		  wakeUp(0);
+		}
+		else {
+
+		  wakeUp(-1);
+		}
+
+	      }).catch((error) => {
+
+		  wakeUp(-1);
+	      
+		});
+	});
+});
+
+EM_JS(int, get_salt, (char * view, int view_len, char * salt, int size), {
+    
+      return Asyncify.handleSleep(function (wakeUp) {
+
+	  var myInit = {
+	      method: 'GET',
+	      cache: 'no-store'
+	    };
+
+	    const v = UTF8ToString(view, view_len);
+
+	    console.log("remotefs: get_salt "+v);
+	    
+	    fetch("/exafs_views/get_salt.php?view="+v, myInit).then(function (response) {
+
+		if (response.ok) {
+	    
+		  response.arrayBuffer().then(buf => {
+
+		      const buf2 = new Uint8Array(buf);
+
+		      if (buf2.length > 0) {
+
+			Module.HEAPU8.set(buf2, salt);
+
+			wakeUp(0);
+		      }
+		      else {
+		      
+			wakeUp(-1);
+		      }
+		    });
+		}
+		else {
+
+		  wakeUp(-1);
+		}
+	      }).catch((error) => {
+
+		  wakeUp(-1);
+	      
+		});
+
+	  });
+
+  });
+
+static int create_master_key(char * view, char * password, char * key) {
+
+  emscripten_log(EM_LOG_CONSOLE, "remotefs: create_master_key %s %s", view, password);
+
+  char salt[crypto_pwhash_SALTBYTES];
+
+  extern int sodium_initialized;
+
+  if (!sodium_initialized) {
+
+    int res = sodium_init();
+
+    if (res < 0) {
+      return res;
+    }
+    
+    sodium_initialized = 1;
+  }
+
+  for (int i=0; i < crypto_pwhash_SALTBYTES; i++) {
+
+    salt[i] = (char) randombytes_random(); // libsodium needs to be initialized first
+  }
+  
+  int res = crypto_pwhash(key, crypto_kdf_KEYBYTES, password, strlen(password), salt, crypto_pwhash_OPSLIMIT_MODERATE, crypto_pwhash_MEMLIMIT_MODERATE, crypto_pwhash_ALG_ARGON2ID13);
+  
+  emscripten_log(EM_LOG_CONSOLE, "remotefs: crypto_pwhash -> res=%d", res);
+  
+  if (res < 0) {
+    return res;
+  }
+  
+  res = store_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+  
+  return res;
+}
+
+static int retrieve_master_key(char * view, char * password, char * key) {
+  
+  char salt[crypto_pwhash_SALTBYTES];
+
+  extern int sodium_initialized;
+
+  if (!sodium_initialized) {
+
+    int res = sodium_init();
+
+    if (res < 0) {
+      return res;
+    }
+    
+    sodium_initialized = 1;
+  }
+  
+  int res = get_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+
+  if (res < 0) {
+    return res;
+  }
+  
+  res = crypto_pwhash(key, crypto_kdf_KEYBYTES, password, strlen(password), salt, crypto_pwhash_OPSLIMIT_MODERATE, crypto_pwhash_MEMLIMIT_MODERATE, crypto_pwhash_ALG_ARGON2ID13);
+  
+  return res;
+}
+
 static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf, size_t count) {
 
   emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_write: (%d) %s", count, buf);
@@ -620,9 +769,16 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
   if (strncmp(buf, "mkfs", 4) == 0) {
 
     char * fs = strchr(buf, ':');
+    char * password = strrchr(buf, ':');
+
+    if (password) {
+      *password = 0; // For extracting view later 
+      password++;
+    }
+    
     char * view = strrchr(buf, ':');
 
-    if (fs && view) {
+    if (fs && view && password) {
 
       fs++;
       strncpy(current_fs, fs, view-fs);
@@ -631,13 +787,22 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
       view++;
 
       emscripten_log(EM_LOG_CONSOLE, "view: %s", view);
+      emscripten_log(EM_LOG_CONSOLE, "password: %s", password);
+      
+      char * key = NULL;
 
+      if (strlen(password) > 0) {
+
+	key = malloc(crypto_kdf_KEYBYTES);
+	create_master_key(view, password, key);
+      }
+      
       lfs_t lfs;
       struct lfs_config lfs_config;
 
       memcpy(&lfs_config, &common_lfs_config, sizeof(struct lfs_config));
 
-      struct blk_cache * cache = alloc_cache(view);
+      struct blk_cache * cache = alloc_cache(view, key);
 	
       lfs_config.context = cache;
       
@@ -669,6 +834,10 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
 
 	free_cache(cache);
 
+	if (key) {
+	  free(key);
+	}
+
 	return count;
       }
 
@@ -678,9 +847,16 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
   else if (strncmp(buf, "mount", 5) == 0) {
 
     char * fs = strchr(buf, ':');
+    char * password = strrchr(buf, ':');
+
+    if (password) {
+      *password = 0; // For extracting view later 
+      password++;
+    }
+    
     char * view = strrchr(buf, ':');
 
-    if (fs && view) {
+    if (fs && view && password) {
 
       fs++;
       strncpy(current_fs, fs, view-fs);
@@ -692,9 +868,17 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
 	
       register_device(minor, &localfs_ops);
 
+      char * key = NULL;
+
+      if (strlen(password) > 0) {
+
+	key = malloc(crypto_kdf_KEYBYTES);
+	retrieve_master_key(view, password, key);
+      }
+
       memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
       
-      struct blk_cache * cache = alloc_cache(view);
+      struct blk_cache * cache = alloc_cache(view, key);
       
       devices[minor].lfs_config.context = cache;
 

@@ -10,171 +10,167 @@
  * You should have received a copy of the GNU General Public License along with EXA. If not, sees <https://www.gnu.org/licenses/>.
  */
 
-#include "lfs_block.h"
-
 #include <emscripten.h>
 
-EM_JS(int, lfs_cluster_read, (int view_id, int cluster, void * buffer, int size), {
 
-	console.log("lfs_cluster_read: cluster="+cluster+" size="+size);
-  
-	return Asyncify.handleSleep(function (wakeUp) {
+#include "lfs_block.h"
+#include "lfs_remote_dev.h"
+#include "lfs_cache.h"
+#include "lfs_cluster.h"
 
-	    var myInit = {
-	      method: 'GET',
-	      cache: 'no-store'
-	    };
+#include <sodium/core.h>
+#include <sodium/randombytes.h>
 
-	    const view = window.views[view_id];
-	    
-	    fetch("/exafs_views/read_cls.php?view="+view+"&cls="+cluster, myInit).then(function (response) {
 
-		if (response.ok) {
-	    
-		  response.arrayBuffer().then(buf => {
+#define CONTEXT "EXAFS"
 
-		      const buf2 = new Uint8Array(buf);
+int sodium_initialized = 0;
 
-		      if (buf2.length > 0) {
+char tmp[CLUSTER_SIZE+crypto_aead_xchacha20poly1305_ietf_ABYTES];
 
-			Module.HEAPU8.set(buf2, buffer);
-		      }
-		      else {
+int lfs_cluster_read(int view_id, const char * key, int cluster, char * buffer, int size) {
 
-			const buf3 = new Uint8Array(size);
-			buf3.fill(0xFF);
-			
-			Module.HEAPU8.set(buf3, buffer);
-		      }
-		      
-		      wakeUp(0);
-		    });
-		}
-		else {
+  emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_read: cluster=%d", cluster);
 
-		  const buf2 = new Uint8Array(size);
-		  buf2.fill(0xFF);
-		  Module.HEAPU8.set(buf2, buffer);
-
-		  wakeUp(0);
-		}
-	      }).catch((error) => {
-
-		  wakeUp(-1);
-	      
-		});
-
-	  });
-});
-
-EM_JS(int, lfs_cluster_write, (int view_id, int cluster, char * buffer, int size), {
+  if (!sodium_initialized) {
     
-      return Asyncify.handleSleep(function (wakeUp) {
+    int res = sodium_init();
 
-	  console.log("lfs_cluster_write: cluster="+cluster+" size="+size);
+    if (res < 0) {
 
-	  if (window.bulk_mode) {
-
-	    window.bulk_array[window.bulk_size] = cluster & 0xff;
-	    window.bulk_array[window.bulk_size+1] = (cluster >> 8) & 0xff;
-	    window.bulk_array[window.bulk_size+2] = (cluster >> 16) & 0xff;
-	    window.bulk_array[window.bulk_size+3] = (cluster >> 24) & 0xff;
-
-	    window.bulk_array.set(Module.HEAPU8.subarray(buffer, buffer+size), window.bulk_size+4);
-
-	    window.bulk_size += size+4;
-
-	    console.log("lfs_cluster_write: bulk size="+window.bulk_size);
-
-	    wakeUp(0);
-	  }
-	  else {
-
-	    var myInit = {
-	    method: 'POST',
-	    body: Module.HEAPU8.subarray(buffer, buffer+size)
-	    };
-
-	    const view = window.views[view_id];
-
-	    fetch("/exafs_views/write_cls.php?view="+view+"&cls="+cluster, myInit).then(function (response) {
-
-		if (response.ok) {
-
-		  wakeUp(0);
-		}
-		else {
-
-		  wakeUp(-1);
-		}
-
-		//Module.HEAPU8.slice(buffer, buffer+size), off);
-
-	      }).catch((error) => {
-
-		  wakeUp(-1);
-	      
-		});
-	  }
-	});
-});
-
-EM_JS(int, lfs_cluster_bulk_start, (int view_id), {
-
-  window.bulk_mode = 1;
-  
-  if (typeof window.bulk_array === 'undefined') {
-    window.bulk_array = new Uint8Array(20*(16*4096+4));
+      return res;
+    }
+    
+    sodium_initialized = 1;
   }
 
-  window.bulk_size = 0;
+  if (key == NULL) {
+    
+    return lfs_remote_read(view_id, cluster, buffer, size);
+  }
+  else {
+
+    int res = lfs_remote_read(view_id, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+
+    if (res < 0)
+      return res;
+
+    struct cluster_header * header = (struct cluster_header *) tmp;
+    
+    if (header->encrypted == 0xFFFFFFFF) { // Empty cluster
+
+      memcpy(buffer, tmp, size);
+    }
+    else if (header->encrypted == 1) {
+      
+      char subkey[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+
+      res = crypto_kdf_derive_from_key(subkey, sizeof subkey, cluster, CONTEXT, key);
+
+      emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_read: crypto_kdf_derive_from_key -> res=%d", res);
+      
+      if (res < 0)
+	return res;
+
+      int len;
+
+      res = crypto_aead_xchacha20poly1305_ietf_decrypt(buffer+LFS_HEADER_SIZE, &len, NULL, tmp+LFS_HEADER_SIZE, size-LFS_HEADER_SIZE+crypto_aead_xchacha20poly1305_ietf_ABYTES, NULL, 0, header->nonce, subkey);
+
+      emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_read: crypto_aead_xchacha20poly1305_ietf_decrypt -> res=%d (len=%d)", res, len);
+
+      if (res < 0)
+	return res;
+
+      if (len != (size-LFS_HEADER_SIZE)) {
+
+	return -1;
+      }
+
+      memcpy(buffer, tmp, LFS_HEADER_SIZE);
+      
+    }
+    else {
+
+      return -1;
+    }
+
+    return res;
+  }
+}
+
+int lfs_cluster_write(int view_id, const char * key, int cluster, char * buffer, int size) {
+
+  emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_write: cluster=%d", cluster);
   
-  return 0;
-});
+  if (!sodium_initialized) {
 
-EM_JS(int, lfs_cluster_bulk_end, (int view_id), {
+    int res = sodium_init();
 
-    return Asyncify.handleSleep(function (wakeUp) {
+    if (res < 0) {
+      return res;
+    }
+    
+    sodium_initialized = 1;
+  }
 
-	if (window.bulk_mode) {
-	  
-	  console.log("lfs_cluster_bulk_end: bulk size="+window.bulk_size);
-
-	  window.bulk_mode = 0;
-
-	  var myInit = {
-	    method: 'POST',
-	    body: window.bulk_array.subarray(0, window.bulk_size)
-	  };
-
-	  const view = window.views[view_id];
-
-	  fetch("/exafs_views/bulk_write.php?view="+view, myInit).then(function (response) {
-
-	      console.log(response);
-
-	      if (response.ok) {
-
-		wakeUp(0);
-	      }
-	      else {
-
-		wakeUp(-1);
-	      }
-
-	      //Module.HEAPU8.slice(buffer, buffer+size), off);
-
-	    }).catch((error) => {
-
-		wakeUp(-1);
-	      
-	      });
-
-	  }
-	else {
-
-	  wakeUp(0);
-	}
-	});
+  struct cluster_header * header = (struct cluster_header *) buffer;
   
-});
+  if (key == NULL) {
+    
+    header->encrypted = 0;
+    
+    return lfs_remote_write(view_id, cluster, buffer, size);
+  }
+  else {
+
+    header->encrypted = 1;
+
+    char subkey[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+
+    int res = crypto_kdf_derive_from_key(subkey, sizeof subkey, cluster, CONTEXT, key);
+
+    emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_write: crypto_kdf_derive_from_key -> res=%d", res);
+      
+    if (res < 0)
+      return res;
+
+    for (int i=0; i < crypto_aead_xchacha20poly1305_ietf_NPUBBYTES; i++) {
+
+      header->nonce[i] = (char) randombytes_random(); // libsodium needs to be initialized first
+    }
+
+    int len;
+
+    res = crypto_aead_xchacha20poly1305_ietf_encrypt(tmp+LFS_HEADER_SIZE, &len, buffer+LFS_HEADER_SIZE, size-LFS_HEADER_SIZE, NULL, 0, NULL, header->nonce, subkey);
+    
+    emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_write: crypto_aead_xchacha20poly1305_ietf_encrypt -> res=%d (len=%d)", res, len);
+
+    if (res < 0)
+      return res;
+
+    if (len != (size-LFS_HEADER_SIZE+crypto_aead_xchacha20poly1305_ietf_ABYTES)) {
+
+      emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_write: len=%d size=%d %d %d", len, size, LFS_HEADER_SIZE, crypto_aead_xchacha20poly1305_ietf_ABYTES);
+      
+      return -1;
+    }
+
+    if (res < 0) {
+      return res;
+    }
+
+    memcpy(tmp, buffer, LFS_HEADER_SIZE);
+    
+    return lfs_remote_write(view_id, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+  }
+}
+
+int lfs_cluster_bulk_start(int view_id) {
+
+  return lfs_remote_bulk_start(view_id);
+}
+
+int lfs_cluster_bulk_end(int view_id) {
+
+  return lfs_remote_bulk_end(view_id);
+}
