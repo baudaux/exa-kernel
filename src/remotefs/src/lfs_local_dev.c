@@ -39,8 +39,6 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 
 	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
 
-	console.log("lfs_local_read: view="+view+", cluster="+cluster+", size="+size);
-
 	    let do_read = (db) => {
 
 	      let store = db.transaction(["clusters"]).objectStore("clusters");
@@ -48,8 +46,6 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 	      let request = store.get(cluster);
 	      
 	      request.onerror = function(event) {
-
-		console.log("lfs_local_read: get cluster -> onerror");
 
 		const buf3 = new Uint8Array(size);
 		buf3.fill(0xFF);
@@ -61,20 +57,12 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 	      
 	      request.onsuccess = function(event) {
 
-		console.log("lfs_local_read: get cluster -> onsuccess");
-
-		console.log(event);
-		console.log(request);
-		console.log(request.result);
-
 		if (request.result) {
 
 		  Module.HEAPU8.set(request.result.data, buffer);
 		}
 		else {
 
-		  console.log("lfs_local_read: get cluster -> fill with 0xff");
-		  
 		  const buf3 = new Uint8Array(size);
 		  buf3.fill(0xFF);
 		
@@ -84,8 +72,6 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 		wakeUp(0);
 	      };
 	    };
-	    
-	    console.log(Module.localfs_dict);
 
 	    if (typeof Module.localfs_dict === 'undefined') {
 
@@ -94,20 +80,14 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 
 	    if (!(view in Module.localfs_dict)) {
 
-	      console.log("lfs_local_read: open indexedDB");
-	      
 	      let request = window.indexedDB.open(view, 1);
 
 	      request.onerror = function(event) {
-
-		console.log("lfs_local_read: open indexedDB -> onerror");
 
 		wakeUp(-1);
 	      };
 
 	      request.onupgradeneeded = function(event) {
-
-		console.log("lfs_local_read: open indexedDB -> onupgradeneeded");
 
 		let db = event.target.result;
 
@@ -119,8 +99,6 @@ EM_JS(int, lfs_local_read, (int view_id, int cluster, void * buffer, int size), 
 	      
 	      request.onsuccess = function(event) {
 
-		console.log("lfs_local_read: open indexedDB -> onsuccess");
-		
 		Module.localfs_dict[view] = event.target.result;
 		
 		do_read(Module.localfs_dict[view]);
@@ -150,8 +128,6 @@ EM_JS(int, lfs_local_write, (int view_id, int cluster, char * buffer, int size),
 
 	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
 
-	    console.log("lfs_local_write: view="+view+", cluster="+cluster+", size="+size);
-
 	    let do_write = (db) => {
 
 	      let store = db.transaction(["clusters"], "readwrite").objectStore("clusters");
@@ -160,17 +136,11 @@ EM_JS(int, lfs_local_write, (int view_id, int cluster, char * buffer, int size),
 	      
 	      request.onerror = function(event) {
 
-		console.log("lfs_local_write: put cluster -> onerror");
-		
 		wakeUp(-1);
 	      };
 	      
 	      request.onsuccess = function(event) {
 
-		console.log("lfs_local_write: put cluster -> onsuccess");
-
-		console.log(event);
-		
 		wakeUp(0);
 		
 	      };
@@ -185,18 +155,12 @@ EM_JS(int, lfs_local_write, (int view_id, int cluster, char * buffer, int size),
 	      
 	      let request = window.indexedDB.open(view, 1);
 
-	      console.log("lfs_local_write: open indexedDB");
-
 	      request.onerror = function(event) {
-
-		console.log("lfs_local_write: open indexedDB -> onerror");
 
 		wakeUp(-1);
 	      };
 
 	      request.onupgradeneeded = function(event) {
-
-		console.log("lfs_local_write: open indexedDB -> onupgradeneeded");
 
 		let db = event.target.result;
 
@@ -208,8 +172,6 @@ EM_JS(int, lfs_local_write, (int view_id, int cluster, char * buffer, int size),
 	      
 	      request.onsuccess = function(event) {
 
-		console.log("lfs_local_write: open indexedDB -> onsuccess");
-		
 		Module.localfs_dict[view] = event.target.result;
 		
 		do_write(Module.localfs_dict[view]);
@@ -232,4 +194,117 @@ EM_JS(int, lfs_local_bulk_start, (int view_id), {
 EM_JS(int, lfs_local_bulk_end, (int view_id), {
 
     // do nothing
+});
+
+EM_JS(int, store_local_salt, (char * view, int view_len, char * salt, int size), {
+    
+    return Asyncify.handleSleep(function (wakeUp) {
+	  
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	const v = UTF8ToString(view, view_len);
+
+	let request = window.indexedDB.open("localfs_salts", 1);
+
+	request.onerror = function(event) {
+
+	  wakeUp(-1);
+	};
+
+	request.onupgradeneeded = function(event) {
+
+	  let db = event.target.result;
+	  
+	  let objectStore = db.createObjectStore("list", { keyPath: "view" });
+	};
+	      
+	request.onsuccess = function(event) {
+
+	  let db = event.target.result;
+		
+	  let store = db.transaction(["list"], "readwrite").objectStore("list");
+	      
+	  let request2 = store.put({view:v, salt: Module.HEAPU8.subarray(salt, salt+size)});
+	      
+	  request2.onerror = function(event) {
+
+	    wakeUp(-1);
+	  };
+	      
+	  request2.onsuccess = function(event) {
+
+	    wakeUp(0);
+		
+	  };
+		
+	};
+      });
+});
+
+EM_JS(int, get_local_salt, (char * view, int view_len, char * salt, int size), {
+    
+    return Asyncify.handleSleep(function (wakeUp) {
+
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	const v = UTF8ToString(view, view_len);
+
+	let request = window.indexedDB.open("localfs_salts", 1);
+
+	request.onerror = function(event) {
+
+	  wakeUp(-1);
+	};
+
+	request.onupgradeneeded = function(event) {
+
+	  let db = event.target.result;
+	  
+	  let objectStore = db.createObjectStore("list", { keyPath: "view" });
+	};
+	      
+	request.onsuccess = function(event) {
+
+	  let db = event.target.result;
+		
+	  let store = db.transaction(["list"]).objectStore("list");
+	      
+	  let request2 = store.get(v);
+	      
+	  request2.onerror = function(event) {
+
+	    wakeUp(-1);
+	  };
+	      
+	  request2.onsuccess = function(event) {
+
+	    if (request2.result) {
+
+	      Module.HEAPU8.set(request2.result.salt, salt);
+	      wakeUp(0);
+	    }
+	    else {
+
+	      wakeUp(-1);
+	    }
+		
+	  };
+	};
+
+      });
+
 });

@@ -637,84 +637,6 @@ static ssize_t remotefs_ctl_read(struct lfs_dev * dev, int fd, void * buf, size_
   return 0;
 }
 
-EM_JS(int, store_salt, (char * view, int view_len, char * salt, int size), {
-    
-      return Asyncify.handleSleep(function (wakeUp) {
-	  
-	    var myInit = {
-	    method: 'POST',
-	    body: Module.HEAPU8.subarray(salt, salt+size)
-	    };
-
-	    const v = UTF8ToString(view, view_len);
-
-	    //console.log("remotefs: store_salt "+v);
-
-	    fetch("/exafs_views/store_salt.php?view="+v, myInit).then(function (response) {
-
-		if (response.ok) {
-
-		  wakeUp(0);
-		}
-		else {
-
-		  wakeUp(-1);
-		}
-
-	      }).catch((error) => {
-
-		  wakeUp(-1);
-	      
-		});
-	});
-});
-
-EM_JS(int, get_salt, (char * view, int view_len, char * salt, int size), {
-    
-      return Asyncify.handleSleep(function (wakeUp) {
-
-	  var myInit = {
-	      method: 'GET',
-	      cache: 'no-store'
-	    };
-
-	    const v = UTF8ToString(view, view_len);
-
-	    //console.log("remotefs: get_salt "+v);
-	    
-	    fetch("/exafs_views/get_salt.php?view="+v, myInit).then(function (response) {
-
-		if (response.ok) {
-	    
-		  response.arrayBuffer().then(buf => {
-
-		      const buf2 = new Uint8Array(buf);
-
-		      if (buf2.length > 0) {
-
-			Module.HEAPU8.set(buf2, salt);
-
-			wakeUp(0);
-		      }
-		      else {
-		      
-			wakeUp(-1);
-		      }
-		    });
-		}
-		else {
-
-		  wakeUp(-1);
-		}
-	      }).catch((error) => {
-
-		  wakeUp(-1);
-	      
-		});
-
-	  });
-
-  });
 
 static int create_master_key(char * view, char * password, char * key) {
 
@@ -747,8 +669,15 @@ static int create_master_key(char * view, char * password, char * key) {
   if (res < 0) {
     return res;
   }
+
+  if (strncmp(view, "__local__", 9) == 0) {
   
-  res = store_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+    res = store_local_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+  }
+  else {
+    
+    res = store_remote_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+  }
   
   return res;
 }
@@ -769,8 +698,17 @@ static int retrieve_master_key(char * view, char * password, char * key) {
     
     sodium_initialized = 1;
   }
+
+  int res = 0;
+
+  if (strncmp(view, "__local__", 9) == 0) {
   
-  int res = get_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+   res = get_local_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+  }
+  else {
+
+    res = get_remote_salt(view, strlen(view), salt, crypto_pwhash_SALTBYTES);
+  }
 
   if (res < 0) {
     return res;

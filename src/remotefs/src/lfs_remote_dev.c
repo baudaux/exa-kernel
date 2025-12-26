@@ -188,3 +188,82 @@ EM_JS(int, lfs_remote_bulk_end, (int view_id), {
 	});
   
 });
+
+EM_JS(int, store_remote_salt, (char * view, int view_len, char * salt, int size), {
+    
+    return Asyncify.handleSleep(function (wakeUp) {
+	  
+	var myInit = {
+	method: 'POST',
+	body: Module.HEAPU8.subarray(salt, salt+size)
+	};
+
+	const v = UTF8ToString(view, view_len);
+
+	//console.log("remotefs: store_salt "+v);
+
+	fetch("/exafs_views/store_salt.php?view="+v, myInit).then(function (response) {
+
+	    if (response.ok) {
+
+	      wakeUp(0);
+	    }
+	    else {
+
+	      wakeUp(-1);
+	    }
+
+	  }).catch((error) => {
+
+	      wakeUp(-1);
+	      
+	    });
+      });
+  });
+
+EM_JS(int, get_remote_salt, (char * view, int view_len, char * salt, int size), {
+    
+    return Asyncify.handleSleep(function (wakeUp) {
+
+	var myInit = {
+	method: 'GET',
+	cache: 'no-store'
+	};
+
+	const v = UTF8ToString(view, view_len);
+
+	//console.log("remotefs: get_salt "+v);
+	    
+	fetch("/exafs_views/get_salt.php?view="+v, myInit).then(function (response) {
+
+	    if (response.ok) {
+	    
+	      response.arrayBuffer().then(buf => {
+
+		  const buf2 = new Uint8Array(buf);
+
+		  if (buf2.length > 0) {
+
+		    Module.HEAPU8.set(buf2, salt);
+
+		    wakeUp(0);
+		  }
+		  else {
+		      
+		    wakeUp(-1);
+		  }
+		});
+	    }
+	    else {
+
+	      wakeUp(-1);
+	    }
+	  }).catch((error) => {
+
+	      wakeUp(-1);
+	      
+	    });
+
+      });
+
+  });

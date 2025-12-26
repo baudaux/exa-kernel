@@ -18,4 +18,7 @@ int lfs_local_write(int view_id, int cluster, char * buffer, int size);
 int lfs_local_bulk_start(int view_id);
 int lfs_local_bulk_end(int view_id);
 
+int store_local_salt(char * view, int view_len, char * salt, int size);
+int get_local_salt(char * view, int view_len, char * salt, int size);
+
 #endif // _LFS_LOCAL_DEV_H

@@ -18,4 +18,7 @@ int lfs_remote_write(int view_id, int cluster, char * buffer, int size);
 int lfs_remote_bulk_start(int view_id);
 int lfs_remote_bulk_end(int view_id);
 
+int store_remote_salt(char * view, int view_len, char * salt, int size);
+int get_remote_salt(char * view, int view_len, char * salt, int size);
+
 #endif // _LFS_REMOTE_DEV_H
