@@ -35,6 +35,9 @@
 #include "lfs.h"
 #include "lfs_block.h"
 
+#include "lfs_remote_dev.h"
+#include "lfs_local_dev.h"
+
 #ifndef DEBUG
 #define DEBUG 0
 #endif
@@ -137,6 +140,22 @@ static struct lfs_config common_lfs_config = {
   .attr_max = 0,
   .metadata_max = 0,
   .inline_max = -1
+};
+
+struct cluster_ops remote_ops = {
+
+  .cls_read = lfs_remote_read,
+  .cls_write = lfs_remote_write,
+  .cls_bulk_start = lfs_remote_bulk_start,
+  .cls_bulk_end = lfs_remote_bulk_end
+};
+
+struct cluster_ops local_ops = {
+
+  .cls_read = lfs_local_read,
+  .cls_write = lfs_local_write,
+  .cls_bulk_start = lfs_local_bulk_start,
+  .cls_bulk_end = lfs_local_bulk_end
 };
 
 int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
@@ -629,7 +648,7 @@ EM_JS(int, store_salt, (char * view, int view_len, char * salt, int size), {
 
 	    const v = UTF8ToString(view, view_len);
 
-	    console.log("remotefs: store_salt "+v);
+	    //console.log("remotefs: store_salt "+v);
 
 	    fetch("/exafs_views/store_salt.php?view="+v, myInit).then(function (response) {
 
@@ -661,7 +680,7 @@ EM_JS(int, get_salt, (char * view, int view_len, char * salt, int size), {
 
 	    const v = UTF8ToString(view, view_len);
 
-	    console.log("remotefs: get_salt "+v);
+	    //console.log("remotefs: get_salt "+v);
 	    
 	    fetch("/exafs_views/get_salt.php?view="+v, myInit).then(function (response) {
 
@@ -802,7 +821,9 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
 
       memcpy(&lfs_config, &common_lfs_config, sizeof(struct lfs_config));
 
-      struct blk_cache * cache = alloc_cache(view, key);
+      struct cluster_ops * ops = (strncmp(view, "__local__", 9) == 0)?&local_ops:&remote_ops;
+
+      struct blk_cache * cache = alloc_cache(view, key, ops);
 	
       lfs_config.context = cache;
       
@@ -877,8 +898,10 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
       }
 
       memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
+
+      struct cluster_ops * ops = (strncmp(view, "__local__", 9) == 0)?&local_ops:&remote_ops;
       
-      struct blk_cache * cache = alloc_cache(view, key);
+      struct blk_cache * cache = alloc_cache(view, key, ops);
       
       devices[minor].lfs_config.context = cache;
 
@@ -911,6 +934,9 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
       else {
 
 	free_cache(cache);
+
+	if (key)
+	  free(key);
 
 	minor--;
       }

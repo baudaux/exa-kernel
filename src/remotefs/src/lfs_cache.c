@@ -30,7 +30,7 @@ int lfs_set_view(const char * view) {
 
   int i = EM_ASM_INT({
 
-      if (typeof window.view_index === 'undefined') {
+      if (typeof window.views === 'undefined') {
 
 	window.views = new Array();
       }
@@ -46,12 +46,13 @@ int lfs_set_view(const char * view) {
   return i;
 }
 
-struct blk_cache * alloc_cache(const char * view, const char * key) {
+struct blk_cache * alloc_cache(const char * view, const char * key, struct cluster_ops * ops) {
 
   struct blk_cache * cache = (struct blk_cache *)malloc(sizeof(struct blk_cache));
 
   cache->view_index = lfs_set_view(view);
   cache->key = key;
+  cache->ops = ops;
   
   for (int i = 0; i < NB_CLUSTERS; ++i) {
 
@@ -105,7 +106,7 @@ int lfs_cache_block_read(struct blk_cache * cache, int block, int off, void * bu
 
     cache->cluster_cache[cls].data = (char *)malloc(CLUSTER_SIZE);
 
-    int res = lfs_cluster_read(cache->view_index, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
+    int res = lfs_cluster_read(cache, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
 
     if (res < 0) {
       return res;
@@ -131,7 +132,7 @@ int lfs_cache_block_write(struct blk_cache * cache, int block, int off, void * b
 
     cache->cluster_cache[cls].data = (char *)malloc(CLUSTER_SIZE);
     
-    int res = lfs_cluster_read(cache->view_index, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
+    int res = lfs_cluster_read(cache, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
     
     if (res < 0) {
       return res;
@@ -157,7 +158,7 @@ int lfs_cache_block_erase(struct blk_cache * cache, int block) {
 
     cache->cluster_cache[cls].data = (char *)malloc(CLUSTER_SIZE);
     
-    int res = lfs_cluster_read(cache->view_index, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
+    int res = lfs_cluster_read(cache, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
 
     if (res < 0) {
       return res;
@@ -177,7 +178,7 @@ int lfs_cache_block_sync(struct blk_cache * cache) {
 
   emscripten_log(EM_LOG_CONSOLE,"lfs_cache_block_sync (dirty index = %d)", cache->dirty_index);
 
-  lfs_cluster_bulk_start(cache->view_index);
+  lfs_cluster_bulk_start(cache);
 
   for (int i=0; i < cache->dirty_index; i++) {
 
@@ -185,7 +186,7 @@ int lfs_cache_block_sync(struct blk_cache * cache) {
 
     if (cache->cluster_cache[cls].dirty) {
 
-      int res = lfs_cluster_write(cache->view_index, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
+      int res = lfs_cluster_write(cache, cache->key, cls, cache->cluster_cache[cls].data, CLUSTER_SIZE);
 
       if (res < 0) {
 	return res;
@@ -195,8 +196,8 @@ int lfs_cache_block_sync(struct blk_cache * cache) {
     }
   }
   
-  lfs_cluster_bulk_end(cache->view_index);
-
+  lfs_cluster_bulk_end(cache);
+  
   cache->dirty_index = 0;
 
   emscripten_log(EM_LOG_CONSOLE,"lfs_cache_block_sync: done");

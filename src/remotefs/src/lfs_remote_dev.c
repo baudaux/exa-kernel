@@ -14,12 +14,21 @@
 
 #include "lfs_block.h"
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
+#else
+#define emscripten_log(...)
+#endif
+
 
 EM_JS(int, lfs_remote_read, (int view_id, int cluster, void * buffer, int size), {
   
 	return Asyncify.handleSleep(function (wakeUp) {
 
-	    console.log("lfs_remote_read: cluster="+cluster+" size="+size);
+	    //console.log("lfs_remote_read: cluster="+cluster+" size="+size);
 
 	    var myInit = {
 	      method: 'GET',
@@ -72,7 +81,7 @@ EM_JS(int, lfs_remote_write, (int view_id, int cluster, char * buffer, int size)
     
       return Asyncify.handleSleep(function (wakeUp) {
 
-	  console.log("lfs_remote_write: cluster="+cluster+" size="+size);
+	  //console.log("lfs_remote_write: cluster="+cluster+" size="+size);
 
 	  if (window.bulk_mode) {
 
@@ -139,7 +148,7 @@ EM_JS(int, lfs_remote_bulk_end, (int view_id), {
 
 	if (window.bulk_mode) {
 	  
-	  console.log("lfs_remote_bulk_end: bulk size="+window.bulk_size);
+	  //console.log("lfs_remote_bulk_end: bulk size="+window.bulk_size);
 
 	  window.bulk_mode = 0;
 

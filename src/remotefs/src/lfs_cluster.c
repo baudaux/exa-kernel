@@ -21,6 +21,15 @@
 #include <sodium/core.h>
 #include <sodium/randombytes.h>
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#if DEBUG
+#else
+#define emscripten_log(...)
+#endif
+
 
 #define CONTEXT "EXAFS"
 
@@ -28,7 +37,7 @@ int sodium_initialized = 0;
 
 char tmp[CLUSTER_SIZE+crypto_aead_xchacha20poly1305_ietf_ABYTES];
 
-int lfs_cluster_read(int view_id, const char * key, int cluster, char * buffer, int size) {
+int lfs_cluster_read(struct blk_cache * cache, const char * key, int cluster, char * buffer, int size) {
 
   emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_read: cluster=%d", cluster);
 
@@ -46,11 +55,11 @@ int lfs_cluster_read(int view_id, const char * key, int cluster, char * buffer, 
 
   if (key == NULL) {
     
-    return lfs_remote_read(view_id, cluster, buffer, size);
+    return cache->ops->cls_read(cache->view_index, cluster, buffer, size);
   }
   else {
 
-    int res = lfs_remote_read(view_id, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    int res = cache->ops->cls_read(cache->view_index, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
 
     if (res < 0)
       return res;
@@ -98,7 +107,7 @@ int lfs_cluster_read(int view_id, const char * key, int cluster, char * buffer, 
   }
 }
 
-int lfs_cluster_write(int view_id, const char * key, int cluster, char * buffer, int size) {
+int lfs_cluster_write(struct blk_cache * cache, const char * key, int cluster, char * buffer, int size) {
 
   emscripten_log(EM_LOG_CONSOLE,"lfs_cluster_write: cluster=%d", cluster);
   
@@ -119,7 +128,7 @@ int lfs_cluster_write(int view_id, const char * key, int cluster, char * buffer,
     
     header->encrypted = 0;
     
-    return lfs_remote_write(view_id, cluster, buffer, size);
+    return cache->ops->cls_write(cache->view_index, cluster, buffer, size);
   }
   else {
 
@@ -161,16 +170,16 @@ int lfs_cluster_write(int view_id, const char * key, int cluster, char * buffer,
 
     memcpy(tmp, buffer, LFS_HEADER_SIZE);
     
-    return lfs_remote_write(view_id, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+    return cache->ops->cls_write(cache->view_index, cluster, tmp, size+crypto_aead_xchacha20poly1305_ietf_ABYTES);
   }
 }
 
-int lfs_cluster_bulk_start(int view_id) {
+int lfs_cluster_bulk_start(struct blk_cache * cache) {
 
-  return lfs_remote_bulk_start(view_id);
+  return cache->ops->cls_bulk_start(cache->view_index);
 }
 
-int lfs_cluster_bulk_end(int view_id) {
+int lfs_cluster_bulk_end(struct blk_cache * cache) {
 
-  return lfs_remote_bulk_end(view_id);
+  return cache->ops->cls_bulk_end(cache->view_index);
 }

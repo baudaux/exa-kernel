@@ -18,6 +18,14 @@ struct cache_entry {
   int dirty;
 };
 
+struct cluster_ops {
+
+  int (*cls_read)(int view_id, int cluster, void * buffer, int size);
+  int (*cls_write)(int view_id, int cluster, char * buffer, int size);
+  int (*cls_bulk_start)(int view_id);
+  int (*cls_bulk_end)(int view_id);
+};
+
 struct blk_cache {
 
   struct cache_entry cluster_cache[NB_CLUSTERS];
@@ -27,9 +35,11 @@ struct blk_cache {
 
   int view_index;
   char * key;
+
+  struct cluster_ops * ops;
 };
 
-struct blk_cache * alloc_cache(const char * view, const char * key);
+struct blk_cache * alloc_cache(const char * view, const char * key, struct cluster_ops * ops);
 void free_cache(struct blk_cache * cache);
 
 int lfs_cache_block_read(struct blk_cache * cache, int block, int off, void * buffer, int size);

@@ -10,10 +10,10 @@ struct cluster_header {
   uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
 };
 
-int lfs_cluster_read(int view_id, const char * key, int cls, char * buffer, int size);
-int lfs_cluster_write(int view_id, const char * key, int cls, char * buffer, int size);
+int lfs_cluster_read(struct blk_cache * cache, const char * key, int cls, char * buffer, int size);
+int lfs_cluster_write(struct blk_cache * cache, const char * key, int cls, char * buffer, int size);
 
-int lfs_cluster_bulk_start(int view_id);
-int lfs_cluster_bulk_end(int view_id);
+int lfs_cluster_bulk_start(struct blk_cache * cache);
+int lfs_cluster_bulk_end(struct blk_cache * cache);
 
 #endif
