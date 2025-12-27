@@ -47,12 +47,12 @@
 #define emscripten_log(...)
 #endif
 
-#define REMOTEFS_VERSION "remotefs v0.1.0"
+#define LFS_VERSION "lfs v0.1.0"
 
-#define REMOTEFS_PATH "/var/remotefs.peer"
+#define LFS_PATH "/var/lfs.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
-#define NB_REMOTEFS_MAX  16
+#define NB_LFS_MAX  16
 #define NB_FD_MAX     128
 
 struct lfs_dev;
@@ -106,7 +106,7 @@ static unsigned short minor = 0;
 
 static int sock;
 
-static struct lfs_dev devices[NB_REMOTEFS_MAX];
+static struct lfs_dev devices[NB_LFS_MAX];
 
 static int last_fd = 0;
 
@@ -593,9 +593,27 @@ static struct device_ops localfs_ops = {
   .mkdir = localfs_mkdir,
 };
 
-int register_device(unsigned short minor, struct device_ops * dev_ops) {
+int register_device(unsigned short min, struct device_ops * dev_ops) {
 
-  devices[minor].ops = dev_ops;
+  char buf2[1256];
+  struct message * msg = (struct message *)&buf2[0];
+
+  devices[min].ops = dev_ops;
+  
+  msg->msg_id = REGISTER_DEVICE;
+  msg->_u.dev_msg.dev_type = FS_DEV;
+  msg->_u.dev_msg.major = major;
+  msg->_u.dev_msg.minor = min;
+
+  memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
+  sprintf((char *)&msg->_u.dev_msg.dev_name[0], "lfs%d", msg->_u.dev_msg.minor);
+
+  struct sockaddr_un resmgr_addr;
+  memset(&resmgr_addr, 0, sizeof(resmgr_addr));
+  resmgr_addr.sun_family = AF_UNIX;
+  strcpy(resmgr_addr.sun_path, RESMGR_PATH);
+  
+  sendto(sock, buf2, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
   return 0;
 }
@@ -619,7 +637,7 @@ static int remotefs_ctl_open(struct lfs_dev * dev, const char * pathname, int fl
 
   emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_open: %s", pathname);
 
-  if (strcmp(pathname, "/dev/remotefs_ctl") == 0) {
+  if (strcmp(pathname, "/dev/lfs_ctl") == 0) {
 
     int fd = add_fd_entry(pid, minor, pathname, flags, mode, 0, 0, NULL);
 
@@ -824,9 +842,7 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
       view++;
 
       minor++;
-	
-      register_device(minor, &localfs_ops);
-
+      
       char * key = NULL;
 
       if (strlen(password) > 0) {
@@ -849,23 +865,7 @@ static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf
 
       if (res == 0) {
 
-	char buf2[1256];
-	struct message * msg = (struct message *)&buf2[0];
-      
-	msg->msg_id = REGISTER_DEVICE;
-	msg->_u.dev_msg.dev_type = FS_DEV;
-	msg->_u.dev_msg.major = major;
-	msg->_u.dev_msg.minor = minor;
-
-	memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-	sprintf((char *)&msg->_u.dev_msg.dev_name[0], "remotefs%d", msg->_u.dev_msg.minor);
-
-	struct sockaddr_un resmgr_addr;
-	memset(&resmgr_addr, 0, sizeof(resmgr_addr));
-	resmgr_addr.sun_family = AF_UNIX;
-	strcpy(resmgr_addr.sun_path, RESMGR_PATH);
-  
-	sendto(sock, buf2, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+	register_device(minor, &localfs_ops);
 
 	return count;
       }
@@ -915,6 +915,53 @@ static struct device_ops remotefs_ctl_ops = {
   .mkdir = NULL,
 };
 
+int register_home() {
+
+  minor++;
+  
+  memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
+
+  struct cluster_ops * ops = &local_ops;
+      
+  struct blk_cache * cache = alloc_cache("__local__home", NULL, ops);
+      
+  devices[minor].lfs_config.context = cache;
+
+  int res = lfs_mount(&(devices[minor].lfs), &(devices[minor].lfs_config));
+  
+  emscripten_log(EM_LOG_CONSOLE, "register_home: lfs_mount: res=%d", res);
+
+  if (res < 0) {
+
+    res = lfs_format(&(devices[minor].lfs), &(devices[minor].lfs_config));
+
+    emscripten_log(EM_LOG_CONSOLE, "register_home: lfs_format: res=%d", res);
+
+    if (res == 0) {
+
+      res = lfs_mount(&(devices[minor].lfs), &(devices[minor].lfs_config));
+	  
+      emscripten_log(EM_LOG_CONSOLE, "register_home: second lfs_mount: res=%d", res);
+
+      if (res == 0) {
+
+	res = lfs_mkdir(&(devices[minor].lfs), "/home");
+      }
+    }
+    
+    if (res < 0) {
+      
+      minor--;
+
+      return -1;
+    }
+  }
+
+  register_device(minor, &localfs_ops);
+
+  return 0;
+}
+
 int main() {
   
   struct sockaddr_un local_addr, resmgr_addr, remote_addr;
@@ -922,7 +969,7 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  emscripten_log(EM_LOG_CONSOLE, "Starting " REMOTEFS_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " LFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -933,7 +980,7 @@ int main() {
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
   
   if (fd >= 0)
-    write(fd, "\n\r[" REMOTEFS_VERSION "]", strlen("\n\r[" REMOTEFS_VERSION "]")+1);
+    write(fd, "\n\r[" LFS_VERSION "]", strlen("\n\r[" LFS_VERSION "]")+1);
 
   close(fd);
   
@@ -943,10 +990,10 @@ int main() {
     return -1;
   }
 
-  /* Bind server socket to REMOTEFS_PATH */
+  /* Bind server socket to LFS_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
   local_addr.sun_family = AF_UNIX;
-  strcpy(local_addr.sun_path, REMOTEFS_PATH);
+  strcpy(local_addr.sun_path, LFS_PATH);
   
   if (bind(sock, (struct sockaddr *) &local_addr, sizeof(struct sockaddr_un))) {
     
@@ -983,15 +1030,13 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
-      minor += 1;
-	
-      register_device(minor, &remotefs_ctl_ops);
+      devices[minor].ops = &remotefs_ctl_ops;
       
       msg->msg_id = REGISTER_DEVICE;
       msg->_u.dev_msg.minor = minor;
 
       memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "remotefs_ctl");
+      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "lfs_ctl");
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
     }
@@ -1002,11 +1047,20 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
-      if (msg->_u.dev_msg.minor > 1) {
+      if (msg->_u.dev_msg.minor == 0) { // lfs_ctl is registered
+
+	register_home();
+      }
+      else if (msg->_u.dev_msg.minor > 0) {
 
 	char mnt_path[256];
 
-	sprintf(mnt_path, "/mnt/%s", current_fs);
+	if (msg->_u.dev_msg.minor == 1) {
+	  strcpy(mnt_path, "/home");
+	}
+	else {
+	  sprintf(mnt_path, "/mnt/%s", current_fs);
+	}
 
 	mkdirat(AT_FDCWD, mnt_path, 0777);
 

@@ -254,6 +254,16 @@ int main() {
       }
       else if (strcmp(msg->_u.dev_msg.dev_name, "pipe") == 0) {
 
+	memset(buf, 0, 1256);
+	msg->msg_id = WRITE;
+	msg->_u.io_msg.fd = -1; // minor == 1
+
+	sprintf((char *)msg->_u.io_msg.buf,"\r\nstart sysvinit");
+
+	msg->_u.io_msg.len = strlen((char *)(msg->_u.io_msg.buf))+1;
+
+	sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
+
 	create_init_process();
       }
       
@@ -342,16 +352,6 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE, "Mount path: %s", pathname);
 
 	if (strcmp((const char *)&(pathname[0]),"/media/localhost") == 0) {
-
-	  memset(buf, 0, 1256);
-	  msg->msg_id = WRITE;
-	  msg->_u.io_msg.fd = -1; // minor == 1
-
-	  sprintf((char *)msg->_u.io_msg.buf,"\r\nstart sysvinit");
-
-	  msg->_u.io_msg.len = strlen((char *)(msg->_u.io_msg.buf))+1;
-
-	  sendto(sock, buf, 1256, 0, (struct sockaddr *) &tty_addr, sizeof(tty_addr));
 
 	  create_pipe_process();
 
@@ -781,7 +781,7 @@ int main() {
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 =(char *)malloc(msg->_u.io_msg.len);
 
@@ -789,7 +789,7 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	emscripten_log(EM_LOG_CONSOLE, "localfs: WRITE %d read", bytes_rec2);
+	emscripten_log(EM_LOG_CONSOLE, "WRITE %d read", bytes_rec2);
       }
 
       msg->msg_id |= 0x80;
