@@ -1,7 +1,7 @@
 DEBUG ?= 0
 EMCC ?= emcc
 
-SUBDIRS = av fb ip localfs netfs pipe resmgr tty remotefs
+SUBDIRS = av fb ip lfs netfs exafs pipe resmgr tty
 
 SUBDIRS_CLEAN = $(foreach dir,$(SUBDIRS),$(dir)-clean)
 

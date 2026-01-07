@@ -26,17 +26,11 @@
 
 #include <emscripten.h>
 
-#include <sodium/core.h>
-#include <sodium/randombytes.h>
-#include <sodium/crypto_pwhash.h>
-
 #include "msg.h"
 
-#include "lfs.h"
-#include "lfs_block.h"
+#include "exafs.h"
 
-#include "lfs_remote_dev.h"
-#include "lfs_local_dev.h"
+#include "exafs_local_dev.h"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -47,38 +41,37 @@
 #define emscripten_log(...)
 #endif
 
-#define LFS_VERSION "lfs v0.1.0"
+#define EXAFS_VERSION "exafs v0.1.0"
 
-#define LFS_PATH "/var/lfs.peer"
+#define EXAFS_PATH "/var/exafs.peer"
 #define RESMGR_PATH "/var/resmgr.peer"
 
-#define NB_LFS_MAX  16
+#define NB_EXAFS_MAX  16
 #define NB_FD_MAX     128
 
-struct lfs_dev;
+struct exafs_dev;
 
 struct device_ops {
 
-  int (*open)(struct lfs_dev * dev, const char *pathname, int flags, mode_t mode, pid_t pid, unsigned short minor);
-  ssize_t (*read)(struct lfs_dev * dev, int fd, void * buf, size_t count);
-  ssize_t (*write)(struct lfs_dev * dev, int fildes, const void * buf, size_t nbyte);
-  int (*ioctl)(struct lfs_dev * dev, int fildes, int request, ... /* arg */);
-  int (*close)(struct lfs_dev * dev, int fd);
-  int (*stat)(struct lfs_dev * dev, const char * pathname, struct stat * stat);
-  ssize_t (*getdents)(struct lfs_dev * dev, int fd, char * buf, ssize_t count);
-  int (*seek)(struct lfs_dev * dev,int fd, int offset, int whence);
-  int (*faccess)(struct lfs_dev * dev, const char * pathname, int amode, int flags);
-  int (*unlink)(struct lfs_dev * dev, const char * path, int flags);
-  int (*rename)(struct lfs_dev * dev, const char * oldpath, const char * newpath);
-  int (*ftruncate)(struct lfs_dev * dev, int fd, int length);
-  int (*mkdir)(struct lfs_dev * dev, const char * path, int mode);
+  int (*open)(struct exafs_dev * dev, const char *pathname, int flags, mode_t mode, pid_t pid, unsigned short minor);
+  ssize_t (*read)(struct exafs_dev * dev, int fd, void * buf, size_t count);
+  ssize_t (*write)(struct exafs_dev * dev, int fildes, const void * buf, size_t nbyte);
+  int (*ioctl)(struct exafs_dev * dev, int fildes, int request, ... /* arg */);
+  int (*close)(struct exafs_dev * dev, int fd);
+  int (*stat)(struct exafs_dev * dev, const char * pathname, struct stat * stat);
+  ssize_t (*getdents)(struct exafs_dev * dev, int fd, char * buf, ssize_t count);
+  int (*seek)(struct exafs_dev * dev,int fd, int offset, int whence);
+  int (*faccess)(struct exafs_dev * dev, const char * pathname, int amode, int flags);
+  int (*unlink)(struct exafs_dev * dev, const char * path, int flags);
+  int (*rename)(struct exafs_dev * dev, const char * oldpath, const char * newpath);
+  int (*ftruncate)(struct exafs_dev * dev, int fd, int length);
+  int (*mkdir)(struct exafs_dev * dev, const char * path, int mode);
 };
 
-struct lfs_dev {
-
-  lfs_t lfs;
-  struct lfs_config lfs_config;
+struct exafs_dev {
   
+  struct exafs_ctx exafs_ctx;
+  struct exafs_cfg exafs_config;
   struct device_ops * ops;
 };
 
@@ -95,8 +88,14 @@ struct fd_entry {
   unsigned int offset;
   char * data;
   unsigned int data_size;
-  void * lfs_handle;
+  void * exafs_handle;
   int unlink_pending;
+};
+
+static struct exafs_cfg local_exafs_config = {
+
+  .read = &exafs_local_read,
+  .write = &exafs_local_write
 };
 
 static char current_fs[128];
@@ -106,63 +105,15 @@ static unsigned short minor = 0;
 
 static int sock;
 
-static struct lfs_dev devices[NB_LFS_MAX];
+static struct exafs_dev devices[NB_EXAFS_MAX];
 
 static int last_fd = 0;
 
 static struct fd_entry fds[NB_FD_MAX];
 
-static struct lfs_config common_lfs_config = {
+int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * exafs_handle) {
 
-  .read = &lfs_blk_read,
-  .prog = &lfs_blk_prog,
-  .erase = &lfs_blk_erase,
-  .sync = lfs_blk_sync,
-
-#ifdef LFS_THREADSAFE
-  .lock = NULL,
-  .unlock = NULL,
-#endif
-
-  .read_size = LFS_BLK_SIZE,
-  .prog_size = LFS_BLK_SIZE,
-  .block_size = LFS_BLK_SIZE,
-  .block_count = LFS_BLK_NB,
-  .block_cycles = -1,
-  .cache_size = LFS_CACHE_SIZE,
-  .lookahead_size = /*LFS_BLK_NB/8*/8,
-  //TOTEST with 2.5.1
-  .compact_thresh = -1,
-  .read_buffer = NULL,
-  .prog_buffer = NULL,
-  .lookahead_buffer = NULL,
-  .name_max = 0,
-  .file_max = 0,
-  .attr_max = 0,
-  .metadata_max = 0,
-  //TOTEST with 2.5.1
-  .inline_max = -1
-};
-
-struct cluster_ops remote_ops = {
-
-  .cls_read = lfs_remote_read,
-  .cls_write = lfs_remote_write,
-  .cls_bulk_start = lfs_remote_bulk_start,
-  .cls_bulk_end = lfs_remote_bulk_end
-};
-
-struct cluster_ops local_ops = {
-
-  .cls_read = lfs_local_read,
-  .cls_write = lfs_local_write,
-  .cls_bulk_start = lfs_local_bulk_start,
-  .cls_bulk_end = lfs_local_bulk_end
-};
-
-int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * lfs_handle) {
-
-  emscripten_log(EM_LOG_CONSOLE, "localfs:add_fd_entry -> %d %d %s", pid, minor, pathname);
+  emscripten_log(EM_LOG_CONSOLE, "exafs:add_fd_entry -> %d %d %s", pid, minor, pathname);
   
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
@@ -179,10 +130,10 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].type = type;
       fds[i].size = size;
       fds[i].offset = 0;
-      fds[i].lfs_handle = lfs_handle;
+      fds[i].exafs_handle = exafs_handle;
       fds[i].unlink_pending = 0;
 
-      emscripten_log(EM_LOG_CONSOLE, "<-- localfs:add_fd_entry : remote_fd=%d", last_fd);
+      emscripten_log(EM_LOG_CONSOLE, "<-- exafs:add_fd_entry : remote_fd=%d", last_fd);
 
       return last_fd;
     }
@@ -216,9 +167,9 @@ int find_fd_entry(int fd) {
   return -1;
 }
 
-static int localfs_errno(int lfs_errno) {
+static int exafs_errno(int _exafs_errno) {
 
-  switch(lfs_errno) {
+  /*switch(lfs_errno) {
     
   case LFS_ERR_OK:
     return 0;
@@ -252,10 +203,12 @@ static int localfs_errno(int lfs_errno) {
     return ENAMETOOLONG;
   default:
     return EFAULT;
-  }
+    }*/
+
+  return _exafs_errno;
 }
 
-static ssize_t localfs_read(struct lfs_dev * dev, int fd, void * buf, size_t count) {
+static ssize_t exafs_read(struct exafs_dev * dev, int fd, void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -267,16 +220,16 @@ static ssize_t localfs_read(struct lfs_dev * dev, int fd, void * buf, size_t cou
     return -EACCES;
   }
   
-  ssize_t ret = lfs_file_read(&(dev->lfs), fds[i].lfs_handle, buf, count);
+  ssize_t ret = -1; //lfs_file_read(&(dev->lfs), fds[i].lfs_handle, buf, count);
 
   if (ret < 0) {
-    ret = -localfs_errno(ret); // Negative value if error
+    ret = -exafs_errno(ret); // Negative value if error
   }
   
   return ret;
 }
 
-static ssize_t localfs_write(struct lfs_dev * dev, int fd, const void * buf, size_t count) {
+static ssize_t exafs_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -288,20 +241,20 @@ static ssize_t localfs_write(struct lfs_dev * dev, int fd, const void * buf, siz
     return -EACCES;
   }
 
-  ssize_t ret = lfs_file_write(&(dev->lfs), fds[i].lfs_handle, buf, count);
+  ssize_t ret = -1; //lfs_file_write(&(dev->lfs), fds[i].lfs_handle, buf, count);
   
   if (ret < 0)
-    ret = -localfs_errno(ret); // Negative value if error
+    ret = -exafs_errno(ret); // Negative value if error
 
   return ret;
 }
 
-static int localfs_ioctl(struct lfs_dev * dev, int fildes, int request, ... /* arg */) {
+static int exafs_ioctl(struct exafs_dev * dev, int fildes, int request, ... /* arg */) {
 
-  return EINVAL;
+  return -EINVAL;
 }
 
-static int localfs_unlink(struct lfs_dev * dev, const char * path, int flags) {
+static int exafs_unlink(struct exafs_dev * dev, const char * path, int flags) {
 
   int unlink_pending_set = 0;
   
@@ -315,12 +268,12 @@ static int localfs_unlink(struct lfs_dev * dev, const char * path, int flags) {
   }
 
   if (unlink_pending_set)
-    return EBUSY;
+    return -EBUSY;
   
-  return localfs_errno(lfs_remove(&(dev->lfs), path));
+  return -1; //exafs_errno(lfs_remove(&(dev->lfs), path));
 }
 
-static int localfs_close(struct lfs_dev * dev, int fd) {
+static int exafs_close(struct exafs_dev * dev, int fd) {
 
   int i = find_fd_entry(fd);
 
@@ -329,35 +282,35 @@ static int localfs_close(struct lfs_dev * dev, int fd) {
 
   int res;
 
-  if (fds[i].type & S_IFDIR)
+  /*if (fds[i].type & S_IFDIR)
     res = lfs_dir_close(&(dev->lfs), fds[i].lfs_handle);
   else
-    res = lfs_file_close(&(dev->lfs), fds[i].lfs_handle);
+  res = lfs_file_close(&(dev->lfs), fds[i].lfs_handle);*/
 
   if (fds[i].unlink_pending) {
 
     fds[i].fd = -1; // not to take this entry during unlink
-    localfs_unlink(dev, fds[i].pathname, 0);
+    exafs_unlink(dev, fds[i].pathname, 0);
     fds[i].fd = fd;
   }
   
-  if (res == LFS_ERR_OK)
+  if (res == 0)
     del_fd_entry(i);
   
-  return localfs_errno(res);
+  return exafs_errno(res);
 }
 
-static int localfs_stat(struct lfs_dev * dev, const char * pathname, struct stat * stat) {
+static int exafs_stat(struct exafs_dev * dev, const char * pathname, struct stat * stat) {
 
-  emscripten_log(EM_LOG_CONSOLE,"localfs_stat: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"exafs_stat: %s", pathname);
   
-  struct lfs_info info;
+  //struct lfs_info info;
 
-  int res = lfs_stat(&(dev->lfs), pathname, &info);
+  int res = -1; //lfs_stat(&(dev->lfs), pathname, &info);
 
-  if (res == LFS_ERR_OK) {
+  /*if (res == 0) {
 
-    emscripten_log(EM_LOG_CONSOLE,"localfs_stat -> %d %d %s", info.type, info.size, info.name);
+    emscripten_log(EM_LOG_CONSOLE,"exafs_stat -> %d %d %s", info.type, info.size, info.name);
   }
 
   if ((res == LFS_ERR_OK) && stat) {
@@ -378,7 +331,7 @@ static int localfs_stat(struct lfs_dev * dev, const char * pathname, struct stat
       stat->st_mode = S_IFREG;
       stat->st_size = 0;
       stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-    }
+      }
 
     int i = 0;
     
@@ -386,21 +339,21 @@ static int localfs_stat(struct lfs_dev * dev, const char * pathname, struct stat
       i += *c;
 
     stat->st_ino = i;
-  }
+    }*/
 
-  emscripten_log(EM_LOG_CONSOLE,"<-- localfs_stat: %d (mode=%d)", -res, stat->st_mode);
+  emscripten_log(EM_LOG_CONSOLE,"<-- exafs_stat: %d (mode=%d)", -res, stat->st_mode);
   
-  return localfs_errno(res);
+  return exafs_errno(res);
 }
 
-static int localfs_open(struct lfs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
+static int exafs_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  emscripten_log(EM_LOG_CONSOLE,"localfs_open: %d %d %s", flags, mode, pathname);
+  emscripten_log(EM_LOG_CONSOLE,"exafs_open: %d %d %s", flags, mode, pathname);
 
   int _errno;
   struct stat stat;
 
-  _errno = localfs_stat(dev, pathname, &stat);
+  _errno = -1; //localfs_stat(dev, pathname, &stat);
 
   if ( (_errno == 0) || (flags & O_CREAT) ) {
 
@@ -411,6 +364,8 @@ static int localfs_open(struct lfs_dev * dev, const char * pathname, int flags, 
 
       stat.st_mode = S_IFREG; // Create a regular file if it does not exist
     }
+
+    /*
 
     if ((flags & 3) == 0)
       lfs_flags |= LFS_O_RDONLY;
@@ -427,16 +382,18 @@ static int localfs_open(struct lfs_dev * dev, const char * pathname, int flags, 
     if (flags & O_APPEND)
       lfs_flags |= LFS_O_APPEND;
 
+    */
+
     if (stat.st_mode & S_IFREG) {
 
       if (flags & O_DIRECTORY)   // Error pathname is not a directory
 	return -ENOTDIR;
 
-      emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_file: %x %x", flags, lfs_flags);
+      emscripten_log(EM_LOG_CONSOLE,"exafs_open -> lfs_open_file: %x %x", flags, lfs_flags);
 
-      lfs_handle = malloc(sizeof(lfs_file_t));
+      lfs_handle = NULL; //malloc(sizeof(lfs_file_t));
       
-      _errno = localfs_errno(lfs_file_open(&(dev->lfs), (lfs_file_t *)lfs_handle, pathname, lfs_flags));
+      _errno = -1; //exafs_errno(lfs_file_open(&(dev->lfs), (lfs_file_t *)lfs_handle, pathname, lfs_flags));
     }
     else if (stat.st_mode & S_IFDIR) {
 
@@ -446,11 +403,11 @@ static int localfs_open(struct lfs_dev * dev, const char * pathname, int flags, 
       }
       else {*/
 
-	emscripten_log(EM_LOG_CONSOLE,"localfs_open -> lfs_open_dir");
+	emscripten_log(EM_LOG_CONSOLE,"exafs_open -> exafs_open_dir");
 
-	lfs_handle = malloc(sizeof(lfs_dir_t));
+	lfs_handle = NULL; // malloc(sizeof(lfs_dir_t));
 
-	_errno = localfs_errno(lfs_dir_open(&(dev->lfs), lfs_handle, pathname));
+	_errno = -1; //localfs_errno(lfs_dir_open(&(dev->lfs), lfs_handle, pathname));
 	/*}*/
     }
 
@@ -470,7 +427,7 @@ static int localfs_open(struct lfs_dev * dev, const char * pathname, int flags, 
     }
   }
 
-  emscripten_log(EM_LOG_CONSOLE,"<-- localfs_open : errno=%d", _errno);
+  emscripten_log(EM_LOG_CONSOLE,"<-- exafs_open : errno=%d", _errno);
 
   return -_errno; // Negative value if error
   
@@ -484,7 +441,7 @@ struct __dirent {
     char d_name[1];
   };
 
-static ssize_t localfs_getdents(struct lfs_dev * dev, int fd, char * buf, ssize_t count) {
+static ssize_t exafs_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -494,11 +451,12 @@ static ssize_t localfs_getdents(struct lfs_dev * dev, int fd, char * buf, ssize_
   int res = 1;
   int len = 0;
 
+  /*
   struct lfs_info info;
 
   while (res > 0) {
     
-    res = lfs_dir_read(&(dev->lfs), fds[i].lfs_handle, &info);
+    res = -1; //lfs_dir_read(&(dev->lfs), fds[i].lfs_handle, &info);
 
     if (res > 0) {
     
@@ -525,74 +483,74 @@ static ssize_t localfs_getdents(struct lfs_dev * dev, int fd, char * buf, ssize_
 
 	// Unread
 
-	lfs_soff_t off = lfs_dir_tell(&(dev->lfs), fds[i].lfs_handle);
-	lfs_dir_seek(&(dev->lfs), fds[i].lfs_handle, off-1);
+	lfs_soff_t off = -1; //lfs_dir_tell(&(dev->lfs), fds[i].lfs_handle);
+	//lfs_dir_seek(&(dev->lfs), fds[i].lfs_handle, off-1);
 	
 	res = 0;
       }
     }
-  }
+    }*/
   
   return len;
 }
 
-static int localfs_seek(struct lfs_dev * dev, int fd, int offset, int whence) {
+static int exafs_seek(struct exafs_dev * dev, int fd, int offset, int whence) {
 
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return EBADF;
+    return -EBADF;
 
-  return lfs_file_seek(&(dev->lfs), fds[i].lfs_handle, offset, whence);
+  return -1; //lfs_file_seek(&(dev->lfs), fds[i].lfs_handle, offset, whence);
 }
 
-static int localfs_faccess(struct lfs_dev * dev, const char * pathname, int amode, int flags) {
+static int exafs_faccess(struct exafs_dev * dev, const char * pathname, int amode, int flags) {
 
   struct stat stat;
   
-  return localfs_stat(dev, pathname, &stat);
+  return exafs_stat(dev, pathname, &stat);
 }
 
-static int localfs_rename(struct lfs_dev * dev, const char * oldpath, const char * newpath) {
+static int exafs_rename(struct exafs_dev * dev, const char * oldpath, const char * newpath) {
 
-  return localfs_errno(lfs_rename(&(dev->lfs), oldpath, newpath));
+  return -1; //localfs_errno(lfs_rename(&(dev->lfs), oldpath, newpath));
 }
 
-static int localfs_ftruncate(struct lfs_dev * dev, int fd, int length) {
+static int exafs_ftruncate(struct exafs_dev * dev, int fd, int length) {
 
   int i = find_fd_entry(fd);
 
   if (i < 0)
-    return EBADF;
+    return -EBADF;
 
-  return localfs_errno(lfs_file_truncate(&(dev->lfs), fds[i].lfs_handle, length));
+  return -1; //localfs_errno(lfs_file_truncate(&(dev->lfs), fds[i].lfs_handle, length));
 }
 
-static int localfs_mkdir(struct lfs_dev * dev, const char * path, int mode) {
+static int exafs_mkdir(struct exafs_dev * dev, const char * path, int mode) {
 
-  return localfs_errno(lfs_mkdir(&(dev->lfs), path));
+  return -1; //localfs_errno(lfs_mkdir(&(dev->lfs), path));
 }
 
-static int localfs_rmdir(struct lfs_dev * dev, const char * path) {
+static int exafs_rmdir(struct exafs_dev * dev, const char * path) {
 
-  return localfs_errno(lfs_remove(&(dev->lfs), path));
+  return -1; //localfs_errno(lfs_remove(&(dev->lfs), path));
 }
 
-static struct device_ops localfs_ops = {
+static struct device_ops exafs_ops = {
 
-  .open = localfs_open,
-  .read = localfs_read,
-  .write = localfs_write,
-  .ioctl = localfs_ioctl,
-  .close = localfs_close,
-  .stat = localfs_stat,
-  .getdents = localfs_getdents,
-  .seek = localfs_seek,
-  .faccess = localfs_faccess,
-  .unlink = localfs_unlink,
-  .rename = localfs_rename,
-  .ftruncate = localfs_ftruncate,
-  .mkdir = localfs_mkdir,
+  .open = exafs_open,
+  .read = exafs_read,
+  .write = exafs_write,
+  .ioctl = exafs_ioctl,
+  .close = exafs_close,
+  .stat = exafs_stat,
+  .getdents = exafs_getdents,
+  .seek = exafs_seek,
+  .faccess = exafs_faccess,
+  .unlink = exafs_unlink,
+  .rename = exafs_rename,
+  .ftruncate = exafs_ftruncate,
+  .mkdir = exafs_mkdir,
 };
 
 int register_device(unsigned short min, struct device_ops * dev_ops) {
@@ -608,7 +566,7 @@ int register_device(unsigned short min, struct device_ops * dev_ops) {
   msg->_u.dev_msg.minor = min;
 
   memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-  sprintf((char *)&msg->_u.dev_msg.dev_name[0], "lfs%d", msg->_u.dev_msg.minor);
+  sprintf((char *)&msg->_u.dev_msg.dev_name[0], "exafs%d", msg->_u.dev_msg.minor);
 
   struct sockaddr_un resmgr_addr;
   memset(&resmgr_addr, 0, sizeof(resmgr_addr));
@@ -620,12 +578,12 @@ int register_device(unsigned short min, struct device_ops * dev_ops) {
   return 0;
 }
 
-struct lfs_dev * get_device(unsigned short minor) {
+struct exafs_dev * get_device(unsigned short minor) {
 
   return &devices[minor];
 }
 
-struct lfs_dev * get_device_from_fd(int fd) {
+struct exafs_dev * get_device_from_fd(int fd) {
 
   int i = find_fd_entry(fd);
 
@@ -635,11 +593,12 @@ struct lfs_dev * get_device_from_fd(int fd) {
   return &devices[fds[i].minor];
 }
 
-static int remotefs_ctl_open(struct lfs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
+#ifdef EXAFS_CTL
+static int exafs_ctl_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
-  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_open: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_open: %s", pathname);
 
-  if (strcmp(pathname, "/dev/lfs_ctl") == 0) {
+  if (strcmp(pathname, "/dev/exafs_ctl") == 0) {
 
     int fd = add_fd_entry(pid, minor, pathname, flags, mode, 0, 0, NULL);
 
@@ -652,12 +611,12 @@ static int remotefs_ctl_open(struct lfs_dev * dev, const char * pathname, int fl
   return -_errno; // Negative value if error
 }
 
-static ssize_t remotefs_ctl_read(struct lfs_dev * dev, int fd, void * buf, size_t count) {
+static ssize_t exafs_ctl_read(struct exafs_dev * dev, int fd, void * buf, size_t count) {
   
   return 0;
 }
 
-
+#ifdef SECURE
 static int create_master_key(char * view, char * password, char * key) {
 
   emscripten_log(EM_LOG_CONSOLE, "remotefs: create_master_key %s %s", view, password);
@@ -738,10 +697,11 @@ static int retrieve_master_key(char * view, char * password, char * key) {
   
   return res;
 }
+#endif
 
-static ssize_t remotefs_ctl_write(struct lfs_dev * dev, int fd, const void * buf, size_t count) {
+static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
 
-  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_write: (%d) %s", count, buf);
+  emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_write: (%d) %s", count, buf);
 
   if (strncmp(buf, "mkfs", 4) == 0) {
 
@@ -917,37 +877,37 @@ static struct device_ops remotefs_ctl_ops = {
   .mkdir = NULL,
 };
 
+#endif //EXAFS_CTL
+
 int register_home() {
 
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> register_home");
+  
   minor++;
   
-  memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
+  memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
 
-  struct cluster_ops * ops = &local_ops;
-      
-  struct blk_cache * cache = alloc_cache("__local__home", NULL, ops);
-      
-  devices[minor].lfs_config.context = cache;
-
-  int res = lfs_mount(&(devices[minor].lfs), &(devices[minor].lfs_config));
+  //TOTEST: format each time
+  //int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
+  int res = -1;
   
-  emscripten_log(EM_LOG_CONSOLE, "register_home: lfs_mount: res=%d", res);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
 
   if (res < 0) {
 
-    res = lfs_format(&(devices[minor].lfs), &(devices[minor].lfs_config));
+    res = exafs_format(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
 
     emscripten_log(EM_LOG_CONSOLE, "register_home: lfs_format: res=%d", res);
 
     if (res == 0) {
 
-      res = lfs_mount(&(devices[minor].lfs), &(devices[minor].lfs_config));
+      res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
 	  
       emscripten_log(EM_LOG_CONSOLE, "register_home: second lfs_mount: res=%d", res);
 
       if (res == 0) {
 
-	res = lfs_mkdir(&(devices[minor].lfs), "/home");
+	res = exfs_mkdir(&(devices[minor].exafs_ctx), "/home");
       }
     }
     
@@ -959,7 +919,7 @@ int register_home() {
     }
   }
 
-  register_device(minor, &localfs_ops);
+  register_device(minor, &exafs_ops);
 
   return 0;
 }
@@ -971,7 +931,7 @@ int main() {
   socklen_t len;
   char buf[1256];
   
-  emscripten_log(EM_LOG_CONSOLE, "Starting " LFS_VERSION "...");
+  emscripten_log(EM_LOG_CONSOLE, "Starting " EXAFS_VERSION "...");
 
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
@@ -982,7 +942,7 @@ int main() {
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
   
   if (fd >= 0)
-    write(fd, "\n\r[" LFS_VERSION "]", strlen("\n\r[" LFS_VERSION "]")+1);
+    write(fd, "\n\r[" EXAFS_VERSION "]", strlen("\n\r[" EXAFS_VERSION "]")+1);
 
   close(fd);
   
@@ -995,7 +955,7 @@ int main() {
   /* Bind server socket to LFS_PATH */
   memset(&local_addr, 0, sizeof(local_addr));
   local_addr.sun_family = AF_UNIX;
-  strcpy(local_addr.sun_path, LFS_PATH);
+  strcpy(local_addr.sun_path, EXAFS_PATH);
   
   if (bind(sock, (struct sockaddr *) &local_addr, sizeof(struct sockaddr_un))) {
     
@@ -1013,7 +973,7 @@ int main() {
   
   memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
   
-  strcpy((char *)&msg->_u.dev_msg.dev_name[0], "remotefs");
+  strcpy((char *)&msg->_u.dev_msg.dev_name[0], "exafs");
   
   sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
@@ -1021,7 +981,7 @@ int main() {
     
     bytes_rec = recvfrom(sock, buf, 1256, 0, (struct sockaddr *) &remote_addr, &len);
 
-    emscripten_log(EM_LOG_CONSOLE, "*** remotefs: %d", msg->msg_id);
+    emscripten_log(EM_LOG_CONSOLE, "*** exafs: %d", msg->msg_id);
     
     if (msg->msg_id == (REGISTER_DRIVER|0x80)) {
 
@@ -1032,6 +992,8 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
+      #ifdef EXAFS_CTL
+
       devices[minor].ops = &remotefs_ctl_ops;
       
       msg->msg_id = REGISTER_DEVICE;
@@ -1041,6 +1003,12 @@ int main() {
       sprintf((char *)&msg->_u.dev_msg.dev_name[0], "lfs_ctl");
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+
+      #else
+
+      register_home();
+      
+      #endif
     }
     else if (msg->msg_id == (REGISTER_DEVICE|0x80)) {
 
@@ -1049,6 +1017,7 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
+      #ifdef EXAFS_CTL
       if (msg->_u.dev_msg.minor == 0) { // lfs_ctl is registered
 
 	register_home();
@@ -1077,27 +1046,28 @@ int main() {
 	
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
       }
+      #endif
     }
     else if (msg->msg_id == (MOUNT|0x80)) {
 
       if (msg->_errno) {
 
-	emscripten_log(EM_LOG_CONSOLE, "remotefs device not mounted: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+	emscripten_log(EM_LOG_CONSOLE, "exafs device not mounted: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
 	
 	continue;
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
+      emscripten_log(EM_LOG_CONSOLE, "exafs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     else if (msg->msg_id == OPEN) {
       
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
 
       int remote_fd = -ENOENT;
 
       if ( (msg->_u.open_msg.fd == 0) || ((msg->_u.open_msg.fd == AT_FDCWD)) ) { // open absolute
 
-	struct lfs_dev * dev = get_device(msg->_u.open_msg.minor);
+	struct exafs_dev * dev = get_device(msg->_u.open_msg.minor);
 
 	remote_fd = dev->ops->open(dev, (const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
 
@@ -1129,7 +1099,7 @@ int main() {
 
 	  msg->_u.open_msg.minor = fds[i].minor;
 
-	  struct lfs_dev * dev = get_device(msg->_u.open_msg.minor);
+	  struct exafs_dev * dev = get_device(msg->_u.open_msg.minor);
 
 	  remote_fd = dev->ops->open(dev, (const char *)path, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
 	}
@@ -1153,7 +1123,7 @@ int main() {
     }
     else if (msg->msg_id == READ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: READ from %d: %d bytes", msg->pid, msg->_u.io_msg.len);
 
       struct message * reply = (struct message *) malloc(12+sizeof(struct io_message)+msg->_u.io_msg.len);
 
@@ -1161,7 +1131,7 @@ int main() {
       reply->pid = msg->pid;
       reply->_u.io_msg.fd = msg->_u.io_msg.fd;
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       int i = find_fd_entry(msg->_u.io_msg.fd);
 
@@ -1196,13 +1166,13 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 	
-	emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 = (char *)malloc(msg->_u.io_msg.len);
 
@@ -1210,10 +1180,10 @@ int main() {
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
 
-	emscripten_log(EM_LOG_CONSOLE, "remotefs: WRITE %d read", bytes_rec2);
+	emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE %d read", bytes_rec2);
       }
       
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       int i = find_fd_entry(msg->_u.io_msg.fd);
 
@@ -1248,7 +1218,7 @@ int main() {
     }
     else if (msg->msg_id == IOCTL) {
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       int i = find_fd_entry(msg->_u.ioctl_msg.fd);
 
@@ -1271,9 +1241,9 @@ int main() {
     }
     else if (msg->msg_id == CLOSE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: CLOSE -> fd=%d", msg->_u.close_msg.fd);
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       int i = find_fd_entry(msg->_u.close_msg.fd);
 
@@ -1293,7 +1263,7 @@ int main() {
     }
     else if ( (msg->msg_id == STAT) || (msg->msg_id == LSTAT) )  {
       
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: STAT from %d: %s", msg->pid, msg->_u.stat_msg.pathname_or_buf);
 
       struct stat stat_buf;
 
@@ -1305,7 +1275,7 @@ int main() {
 
       int _errno = 0;
 
-      struct lfs_dev * dev = get_device(msg->_u.stat_msg.minor);
+      struct exafs_dev * dev = get_device(msg->_u.stat_msg.minor);
 
       if ((_errno=dev->ops->stat(dev, (const char *)(msg->_u.stat_msg.pathname_or_buf), &stat_buf)) == 0) {
 	
@@ -1320,9 +1290,9 @@ int main() {
     }
     else if (msg->msg_id == GETDENTS) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: GETDENTS from %d: fd=%d len=%d", msg->pid, msg->_u.getdents_msg.fd, msg->_u.getdents_msg.len);
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
       
       int i = find_fd_entry(msg->_u.getdents_msg.fd);
 
@@ -1363,11 +1333,11 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
 
-      struct lfs_dev * dev = get_device(msg->_u.cwd2_msg.minor);
+      struct exafs_dev * dev = get_device(msg->_u.cwd2_msg.minor);
 
       msg->_errno = dev->ops->stat(dev, (const char *)(msg->_u.cwd2_msg.buf), &stat_buf);
 
@@ -1377,7 +1347,7 @@ int main() {
     }
     else if (msg->msg_id == SEEK) {
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
       
       int i = find_fd_entry(msg->_u.seek_msg.fd);
       
@@ -1391,7 +1361,7 @@ int main() {
 	msg->_u.seek_msg.offset = dev->ops->seek(dev, msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 	
 	if (msg->_u.seek_msg.offset < 0)
-	  msg->_errno = localfs_errno(msg->_u.seek_msg.offset);
+	  msg->_errno = exafs_errno(msg->_u.seek_msg.offset);
 	else
 	  msg->_errno = 0;
 
@@ -1407,7 +1377,7 @@ int main() {
     }
     else if (msg->msg_id == FACCESSAT) {
 
-      struct lfs_dev * dev = get_device(msg->_u.faccessat_msg.minor);
+      struct exafs_dev * dev = get_device(msg->_u.faccessat_msg.minor);
 
       msg->_errno = dev->ops->faccess(dev, (const char *)(msg->_u.faccessat_msg.pathname), msg->_u.faccessat_msg.amode, msg->_u.faccessat_msg.flags);
 
@@ -1416,7 +1386,7 @@ int main() {
     }
     else if (msg->msg_id == FSTAT) {
       
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
 
       struct stat stat_buf;
 
@@ -1434,7 +1404,7 @@ int main() {
 	
 	int _errno = 0;
 
-	struct lfs_dev * dev = get_device(min);
+	struct exafs_dev * dev = get_device(min);
 
 	if ((_errno=dev->ops->stat(dev, (const char *)fds[i].pathname, &stat_buf)) == 0) {
 	
@@ -1455,7 +1425,7 @@ int main() {
     }
     else if (msg->msg_id == FSYNC) {
       
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: FSYNC from %d: %d", msg->pid, msg->_u.fsync_msg.fd);
       
       msg->_errno = 0;
       msg->msg_id |= 0x80;
@@ -1465,7 +1435,7 @@ int main() {
     }
     else if (msg->msg_id == UNLINKAT) {
 
-      struct lfs_dev * dev = get_device(msg->_u.unlinkat_msg.minor);
+      struct exafs_dev * dev = get_device(msg->_u.unlinkat_msg.minor);
 
       msg->_errno = dev->ops->unlink(dev, (const char *)msg->_u.unlinkat_msg.path, msg->_u.unlinkat_msg.flags);
 
@@ -1495,7 +1465,7 @@ int main() {
 
       //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT: newpath=%s", newpath);
 
-      struct lfs_dev * dev = get_device(msg2->_u.renameat_msg.minor);
+      struct exafs_dev * dev = get_device(msg2->_u.renameat_msg.minor);
       
       msg2->_errno = dev->ops->rename(dev, (const char *)msg2->_u.renameat_msg.oldpath, (const char *)&newpath[0]);
       
@@ -1509,9 +1479,9 @@ int main() {
     }
     else if (msg->msg_id == FTRUNCATE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: FTRUNCATE from %d: fd=%d length=%d", msg->pid, msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: FTRUNCATE from %d: fd=%d length=%d", msg->pid, msg->_u.ftruncate_msg.fd, msg->_u.ftruncate_msg.length);
 
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       int i = find_fd_entry(msg->_u.ftruncate_msg.fd);
 
@@ -1536,9 +1506,9 @@ int main() {
     }
     else if (msg->msg_id == MKDIRAT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
       
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       dev = get_device(msg->_u.mkdirat_msg.minor);
       
@@ -1557,9 +1527,9 @@ int main() {
     }
     else if (msg->msg_id == RMDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: RMDIR from %d: path=%s", msg->pid, msg->_u.rmdir_msg.path);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: RMDIR from %d: path=%s", msg->pid, msg->_u.rmdir_msg.path);
       
-      struct lfs_dev * dev = NULL;
+      struct exafs_dev * dev = NULL;
 
       dev = get_device(msg->_u.rmdir_msg.minor);
       
@@ -1578,7 +1548,7 @@ int main() {
     }
     else if (msg->msg_id == FSTATAT) {
 
-      emscripten_log(EM_LOG_CONSOLE, "FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.pathname_or_buf);
+      emscripten_log(EM_LOG_CONSOLE, "exafs: FSTATAT from pid=%d: dirfd=%d %s", msg->pid, msg->_u.fstatat_msg.dirfd, msg->_u.fstatat_msg.pathname_or_buf);
 
       int i = find_fd_entry(msg->_u.fstatat_msg.dirfd);
 
@@ -1615,7 +1585,7 @@ int main() {
 	stat_buf.st_uid = 1;
 	stat_buf.st_gid = 1;
 
-	struct lfs_dev * dev = get_device(fds[i].minor);
+	struct exafs_dev * dev = get_device(fds[i].minor);
 
 	if ((_errno=dev->ops->stat(dev, (const char *)path, &stat_buf)) == 0) {
 	
