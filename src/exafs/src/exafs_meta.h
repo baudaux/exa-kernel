@@ -10,24 +10,35 @@
  * You should have received a copy of the GNU General Public License along with EXA. If not, sees <https://www.gnu.org/licenses/>.
  */
 
-#ifndef _EXAFS_LOCAL_DEV_H
-#define _EXAFS_LOCAL_DEV_H
+#ifndef _EXAFS_META_H
+#define _EXAFS_META_H
 
-#include "sys/types.h"
+#include <sys/types.h>
 
-struct exafs_ctx;
+#include "exafs.h"
 
-int exafs_local_read(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
+enum meta_op {
+  
+  EXAFS_OP_CREATE_INODE,
+  EXAFS_OP_DELETE_INODE,
+  EXAFS_OP_LINK,
+  EXAFS_OP_UNLINK,
+  EXAFS_OP_WRITE_EXTENT,
+  EXAFS_OP_TRUNCATE,
+  EXAFS_OP_CHMOD,
+  EXAFS_OP_CHOWN,
+  EXAFS_OP_RENAME
+};
 
-int exafs_local_read_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len);
+struct meta_record {
+  
+  uint64_t seq;
+  uint32_t  op;
+  uint32_t len;
+  //char  payload[];
+  //uint32_t crc;
+};
 
-int exafs_local_write(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
+int exafs_record_store(struct exafs_ctx * ctx, enum meta_op op, void * buffer, int len);
 
-int exafs_local_write_range(struct exafs_ctx * ctx, void * buffer, int len);
-
-int exafs_local_delete(struct exafs_ctx * ctx, uint32_t id);
-
-int exafs_local_delete_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
-
-
-#endif // _EXAFS_LOCAL_DEV_H
+#endif

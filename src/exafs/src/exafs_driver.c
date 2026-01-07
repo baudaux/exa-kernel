@@ -29,6 +29,7 @@
 #include "msg.h"
 
 #include "exafs.h"
+#include "exafs_inode.h"
 
 #include "exafs_local_dev.h"
 
@@ -94,8 +95,14 @@ struct fd_entry {
 
 static struct exafs_cfg local_exafs_config = {
 
+  .meta_log_size = META_LOG_SIZE,
+  
   .read = &exafs_local_read,
-  .write = &exafs_local_write
+  .read_range = &exafs_local_read_range,
+  .write = &exafs_local_write,
+  .write_range = &exafs_local_write_range,
+  .delete = &exafs_local_delete,
+  .delete_range = &exafs_local_delete_range,
 };
 
 static char current_fs[128];
@@ -897,18 +904,11 @@ int register_home() {
 
     res = exafs_format(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
 
-    emscripten_log(EM_LOG_CONSOLE, "register_home: lfs_format: res=%d", res);
+    emscripten_log(EM_LOG_CONSOLE, "register_home: exafs_format: res=%d", res);
 
     if (res == 0) {
 
-      res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
-	  
-      emscripten_log(EM_LOG_CONSOLE, "register_home: second lfs_mount: res=%d", res);
-
-      if (res == 0) {
-
-	res = exfs_mkdir(&(devices[minor].exafs_ctx), "/home");
-      }
+      res = exfs_mkdir_at(&(devices[minor].exafs_ctx), EXAFS_ROOT_INO, "home");
     }
     
     if (res < 0) {

@@ -10,18 +10,23 @@
  * You should have received a copy of the GNU General Public License along with EXA. If not, sees <https://www.gnu.org/licenses/>.
  */
 
-/*
- * lfs util functions
- *
- * Copyright (c) 2022, The littlefs authors.
- * Copyright (c) 2017, Arm Limited. All rights reserved.
- * SPDX-License-Identifier: BSD-3-Clause
- */
-
 #ifndef _EXAFS_UTIL_H
 #define _EXAFS_UTIL_H
 
 #include <sys/types.h>
+
+#ifdef HASH
+struct hnode {
+  uint64_t key;          // inode id for example
+  void * value;   // pointer to data
+  struct hnode * next;
+};
+
+struct htable {
+    size_t bucket_count;
+    struct hnode ** buckets;
+};
+#endif
 
 uint32_t exafs_crc(const void * data, size_t length, uint32_t previousCrc32);
 

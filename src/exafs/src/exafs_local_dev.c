@@ -24,7 +24,7 @@
 #define emscripten_log(...)
 #endif
 
-EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, int id, void * buffer, int len), {
+EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -41,7 +41,7 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, int id, void * buffer, int
 
 	    let do_read = (db) => {
 
-	      let store = db.transaction(["blocks"]).objectStore("blocks");
+	      let store = db.transaction(["objects"]).objectStore("objects");
 	      
 	      let request = store.get(id);
 	      
@@ -62,9 +62,7 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, int id, void * buffer, int
 		  }
 		  else {
 
-		    Module.HEAPU8.set(request.result.data.subarray(0, len), buffer);
-		    
-		    wakeUp(len);
+		    wakeUp(-request.result.data.length);
 		  }
 		}
 		else {
@@ -88,7 +86,7 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, int id, void * buffer, int
 
 		let db = event.target.result;
 
-		let objectStore = db.createObjectStore("blocks", { keyPath: "block" });
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
 
 		//TODO
 		//objectStore.createIndex("cluster", "cluster", { unique: true });
@@ -110,7 +108,12 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, int id, void * buffer, int
 	  });
 });
 
-EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, int id, void * buffer, int len), {
+EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len), {
+
+
+});
+
+EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -127,9 +130,9 @@ EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, int id, void * buffer, in
 
 	    let do_write = (db) => {
 
-	      let store = db.transaction(["blocks"], "readwrite").objectStore("blocks");
+	      let store = db.transaction(["objects"], "readwrite").objectStore("objects");
 	      
-	      let request = store.put({block: id, data: Module.HEAPU8.subarray(buffer, buffer+len)});
+	      let request = store.put({object: id, data: Module.HEAPU8.subarray(buffer, buffer+len)});
 	      
 	      request.onerror = function(event) {
 
@@ -156,7 +159,7 @@ EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, int id, void * buffer, in
 
 		let db = event.target.result;
 
-		let objectStore = db.createObjectStore("blocks", { keyPath: "block" });
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
 
 		//TODO
 		//objectStore.createIndex("cluster", "cluster", { unique: true });
@@ -173,6 +176,149 @@ EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, int id, void * buffer, in
 	    else {
 
 	      do_write(window.exafs_local);
+	    }
+
+      });
+});
+
+EM_JS(int, exafs_local_write_range, (struct exafs_ctx * ctx, void * buffer, int len), {
+
+});
+
+EM_JS(int, exafs_local_delete, (struct exafs_ctx * ctx, uint32_t id), {
+
+    return Asyncify.handleSleep(function (wakeUp) {
+	
+	console.log("exafs: exafs_local_delete: id="+id);
+
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	    let do_delete = (db) => {
+
+	      let store = db.transaction(["objects"], "readwrite").objectStore("objects");
+	      
+	      let request = store.delete(id);
+	      
+	      request.onerror = function(event) {
+
+		wakeUp(-1);
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		wakeUp(0);
+		
+	      };
+	    };
+
+	    if (typeof window.exafs_local === 'undefined') {
+	      
+	      let request = window.indexedDB.open("exafs_local", 1);
+
+	      request.onerror = function(event) {
+
+		wakeUp(-1);
+	      };
+
+	      request.onupgradeneeded = function(event) {
+
+		let db = event.target.result;
+
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+
+		//TODO
+		//objectStore.createIndex("cluster", "cluster", { unique: true });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		window.exafs_local = event.target.result;
+		
+		do_delete(window.exafs_local);
+		
+	      };
+	    }
+	    else {
+
+	      do_delete(window.exafs_local);
+	    }
+
+      });
+});
+
+EM_JS(int, exafs_local_delete_range, (struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max), {
+
+    return Asyncify.handleSleep(function (wakeUp) {
+	
+	console.log("exafs: exafs_local_delete_range: id_min="+id_min+" id_max="+id_max);
+	
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	    let do_delete_range = (db) => {
+
+	      let store = db.transaction(["objects"], "readwrite").objectStore("objects");
+	      
+	      const range = IDBKeyRange.bound(id_min, id_max); // inclusive
+
+	      store.openCursor(range).onsuccess = (event) => {
+		
+		const cursor = event.target.result;
+		
+		if (cursor) {
+		  cursor.delete();
+		  cursor.continue();
+		}
+		else {
+		  
+		  wakeUp(0);
+		}
+	      };
+	    };
+
+	    if (typeof window.exafs_local === 'undefined') {
+	      
+	      let request = window.indexedDB.open("exafs_local", 1);
+
+	      request.onerror = function(event) {
+
+		wakeUp(-1);
+	      };
+
+	      request.onupgradeneeded = function(event) {
+
+		let db = event.target.result;
+
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+
+		//TODO
+		//objectStore.createIndex("cluster", "cluster", { unique: true });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		window.exafs_local = event.target.result;
+		
+		do_delete_range(window.exafs_local);
+		
+	      };
+	    }
+	    else {
+
+	      do_delete_range(window.exafs_local);
 	    }
 
       });

@@ -15,21 +15,27 @@
 
 #define EXAFS_NB_SUPERBLOCKS 4
 
-#define METADATA_LOG_START EXAFS_NB_SUPERBLOCKS
-#define METADATA_LOG_END 10000
+#define META_LOG_SIZE 10000
 
 struct exafs_ctx;
 
-typedef int (*access_func)(struct exafs_ctx * ctx, int id, void * buffer, int len);
+typedef int (*rw_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
+typedef int (*r_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len);
+typedef int (*w_range_func)(struct exafs_ctx * ctx, void * buffer, int len);
+typedef int (*del_func)(struct exafs_ctx * ctx, uint32_t id);
+typedef int (*del_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
 
 struct superblock {
+  
   char magic[8];          // "EXAEQUO\0"
   uint64_t generation;
   uint32_t fs_uuid;
+  uint32_t meta_log_size;
   uint32_t meta_log_head;
   uint32_t inode_table_head;
   uint32_t dir_index_head;
   uint32_t flags;
+  uint32_t padding;
   uint32_t crc;
 };
 
@@ -39,45 +45,30 @@ struct exafs_ctx {
   
   int active_superblock;
 
-  access_func read;
-  access_func write;
+  uint32_t meta_log_size;
+  uint32_t meta_log_head;
+  uint64_t meta_log_seq;
+
+  uint32_t last_ino;
+  
+  rw_func read;
+  r_range_func read_range;
+  rw_func write;
+  w_range_func write_range;
+  del_func delete;
+  del_range_func delete_range;
 };
 
 struct exafs_cfg {
 
-  access_func read;
-  access_func write;
-};
+  rw_func read;
+  r_range_func read_range;
+  rw_func write;
+  w_range_func write_range;
+  del_func delete;
+  del_range_func delete_range;
 
-enum meta_op {
-  EXAFS_OP_CREATE_INODE,
-  EXAFS_OP_DELETE_INODE,
-  EXAFS_OP_LINK,
-  EXAFS_OP_UNLINK,
-  EXAFS_OP_WRITE_EXTENT,
-  EXAFS_OP_TRUNCATE,
-  EXAFS_OP_CHMOD,
-  EXAFS_OP_CHOWN,
-  EXAFS_OP_RENAME
-};
-
-struct meta_record {
-  uint64_t seq;
-  //uint64_t timestamp;
-  uint32_t  op;
-  uint32_t len;
-  //char  payload[];
-  //uint32_t crc;
-};
-
-struct inode {
-  uint64_t ino;
-  uint64_t size;
-  uint64_t ctime, mtime;
-  uint32_t type;
-  uint32_t mode;
-  uint32_t uid, gid;
-  uint32_t extent_head;
+  uint32_t meta_log_size;
 };
 
 struct extent {
@@ -93,5 +84,6 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
 int exfs_mkdir(struct exafs_ctx * ctx, const char * path);
+int exfs_mkdir_at(struct exafs_ctx * ctx, uint32_t ino, const char * path);
 
 #endif // _EXAFS_H

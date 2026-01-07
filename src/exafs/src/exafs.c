@@ -25,7 +25,7 @@
 #include <dirent.h>
 
 #include "exafs.h"
-
+#include "exafs_inode.h"
 #include "exafs_util.h"
 
 #ifndef DEBUG
@@ -41,11 +41,26 @@
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   ctx->active_superblock = -1;
+  ctx->meta_log_head = 0;
+  ctx->meta_log_seq = 0;
+  ctx->last_ino = 0;
   
   ctx->read = cfg->read;
+  ctx->read_range = cfg->read_range;
   ctx->write = cfg->write;
+  ctx->write_range = cfg->write_range;
+  ctx->delete = cfg->delete;
+  ctx->delete_range = cfg->delete_range;
 
-  if ( (ctx->read == NULL) || (ctx->write == NULL) ) {
+  if (cfg->meta_log_size > 0) {
+
+    ctx->meta_log_size = cfg->meta_log_size;
+  }
+  else {
+    ctx->meta_log_size = META_LOG_SIZE;
+  }
+
+  if ( (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
     return -1;
   }
   
@@ -53,7 +68,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 }
 
 int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
-
+  
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mount");
   
   // Initialize ctx structure
@@ -65,6 +80,8 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   // Read superblocks
 
+  //TODO use read_range
+
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
 
     int len = ctx->read(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock));
@@ -72,7 +89,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     emscripten_log(EM_LOG_CONSOLE, "exafs: read block %d -> %d bytes", i, len);
 
     if (len < sizeof(struct superblock)) {
-
+      
       ctx->superblocks[i].generation = 0;
     }
     else {
@@ -106,6 +123,8 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     return -1;
   }
 
+  ctx->meta_log_size = ctx->superblocks[ctx->active_superblock].meta_log_size;
+
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mount: success (active superblock %d generation %lld)", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation);
   
   return 0;
@@ -132,14 +151,15 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
     strcpy(ctx->superblocks[i].magic, "EXAEQUO");
     ctx->superblocks[i].generation = 1;
-    ctx->superblocks[i].meta_log_head = METADATA_LOG_START;
+    ctx->superblocks[i].meta_log_size = ctx->meta_log_size;
+    ctx->superblocks[i].meta_log_head = EXAFS_NB_SUPERBLOCKS;
     ctx->superblocks[i].crc = exafs_crc(&(ctx->superblocks[i]), sizeof(struct superblock) - sizeof(uint32_t), 0);
     
     int len = ctx->write(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock));
 
     if (len == sizeof(struct superblock)) {
 
-      res = 0;
+      res = 0; // at least one block is successfully written, so it is ok
 
       if (ctx->active_superblock < 0) {
 	
@@ -147,6 +167,34 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
       }
     }
   }
+  
+  // Delete all objects belonging to metadata log
+  ctx->delete_range(ctx, EXAFS_NB_SUPERBLOCKS, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size);
+
+  // Read first metadata log object to check if it has really been deleted
+  
+  uint32_t tmp;
+  
+  int len = ctx->read(ctx, EXAFS_NB_SUPERBLOCKS, &tmp, sizeof(tmp));
+  
+  emscripten_log(EM_LOG_CONSOLE, "exafs: reading deleted object -> len=%d", len);
+
+  if (len > 0) {
+
+    return -1;
+  }
+
+  // Metadata log head is reset
+  ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
+
+  // Metadata log seq is reset
+  ctx->meta_log_seq = 1;
+
+  // Inode seq is reset
+  ctx->last_ino = EXAFS_START_INO;
+
+  // create root inode
+  exafs_inode_create(ctx, EXAFS_ROOT_INO, S_IFDIR);
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_format: res=%d", res);
 
@@ -156,6 +204,29 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 int exfs_mkdir(struct exafs_ctx * ctx, const char * path) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir: path=%s", path);
+
+  // Find parent inode
+
+  // Create inode
+  // exfs_mkdir_at
   
   return -1;
+}
+
+int exfs_mkdir_at(struct exafs_ctx * ctx, uint32_t ino, const char * path) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at: ino=%d path=%s", ino, path);
+
+  uint32_t new_ino = ctx->last_ino;
+  
+  int res = exafs_inode_create(ctx, new_ino, S_IFDIR);
+
+  if (res < 0) {
+
+    return -1;
+  }
+
+  ctx->last_ino++;
+  
+  return 0;
 }
