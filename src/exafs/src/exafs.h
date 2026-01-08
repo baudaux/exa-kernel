@@ -48,8 +48,10 @@ struct exafs_ctx {
   uint32_t meta_log_size;
   uint32_t meta_log_head;
   uint64_t meta_log_seq;
-
+  
   uint32_t last_ino;
+  
+  struct exafs_inode * inode_table;
   
   rw_func read;
   r_range_func read_range;
@@ -83,7 +85,8 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
 int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
-int exfs_mkdir(struct exafs_ctx * ctx, const char * path);
-int exfs_mkdir_at(struct exafs_ctx * ctx, uint32_t ino, const char * path);
+int exafs_mkdir(struct exafs_ctx * ctx, const char * path);
+int exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
+int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path);
 
 #endif // _EXAFS_H

@@ -215,7 +215,7 @@ static int exafs_errno(int _exafs_errno) {
   return _exafs_errno;
 }
 
-static ssize_t exafs_read(struct exafs_dev * dev, int fd, void * buf, size_t count) {
+static ssize_t exafs_driver_read(struct exafs_dev * dev, int fd, void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -236,7 +236,7 @@ static ssize_t exafs_read(struct exafs_dev * dev, int fd, void * buf, size_t cou
   return ret;
 }
 
-static ssize_t exafs_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
+static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -256,12 +256,12 @@ static ssize_t exafs_write(struct exafs_dev * dev, int fd, const void * buf, siz
   return ret;
 }
 
-static int exafs_ioctl(struct exafs_dev * dev, int fildes, int request, ... /* arg */) {
+static int exafs_driver_ioctl(struct exafs_dev * dev, int fildes, int request, ... /* arg */) {
 
   return -EINVAL;
 }
 
-static int exafs_unlink(struct exafs_dev * dev, const char * path, int flags) {
+static int exafs_driver_unlink(struct exafs_dev * dev, const char * path, int flags) {
 
   int unlink_pending_set = 0;
   
@@ -280,7 +280,7 @@ static int exafs_unlink(struct exafs_dev * dev, const char * path, int flags) {
   return -1; //exafs_errno(lfs_remove(&(dev->lfs), path));
 }
 
-static int exafs_close(struct exafs_dev * dev, int fd) {
+static int exafs_driver_close(struct exafs_dev * dev, int fd) {
 
   int i = find_fd_entry(fd);
 
@@ -297,7 +297,7 @@ static int exafs_close(struct exafs_dev * dev, int fd) {
   if (fds[i].unlink_pending) {
 
     fds[i].fd = -1; // not to take this entry during unlink
-    exafs_unlink(dev, fds[i].pathname, 0);
+    exafs_driver_unlink(dev, fds[i].pathname, 0);
     fds[i].fd = fd;
   }
   
@@ -307,7 +307,7 @@ static int exafs_close(struct exafs_dev * dev, int fd) {
   return exafs_errno(res);
 }
 
-static int exafs_stat(struct exafs_dev * dev, const char * pathname, struct stat * stat) {
+static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, struct stat * stat) {
 
   emscripten_log(EM_LOG_CONSOLE,"exafs_stat: %s", pathname);
   
@@ -353,7 +353,7 @@ static int exafs_stat(struct exafs_dev * dev, const char * pathname, struct stat
   return exafs_errno(res);
 }
 
-static int exafs_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
+static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
 
   emscripten_log(EM_LOG_CONSOLE,"exafs_open: %d %d %s", flags, mode, pathname);
 
@@ -448,7 +448,7 @@ struct __dirent {
     char d_name[1];
   };
 
-static ssize_t exafs_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_t count) {
+static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_t count) {
 
   int i = find_fd_entry(fd);
 
@@ -501,7 +501,7 @@ static ssize_t exafs_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_
   return len;
 }
 
-static int exafs_seek(struct exafs_dev * dev, int fd, int offset, int whence) {
+static int exafs_driver_seek(struct exafs_dev * dev, int fd, int offset, int whence) {
 
   int i = find_fd_entry(fd);
 
@@ -511,19 +511,19 @@ static int exafs_seek(struct exafs_dev * dev, int fd, int offset, int whence) {
   return -1; //lfs_file_seek(&(dev->lfs), fds[i].lfs_handle, offset, whence);
 }
 
-static int exafs_faccess(struct exafs_dev * dev, const char * pathname, int amode, int flags) {
+static int exafs_driver_faccess(struct exafs_dev * dev, const char * pathname, int amode, int flags) {
 
   struct stat stat;
   
-  return exafs_stat(dev, pathname, &stat);
+  return exafs_driver_stat(dev, pathname, &stat);
 }
 
-static int exafs_rename(struct exafs_dev * dev, const char * oldpath, const char * newpath) {
-
+static int exafs_driver_rename(struct exafs_dev * dev, const char * oldpath, const char * newpath) {
+  
   return -1; //localfs_errno(lfs_rename(&(dev->lfs), oldpath, newpath));
 }
 
-static int exafs_ftruncate(struct exafs_dev * dev, int fd, int length) {
+static int exafs_driver_ftruncate(struct exafs_dev * dev, int fd, int length) {
 
   int i = find_fd_entry(fd);
 
@@ -533,31 +533,31 @@ static int exafs_ftruncate(struct exafs_dev * dev, int fd, int length) {
   return -1; //localfs_errno(lfs_file_truncate(&(dev->lfs), fds[i].lfs_handle, length));
 }
 
-static int exafs_mkdir(struct exafs_dev * dev, const char * path, int mode) {
+static int exafs_driver_mkdir(struct exafs_dev * dev, const char * path, int mode) {
 
   return -1; //localfs_errno(lfs_mkdir(&(dev->lfs), path));
 }
 
-static int exafs_rmdir(struct exafs_dev * dev, const char * path) {
+static int exafs_driver_rmdir(struct exafs_dev * dev, const char * path) {
 
   return -1; //localfs_errno(lfs_remove(&(dev->lfs), path));
 }
 
 static struct device_ops exafs_ops = {
 
-  .open = exafs_open,
-  .read = exafs_read,
-  .write = exafs_write,
-  .ioctl = exafs_ioctl,
-  .close = exafs_close,
-  .stat = exafs_stat,
-  .getdents = exafs_getdents,
-  .seek = exafs_seek,
-  .faccess = exafs_faccess,
-  .unlink = exafs_unlink,
-  .rename = exafs_rename,
-  .ftruncate = exafs_ftruncate,
-  .mkdir = exafs_mkdir,
+  .open = exafs_driver_open,
+  .read = exafs_driver_read,
+  .write = exafs_driver_write,
+  .ioctl = exafs_driver_ioctl,
+  .close = exafs_driver_close,
+  .stat = exafs_driver_stat,
+  .getdents = exafs_driver_getdents,
+  .seek = exafs_driver_seek,
+  .faccess = exafs_driver_faccess,
+  .unlink = exafs_driver_unlink,
+  .rename = exafs_driver_rename,
+  .ftruncate = exafs_driver_ftruncate,
+  .mkdir = exafs_driver_mkdir,
 };
 
 int register_device(unsigned short min, struct device_ops * dev_ops) {
@@ -898,7 +898,7 @@ int register_home() {
   //int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
   int res = -1;
   
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
+  //emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
 
   if (res < 0) {
 
@@ -908,7 +908,7 @@ int register_home() {
 
     if (res == 0) {
 
-      res = exfs_mkdir_at(&(devices[minor].exafs_ctx), EXAFS_ROOT_INO, "home");
+      res = exafs_mkdir_at(&(devices[minor].exafs_ctx), EXAFS_ROOT_INO, "home");
     }
     
     if (res < 0) {

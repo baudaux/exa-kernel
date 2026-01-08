@@ -33,12 +33,17 @@ enum meta_op {
 struct meta_record {
   
   uint64_t seq;
+  uint64_t timestamp; // For replaying with original time
   uint32_t  op;
   uint32_t len;
   //char  payload[];
   //uint32_t crc;
 };
 
-int exafs_record_store(struct exafs_ctx * ctx, enum meta_op op, void * buffer, int len);
+struct meta_record * exafs_record_create(struct exafs_ctx * ctx, enum meta_op op, void * buffer, int len, void * ptr);
+
+int exafs_record_store(struct exafs_ctx * ctx, struct meta_record * record);
+
+int exafs_log_store(struct exafs_ctx * ctx, void * obj, int len);
 
 #endif

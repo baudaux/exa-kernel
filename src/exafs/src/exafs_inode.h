@@ -17,12 +17,25 @@
 
 #include "exafs.h"
 
+#include "uthash.h"
+
 #define EXAFS_ROOT_INO 2
 #define EXAFS_START_INO 10
+
+#define PATHNAME_LEN_MAX 1024
+
+struct exafs_dir_entry {
+
+  char path[PATHNAME_LEN_MAX];
+  uint64_t ino;
+
+  UT_hash_handle hh;
+};
 
 struct exafs_inode {
   
   uint64_t ino;
+  
   uint64_t size;
   uint64_t atime;
   uint64_t btime;
@@ -31,11 +44,23 @@ struct exafs_inode {
   uint32_t mode;
   uint32_t uid;
   uint32_t gid;
-  uint32_t extent_head;
+  //uint32_t extent_head;
+  
+  // No need to store in metadata log after here
+  uint32_t nlink;
+  struct exafs_dir_entry * entry_table;
+
+  UT_hash_handle hh;
 };
 
-int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode);
+int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr);
 
 int exafs_inode_add(struct exafs_ctx * ctx, struct exafs_inode * inode);
+
+int exafs_inode_delete(struct exafs_ctx * ctx, uint32_t ino);
+
+int exafs_inode_link(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, void * ptr);
+
+int exafs_inode_unlink(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
 
 #endif

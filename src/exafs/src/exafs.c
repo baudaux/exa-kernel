@@ -26,6 +26,7 @@
 
 #include "exafs.h"
 #include "exafs_inode.h"
+#include "exafs_meta.h"
 #include "exafs_util.h"
 
 #ifndef DEBUG
@@ -44,6 +45,8 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->meta_log_head = 0;
   ctx->meta_log_seq = 0;
   ctx->last_ino = 0;
+
+  ctx->inode_table = NULL;
   
   ctx->read = cfg->read;
   ctx->read_range = cfg->read_range;
@@ -193,15 +196,14 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   // Inode seq is reset
   ctx->last_ino = EXAFS_START_INO;
 
-  // create root inode
-  exafs_inode_create(ctx, EXAFS_ROOT_INO, S_IFDIR);
+  exafs_mkdir_at2(ctx, 0, EXAFS_ROOT_INO, "/");
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_format: res=%d", res);
 
   return res;
 }
 
-int exfs_mkdir(struct exafs_ctx * ctx, const char * path) {
+int exafs_mkdir(struct exafs_ctx * ctx, const char * path) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir: path=%s", path);
 
@@ -213,13 +215,84 @@ int exfs_mkdir(struct exafs_ctx * ctx, const char * path) {
   return -1;
 }
 
-int exfs_mkdir_at(struct exafs_ctx * ctx, uint32_t ino, const char * path) {
+int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path) {
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at: ino=%d path=%s", ino, path);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
 
-  uint32_t new_ino = ctx->last_ino;
+  char * recordset = malloc(4096);
   
-  int res = exafs_inode_create(ctx, new_ino, S_IFDIR);
+  int res = exafs_inode_create(ctx, child_ino, S_IFDIR, recordset); // inode for subdir
+  
+  if (res < 0) {
+    
+    return -1;
+  }
+
+  int recordset_length = res;
+
+  if (parent_ino) {
+
+    res = exafs_inode_link(ctx, parent_ino, child_ino, path, recordset+recordset_length);
+
+    if (res < 0) {
+
+      exafs_inode_delete(ctx, child_ino);
+      return -1;
+    }
+
+    recordset_length += res;
+  }
+
+  res = exafs_inode_link(ctx, child_ino, child_ino, ".", recordset+recordset_length);
+  
+  if (res < 0) {
+
+    if (parent_ino) {
+      exafs_inode_unlink(ctx, parent_ino, path);
+    }
+    
+    exafs_inode_delete(ctx, child_ino);
+    return -1;
+  }
+
+  recordset_length += res;
+
+  uint64_t top_ino = (parent_ino)?parent_ino:child_ino; // For handling case of root
+
+  res = exafs_inode_link(ctx, child_ino, top_ino, "..", recordset+recordset_length);
+  
+  if (res < 0) {
+
+    if (parent_ino) {
+      exafs_inode_unlink(ctx, parent_ino, path);
+    }
+    
+    exafs_inode_delete(ctx, child_ino);
+    return -1;
+  }
+
+  recordset_length += res;
+
+  res = exafs_log_store(ctx, recordset, recordset_length);
+
+  free(recordset);
+
+  if (res < 0) {
+
+    if (parent_ino) {
+      exafs_inode_unlink(ctx, parent_ino, path);
+    }
+    
+    exafs_inode_delete(ctx, child_ino);
+    return -1;
+  }
+  
+  return 0;
+}
+
+int exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
+
+  int res = exafs_mkdir_at2(ctx, parent_ino, ctx->last_ino, path);
 
   if (res < 0) {
 
@@ -230,3 +303,4 @@ int exfs_mkdir_at(struct exafs_ctx * ctx, uint32_t ino, const char * path) {
   
   return 0;
 }
+
