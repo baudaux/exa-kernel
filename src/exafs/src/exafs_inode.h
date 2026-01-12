@@ -14,6 +14,8 @@
 #define _EXAFS_INODE_H
 
 #include <sys/types.h>
+#include <time.h>
+#include <sys/stat.h>
 
 #include "exafs.h"
 
@@ -24,26 +26,46 @@
 
 #define PATHNAME_LEN_MAX 1024
 
+struct exafs_dir_entry_meta {
+
+  uint32_t parent_ino;
+  uint32_t ino;
+  char path[PATHNAME_LEN_MAX];
+};
+
 struct exafs_dir_entry {
 
   char path[PATHNAME_LEN_MAX];
-  uint64_t ino;
-
+  uint32_t ino;
+  
   UT_hash_handle hh;
 };
 
-struct exafs_inode {
-  
-  uint64_t ino;
-  
+struct exafs_inode_meta {
+
+  uint32_t ino;
   uint64_t size;
-  uint64_t atime;
-  uint64_t btime;
-  uint64_t ctime;
-  uint64_t mtime;
+  time_t atime;
+  time_t btime;
+  time_t ctime;
+  time_t mtime;
   uint32_t mode;
   uint32_t uid;
   uint32_t gid;
+};
+
+struct exafs_inode {
+
+  uint32_t ino;
+  uint64_t size;
+  time_t atime;
+  time_t btime;
+  time_t ctime;
+  time_t mtime;
+  uint32_t mode;
+  uint32_t uid;
+  uint32_t gid;
+  
   //uint32_t extent_head;
   
   // No need to store in metadata log after here
@@ -53,6 +75,19 @@ struct exafs_inode {
   UT_hash_handle hh;
 };
 
+int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
+
+int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr);
+int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta, time_t now);
+
+int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, time_t now, char * ptr);
+int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta, time_t now);
+
+uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * pathname);
+
+int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat);
+
+#if OLD
 int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr);
 
 int exafs_inode_add(struct exafs_ctx * ctx, struct exafs_inode * inode);
@@ -62,5 +97,6 @@ int exafs_inode_delete(struct exafs_ctx * ctx, uint32_t ino);
 int exafs_inode_link(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, void * ptr);
 
 int exafs_inode_unlink(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
+#endif
 
 #endif

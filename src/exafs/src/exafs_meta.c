@@ -12,9 +12,11 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "exafs_meta.h"
 #include "exafs_util.h"
+#include "exafs_inode.h"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -26,6 +28,7 @@
 #define emscripten_log(...)
 #endif
 
+#if OLD
 struct meta_record * exafs_record_create(struct exafs_ctx * ctx, enum meta_op op, void * buffer, int len, void * ptr) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_record_store: op=%d", op);
@@ -64,19 +67,39 @@ struct meta_record * exafs_record_create(struct exafs_ctx * ctx, enum meta_op op
 
   return record;
 }
+#endif // OLD
 
-int exafs_record_store(struct exafs_ctx * ctx, struct meta_record * record) {
+int exafs_record_header(struct exafs_ctx * ctx, enum meta_op op, time_t now, int len, struct meta_record * record) {
 
-  int l = sizeof(struct meta_record)+record->len+sizeof(uint32_t);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_header: op=%d len=%d", op, len);
   
-  return exafs_log_store(ctx, record, l);
+  record->seq = ctx->meta_log_seq;
+  record->timestamp = now;
+  record->op = op;
+  record->len = len;
+  
+  return sizeof(struct meta_record);
 }
 
-int exafs_log_store(struct exafs_ctx * ctx, void * obj, int len) {
+int exafs_record_crc(struct meta_record * record) {
+
+  int len = sizeof(struct meta_record)+record->len;
+  
+  // Compute CRC on header + data
+  uint32_t crc = exafs_crc(record, len, 0);
+
+  char * crc_p = ((char *)record)+len;
+  
+  *((uint32_t *)crc_p) = crc;
+  
+  return sizeof(crc);
+}
+
+int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
 
   int res = ctx->write(ctx, ctx->meta_log_head, obj, len);
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_log_store at object %d (size=%d) -> res=%d", ctx->meta_log_head, len, res);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_store at object %d (size=%d) -> res=%d", ctx->meta_log_head, len, res);
 
   if (res < len) {
 
@@ -87,5 +110,67 @@ int exafs_log_store(struct exafs_ctx * ctx, void * obj, int len) {
   
   ctx->meta_log_head++;
   
+  return 0;
+}
+
+int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay_record: seq=%d t=%lld op=%d len=%d", record->seq, record->timestamp, record->op, record->len);
+  
+  int len = sizeof(struct meta_record)+record->len;
+  
+  // Compute CRC on header + data
+  uint32_t crc = exafs_crc(record, len, 0);
+
+  char * crc_p = ((char *)record)+len;
+
+  if (*((uint32_t *)crc_p) != crc) {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay_record --> bad crc");
+    
+    return -1;
+  }
+
+  char * data = ((char *)record)+sizeof(struct meta_record);
+
+  switch (record->op) {
+
+    case EXAFS_OP_CREATE_INODE:
+
+      exafs_inode_create(ctx, (struct exafs_inode_meta *)data, record->timestamp);
+
+      break;
+
+    case EXAFS_OP_LINK:
+
+      exafs_inode_link(ctx, (struct exafs_dir_entry_meta *)data, record->timestamp);
+
+      break;
+
+    default:
+
+      break;
+  }
+  
+  return 0;
+}
+
+int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
+
+  char * data = (char *)obj;
+  
+  int offset = 0;
+
+  while (offset < len) {
+
+    struct meta_record * record = (struct meta_record *)(data+offset);
+
+    //if (record->seq > ctx->)
+
+    exafs_meta_replay_record(ctx, record);
+
+    offset += sizeof(struct meta_record)+record->len+sizeof(uint32_t);
+  }
+
   return 0;
 }

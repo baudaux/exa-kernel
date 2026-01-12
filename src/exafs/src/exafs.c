@@ -24,6 +24,8 @@
 #include <sys/sysmacros.h>
 #include <dirent.h>
 
+#include <time.h>
+
 #include "exafs.h"
 #include "exafs_inode.h"
 #include "exafs_meta.h"
@@ -189,17 +191,17 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   // Metadata log head is reset
   ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
-
+  
   // Metadata log seq is reset
   ctx->meta_log_seq = 1;
-
+  
   // Inode seq is reset
   ctx->last_ino = EXAFS_START_INO;
 
   exafs_mkdir_at2(ctx, 0, EXAFS_ROOT_INO, "/");
-
+  
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_format: res=%d", res);
-
+  
   return res;
 }
 
@@ -218,6 +220,47 @@ int exafs_mkdir(struct exafs_ctx * ctx, const char * path) {
 int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
+    
+  if (exafs_inode_entry_exists(ctx, child_ino, path)) {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: error, inode %d already exists", child_ino);
+
+    return -1;
+  }
+
+  time_t now = time(NULL);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: time=%lld (%d)", now, sizeof(time_t));
+  
+  char * recordset = (char *)malloc(4096);
+
+  int recordset_length = exafs_inode_record(ctx, child_ino, S_IFDIR | S_IRWXU, now, recordset); // inode for subdir
+
+  if (parent_ino) { // root has no parent
+    
+    recordset_length += exafs_inode_link_record(ctx, parent_ino, child_ino, path, now, recordset+recordset_length);
+  }
+
+  recordset_length += exafs_inode_link_record(ctx, child_ino, child_ino, ".", now, recordset+recordset_length);
+
+  uint64_t top_ino = (parent_ino)?parent_ino:child_ino; // For handling case of root
+
+  recordset_length += exafs_inode_link_record(ctx, child_ino, top_ino, "..", now, recordset+recordset_length);
+
+  int res = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  if (!res) {
+
+    res = exafs_meta_replay(ctx, recordset, recordset_length);
+  }
+
+  free(recordset);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: res=%d", res);
+  
+  return res;
+
+#if OLD
 
   char * recordset = malloc(4096);
   
@@ -288,6 +331,9 @@ int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_
   }
   
   return 0;
+
+#endif
+  
 }
 
 int exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {

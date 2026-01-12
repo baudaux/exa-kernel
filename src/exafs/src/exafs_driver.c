@@ -54,7 +54,7 @@ struct exafs_dev;
 
 struct device_ops {
 
-  int (*open)(struct exafs_dev * dev, const char *pathname, int flags, mode_t mode, pid_t pid, unsigned short minor);
+  int (*open)(struct exafs_dev * dev, const char *pathname, int flags, mode_t mode, pid_t pid);
   ssize_t (*read)(struct exafs_dev * dev, int fd, void * buf, size_t count);
   ssize_t (*write)(struct exafs_dev * dev, int fildes, const void * buf, size_t nbyte);
   int (*ioctl)(struct exafs_dev * dev, int fildes, int request, ... /* arg */);
@@ -74,6 +74,7 @@ struct exafs_dev {
   struct exafs_ctx exafs_ctx;
   struct exafs_cfg exafs_config;
   struct device_ops * ops;
+  unsigned short minor;
 };
 
 struct fd_entry {
@@ -84,12 +85,8 @@ struct fd_entry {
   char pathname[1024];
   int flags;
   unsigned short mode;
-  mode_t type;
-  unsigned int size;
+  uint32_t ino;
   unsigned int offset;
-  char * data;
-  unsigned int data_size;
-  void * exafs_handle;
   int unlink_pending;
 };
 
@@ -118,7 +115,7 @@ static int last_fd = 0;
 
 static struct fd_entry fds[NB_FD_MAX];
 
-int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, mode_t type, unsigned int size, void * exafs_handle) {
+int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int flags, unsigned short mode, uint32_t ino) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs:add_fd_entry -> %d %d %s", pid, minor, pathname);
   
@@ -134,10 +131,8 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       strcpy(fds[i].pathname, pathname);
       fds[i].flags = flags;
       fds[i].mode = mode;
-      fds[i].type = type;
-      fds[i].size = size;
+      fds[i].ino = ino;
       fds[i].offset = 0;
-      fds[i].exafs_handle = exafs_handle;
       fds[i].unlink_pending = 0;
 
       emscripten_log(EM_LOG_CONSOLE, "<-- exafs:add_fd_entry : remote_fd=%d", last_fd);
@@ -309,7 +304,24 @@ static int exafs_driver_close(struct exafs_dev * dev, int fd) {
 
 static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, struct stat * stat) {
 
-  emscripten_log(EM_LOG_CONSOLE,"exafs_stat: %s", pathname);
+  emscripten_log(EM_LOG_CONSOLE,"exafs_driver: --> exafs_stat: %s", pathname);
+
+  uint32_t ino = exafs_inode_find(&(dev->exafs_ctx), pathname);
+
+  emscripten_log(EM_LOG_CONSOLE,"exafs_stat: found ino=%d", ino);
+  
+  if (!ino) {
+
+    return -1;
+  }
+
+  stat->st_dev = makedev(major, dev->minor);
+
+  exafs_inode_stat(&(dev->exafs_ctx), ino, stat);
+
+  emscripten_log(EM_LOG_CONSOLE,"exafs_driver: <-- exafs_stat: mode=%x size=%d", stat->st_mode, stat->st_size);
+  
+  return 0;
   
   //struct lfs_info info;
 
@@ -353,12 +365,41 @@ static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, stru
   return exafs_errno(res);
 }
 
-static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
+static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid) {
 
-  emscripten_log(EM_LOG_CONSOLE,"exafs_open: %d %d %s", flags, mode, pathname);
+  emscripten_log(EM_LOG_CONSOLE,"exafs_driver: open: %d %d %s", flags, mode, pathname);
 
   int _errno;
   struct stat stat;
+
+  uint32_t ino = exafs_inode_find(&(dev->exafs_ctx), pathname);
+
+  if (ino) {
+
+    struct stat stat;
+
+    exafs_inode_stat(&(dev->exafs_ctx), ino, &stat);
+
+    if ( (stat.st_mode & S_IFREG) && (flags & O_DIRECTORY)) {   // Error pathname is not a directory
+	return -ENOTDIR;
+    }
+
+    int fd = add_fd_entry(pid, dev-> minor, pathname, flags, mode, ino);
+
+    if (fd >= 0) {
+
+      return fd;
+    }
+
+    
+  }
+  else if (flags & O_CREAT) {
+
+    //TODO
+  }
+
+  return -ENOENT;
+  
 
   _errno = -1; //localfs_stat(dev, pathname, &stat);
 
@@ -420,10 +461,10 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
 
     if (_errno == 0) {
       
-      int fd = add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
+      /*int fd = add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
 
       if (fd >= 0)
-	return fd;
+      return fd;*/
       
       _errno = ENOMEM;
     }
@@ -566,6 +607,7 @@ int register_device(unsigned short min, struct device_ops * dev_ops) {
   struct message * msg = (struct message *)&buf2[0];
 
   devices[min].ops = dev_ops;
+  devices[min].minor = min;
   
   msg->msg_id = REGISTER_DEVICE;
   msg->_u.dev_msg.dev_type = FS_DEV;
@@ -936,7 +978,6 @@ int main() {
   for (int i = 0; i < NB_FD_MAX; ++i) {
     
     fds[i].fd = -1;
-    fds[i].data = NULL;
   }
 
   int fd = open("/dev/tty1", O_WRONLY | O_NOCTTY);
@@ -1022,7 +1063,9 @@ int main() {
 
 	register_home();
       }
-      else if (msg->_u.dev_msg.minor > 0) {
+      else if (msg->_u.dev_msg.minor > 0)
+#endif
+	{
 
 	char mnt_path[256];
 
@@ -1046,7 +1089,6 @@ int main() {
 	
 	sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
       }
-      #endif
     }
     else if (msg->msg_id == (MOUNT|0x80)) {
 
@@ -1069,7 +1111,7 @@ int main() {
 
 	struct exafs_dev * dev = get_device(msg->_u.open_msg.minor);
 
-	remote_fd = dev->ops->open(dev, (const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+	remote_fd = dev->ops->open(dev, (const char *)(msg->_u.open_msg.pathname), msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid);
 
       }
       else { // open at dir
@@ -1101,11 +1143,11 @@ int main() {
 
 	  struct exafs_dev * dev = get_device(msg->_u.open_msg.minor);
 
-	  remote_fd = dev->ops->open(dev, (const char *)path, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid, msg->_u.open_msg.minor);
+	  remote_fd = dev->ops->open(dev, (const char *)path, msg->_u.open_msg.flags, msg->_u.open_msg.mode, msg->pid);
 	}
       }
 
-      emscripten_log(EM_LOG_CONSOLE, "remotefs: OPEN -> remote_fd=%d", remote_fd);
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: OPEN -> remote_fd=%d", remote_fd);
 
       if (remote_fd >= 0) {
 
@@ -1333,10 +1375,10 @@ int main() {
     }
     else if (msg->msg_id == CHDIR) {
 
-      emscripten_log(EM_LOG_CONSOLE, "exafs: CHDIR from %d", msg->pid);
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: CHDIR from %d", msg->pid);
 
       struct stat stat_buf;
-
+      
       struct exafs_dev * dev = get_device(msg->_u.cwd2_msg.minor);
 
       msg->_errno = dev->ops->stat(dev, (const char *)(msg->_u.cwd2_msg.buf), &stat_buf);

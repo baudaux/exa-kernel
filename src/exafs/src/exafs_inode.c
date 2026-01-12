@@ -14,6 +14,7 @@
 #include "exafs_meta.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -38,6 +39,7 @@ static inline unsigned fold64_to_32(uint64_t h) {
         hashv = fold64_to_32(h64);                                  \
     } while (0)
 
+#if OLD
 int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_create ino=%d mode=%07o", ino, mode);
@@ -84,7 +86,7 @@ int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void
   res = exafs_record_store(ctx, record);
 
   free(record);
-
+  
   emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_store -> res=%d", res);
 
   if (res < 0) {
@@ -226,4 +228,241 @@ int exafs_inode_unlink(struct exafs_ctx * ctx, uint32_t parent_ino, const char *
   }
   
   return -1;
+}
+#endif // OLD
+
+int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
+
+  struct exafs_inode * parent_inode = NULL;
+  
+  HASH_FIND_INT( ctx->inode_table, &parent_ino, parent_inode );
+
+  if (!parent_inode) {
+
+    return 0;
+  }
+
+  struct exafs_dir_entry * e = NULL;
+
+  HASH_FIND_STR( parent_inode->entry_table, path, e);
+
+  if (e) {
+    
+    return 0;
+  }
+
+  return 1;
+}
+
+int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_record: ino=%d", ino);
+  
+  int record_size = sizeof(struct exafs_inode_meta);
+  
+  int header_len = exafs_record_header(ctx, EXAFS_OP_CREATE_INODE, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_inode_meta * inode = (struct exafs_inode_meta *)(ptr+header_len);
+  
+  inode->ino = ino;
+  inode->size = 0;
+  inode->atime = now;
+  inode->btime = now;
+  inode->ctime = now;
+  inode->mtime = now;
+  inode->mode = mode;
+  inode->uid = 1;
+  inode->gid = 1;
+
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta, time_t now) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_create: ino=%d", inode_meta->ino);
+  
+  struct exafs_inode * inode = (struct exafs_inode *)malloc(sizeof(struct exafs_inode));
+
+  if (!inode) {
+
+    return -1;
+  }
+  
+  inode->ino = inode_meta->ino;
+  inode->size = inode_meta->size;
+  inode->atime = inode_meta->atime;
+  inode->btime = inode_meta->btime;
+  inode->ctime = inode_meta->ctime;
+  inode->mtime = inode_meta->mtime;
+  inode->mode = inode_meta->mode;
+  inode->uid = inode_meta->uid;
+  inode->gid = inode_meta->gid;
+  
+  inode->nlink = 0;
+  inode->entry_table = NULL;
+
+  HASH_ADD_INT( ctx->inode_table, ino, inode );
+  
+  return 0;
+}
+
+int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, time_t now, char * ptr) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_link_record: parent_ino=%d ino=%d path=%s", parent_ino, child_ino, path);
+  
+  int record_size = sizeof(struct exafs_dir_entry_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_LINK, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_dir_entry_meta * entry = (struct exafs_dir_entry_meta *)(ptr+header_len);
+
+  entry->parent_ino = parent_ino;
+  entry->ino = child_ino;
+  
+  strcpy(entry->path, path);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta, time_t now) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_link: parent_ino=%d ino=%d path=%s", entry_meta->parent_ino, entry_meta->ino, entry_meta->path);
+
+  struct exafs_dir_entry * dir_entry = (struct exafs_dir_entry *)malloc(sizeof(struct exafs_dir_entry));
+
+  if (!dir_entry) {
+
+    return -1;
+  } 
+
+  strcpy(dir_entry->path, entry_meta->path);
+  dir_entry->ino = entry_meta->ino;
+
+  struct exafs_inode * parent_inode = NULL;
+  
+  HASH_FIND_INT( ctx->inode_table, &(entry_meta->parent_ino), parent_inode );
+
+  if (!parent_inode) {
+
+    free(dir_entry);
+    return -1;
+  }
+
+  HASH_ADD_STR( parent_inode->entry_table, path, dir_entry );
+  
+  return 0;
+}
+
+uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * path) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find path=%s", path);
+
+  uint32_t ino = EXAFS_ROOT_INO;
+  struct exafs_inode * inode = NULL;
+  struct exafs_dir_entry * e = NULL;
+
+  char * tmp = (char *)malloc(PATHNAME_LEN_MAX);
+  
+  if (!path || (strchr(path, '/') != path) ) { // path shall start by '/'
+
+    return 0;
+  }
+
+  char * ptr = path+1;
+
+  while (1) {
+    
+    inode = NULL;
+
+    HASH_FIND_INT( ctx->inode_table, &ino, inode );
+
+    if (!inode) {
+
+      return 0;
+    }
+
+    char * s = strchr(ptr, '/');
+
+    if (!s) { // last node
+
+      e = NULL;
+
+      HASH_FIND_STR( inode->entry_table, ptr, e);
+
+      free(tmp);
+      
+      if (e) {
+	
+	return e->ino;
+      }
+      else {
+
+	return 0;
+      }
+    }
+    else {
+
+      strncpy(tmp, ptr, s-ptr);
+      tmp[s-ptr] = 0;
+
+      e = NULL;
+      
+      HASH_FIND_STR( inode->entry_table, tmp, e);
+
+      if (!e) {
+
+	free(tmp);
+
+	return 0;
+      }
+      else {
+
+	ino = e->ino;
+	
+	ptr = s+1;
+      }
+    }
+  }
+  
+  return 0;
+}
+
+int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_stat ino=%d", ino);
+
+  if (!stat) {
+
+    return -1;
+  }
+  
+  struct exafs_inode * inode = NULL;
+
+  HASH_FIND_INT( ctx->inode_table, &ino, inode );
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  //stat->dev_t      st_dev;      /* ID of device containing file */
+  stat->st_ino = ino;      /* Inode number */
+  stat->st_mode = inode->mode;     /* File type and mode */
+  stat->st_nlink = inode->nlink;    /* Number of hard links */
+  stat->st_uid = inode->uid;      /* User ID of owner */
+  stat->st_gid = inode->gid;      /* Group ID of owner */
+  //dev_t      st_rdev;     /* Device ID (if special file) */
+  stat->st_size = inode->size;     /* Total size, in bytes */
+  stat->st_blksize = 0;  /* Block size for filesystem I/O */
+  stat->st_blocks = 0;
+
+  stat->st_atim.tv_sec = inode->atime;  /* Time of last access */
+  stat->st_mtim.tv_sec = inode->mtime;  /* Time of last modification */
+  stat->st_ctim.tv_sec = inode->ctime;
+  
+  return 0;
 }
