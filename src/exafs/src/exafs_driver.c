@@ -282,22 +282,20 @@ static int exafs_driver_close(struct exafs_dev * dev, int fd) {
   if (i < 0)
     return -1;
 
-  int res;
+  int res = 0;
 
-  /*if (fds[i].type & S_IFDIR)
-    res = lfs_dir_close(&(dev->lfs), fds[i].lfs_handle);
-  else
-  res = lfs_file_close(&(dev->lfs), fds[i].lfs_handle);*/
-
+  exafs_dir_seek(&(dev->exafs_ctx), fds[i].ino, 0, SEEK_SET);
+  
   if (fds[i].unlink_pending) {
 
     fds[i].fd = -1; // not to take this entry during unlink
-    exafs_driver_unlink(dev, fds[i].pathname, 0);
+    //exafs_driver_unlink(dev, fds[i].pathname, 0);
     fds[i].fd = fd;
   }
   
-  if (res == 0)
+  if (res == 0) {
     del_fd_entry(i);
+  }
   
   return exafs_errno(res);
 }
@@ -380,7 +378,7 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
 
     exafs_inode_stat(&(dev->exafs_ctx), ino, &stat);
 
-    if ( (stat.st_mode & S_IFREG) && (flags & O_DIRECTORY)) {   // Error pathname is not a directory
+    if ( (!(stat.st_mode & S_IFDIR)) && (flags & O_DIRECTORY)) {   // Error pathname is not a directory
 	return -ENOTDIR;
     }
 
@@ -481,14 +479,6 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
   
 }
 
-struct __dirent {
-    ino_t d_ino;
-    off_t d_off;
-    unsigned short d_reclen;
-    unsigned char d_type;
-    char d_name[1];
-  };
-
 static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_t count) {
 
   int i = find_fd_entry(fd);
@@ -496,48 +486,45 @@ static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf,
   if (i < 0)
     return -EBADF;
   
-  int res = 1;
+  int res = 0;
   int len = 0;
+  
+  struct __dirent * dir_entry = (struct __dirent *)malloc(sizeof(struct __dirent)+PATHNAME_LEN_MAX);
 
-  /*
-  struct lfs_info info;
-
-  while (res > 0) {
+  while (res >= 0) {
     
-    res = -1; //lfs_dir_read(&(dev->lfs), fds[i].lfs_handle, &info);
+    res = exafs_dir_read(&(dev->exafs_ctx), fds[i].ino, dir_entry);
 
-    if (res > 0) {
+    if (res >= 0) {
     
       struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
 
-      if ((len+sizeof(struct __dirent)+strlen(info.name)) < count) {  // there is space for this entry
+      if ((len+sizeof(struct __dirent)+strlen(dir_entry->d_name)) < count) {  // there is space for this entry
 
-	strcpy(dirent_ptr->d_name, info.name);
+	strcpy(dirent_ptr->d_name, dir_entry->d_name);
+
+	emscripten_log(EM_LOG_CONSOLE, "exafs_driver_getdents: ino=%d -> entry=%s", fds[i].ino, dirent_ptr->d_name);
 	
-	if (info.type == LFS_TYPE_DIR){
-	  dirent_ptr->d_type = DT_DIR;
-	}
-	else {
-	  dirent_ptr->d_type = DT_REG;
-	}
+	dirent_ptr->d_type = dir_entry->d_type;
 	
 	dirent_ptr->d_reclen = sizeof(struct __dirent) + strlen(dirent_ptr->d_name);
-	  
+	
 	len += dirent_ptr->d_reclen;
-
+	
 	dirent_ptr->d_off = len;	  
       }
       else {
 
 	// Unread
-
-	lfs_soff_t off = -1; //lfs_dir_tell(&(dev->lfs), fds[i].lfs_handle);
-	//lfs_dir_seek(&(dev->lfs), fds[i].lfs_handle, off-1);
 	
-	res = 0;
+	exafs_dir_seek(&(dev->exafs_ctx), fds[i].ino, -1, SEEK_CUR);
+	
+	res = -1;
       }
     }
-    }*/
+    }
+
+  free(dir_entry);
   
   return len;
 }

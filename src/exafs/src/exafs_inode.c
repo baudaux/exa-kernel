@@ -15,6 +15,8 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <dirent.h>
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -273,6 +275,7 @@ int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time
   inode->mode = mode;
   inode->uid = 1;
   inode->gid = 1;
+  inode->nlink = 0;
 
   int crc_len = exafs_record_crc((struct meta_record *)ptr);
   
@@ -299,9 +302,11 @@ int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_m
   inode->mode = inode_meta->mode;
   inode->uid = inode_meta->uid;
   inode->gid = inode_meta->gid;
+  inode->nlink = inode_meta->nlink;
   
-  inode->nlink = 0;
   inode->entry_table = NULL;
+
+  inode->read_offset = 0;
 
   HASH_ADD_INT( ctx->inode_table, ino, inode );
   
@@ -337,7 +342,7 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
   if (!dir_entry) {
 
     return -1;
-  } 
+  }
 
   strcpy(dir_entry->path, entry_meta->path);
   dir_entry->ino = entry_meta->ino;
@@ -352,7 +357,19 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
     return -1;
   }
 
+  struct exafs_inode * child_inode = NULL;
+  
+  HASH_FIND_INT( ctx->inode_table, &(entry_meta->ino), child_inode );
+
+  if (!child_inode) {
+
+    free(dir_entry);
+    return -1;
+  }
+
   HASH_ADD_STR( parent_inode->entry_table, path, dir_entry );
+
+  child_inode->nlink++;
   
   return 0;
 }
@@ -463,6 +480,116 @@ int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
   stat->st_atim.tv_sec = inode->atime;  /* Time of last access */
   stat->st_mtim.tv_sec = inode->mtime;  /* Time of last modification */
   stat->st_ctim.tv_sec = inode->ctime;
+  
+  return 0;
+}
+
+int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_entry) {
+
+  struct exafs_inode * inode = NULL;
+
+  if (!dir_entry) {
+
+    return -1;
+  }
+
+  HASH_FIND_INT( ctx->inode_table, &ino, inode );
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  if (!(inode->mode & S_IFDIR)) { // inode is not a dir
+
+    return -1;
+  }
+
+  struct exafs_dir_entry * e;
+  
+  int i = 0;
+
+  for (e = inode->entry_table; e != NULL; e = e->hh.next, i++) {
+    
+    if (i >= inode->read_offset) {
+
+      struct exafs_inode * child_inode = NULL;
+
+      HASH_FIND_INT( ctx->inode_table, &(e->ino), child_inode );
+
+      if (child_inode) {
+
+	strcpy(dir_entry->d_name, e->path);
+
+	switch(child_inode->mode & S_IFMT) {
+
+	   case S_IFBLK:
+	     dir_entry->d_type = DT_BLK;
+	     break;
+	   case S_IFCHR:
+	     dir_entry->d_type = DT_CHR;
+	     break;
+           case S_IFDIR:
+	     dir_entry->d_type = DT_DIR;
+	     break;
+           case S_IFIFO:
+	     dir_entry->d_type = DT_FIFO;
+	     break;
+           case S_IFLNK:
+	     dir_entry->d_type = DT_LNK;
+	     break;
+           case S_IFREG:
+	     dir_entry->d_type = DT_REG;
+	     break;
+           case S_IFSOCK:
+	     dir_entry->d_type = DT_SOCK;
+	     break;
+	   default:
+	     dir_entry->d_type = DT_REG;
+	     break;
+	}
+	
+	inode->read_offset = i+1;
+
+	return 0;
+      }
+    }
+  }
+  
+  return -1;
+}
+
+int exafs_dir_seek(struct exafs_ctx * ctx, uint32_t ino, int64_t offset, int whence) {
+
+  struct exafs_inode * inode = NULL;
+
+  HASH_FIND_INT( ctx->inode_table, &ino, inode );
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  if (!(inode->mode & S_IFDIR)) { // inode is not a dir
+
+    return -1;
+  }
+
+  switch(whence) {
+
+    case SEEK_SET:
+
+      inode->read_offset = offset;
+      break;
+
+    case SEEK_CUR:
+
+      inode->read_offset += offset;
+      break;
+      
+    default:
+      break;
+  }
   
   return 0;
 }

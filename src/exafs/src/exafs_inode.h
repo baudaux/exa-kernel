@@ -52,6 +52,7 @@ struct exafs_inode_meta {
   uint32_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint32_t nlink;
 };
 
 struct exafs_inode {
@@ -65,15 +66,26 @@ struct exafs_inode {
   uint32_t mode;
   uint32_t uid;
   uint32_t gid;
+  uint32_t nlink;
   
   //uint32_t extent_head;
   
   // No need to store in metadata log after here
-  uint32_t nlink;
+  
   struct exafs_dir_entry * entry_table;
+
+  uint64_t read_offset;
 
   UT_hash_handle hh;
 };
+
+struct __dirent {
+    ino_t d_ino;
+    off_t d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[1];
+  };
 
 int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
 
@@ -86,6 +98,10 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
 uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * pathname);
 
 int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat);
+
+int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_entry);
+int exafs_dir_seek(struct exafs_ctx * ctx, uint32_t ino, int64_t offset, int whence);
+
 
 #if OLD
 int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr);
