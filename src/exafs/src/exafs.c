@@ -198,34 +198,29 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   // Inode seq is reset
   ctx->last_ino = EXAFS_START_INO;
 
-  exafs_mkdir_at2(ctx, 0, EXAFS_ROOT_INO, "/");
+  exafs_mknod_at2(ctx, 0, EXAFS_ROOT_INO, S_IFDIR | S_IRWXU, "/");
   
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_format: res=%d", res);
   
   return res;
 }
 
-int exafs_mkdir(struct exafs_ctx * ctx, const char * path) {
+uint32_t exafs_mkdir(struct exafs_ctx * ctx, uint32_t mode, const char * path) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir: path=%s", path);
 
-  // Find parent inode
-
-  // Create inode
-  // exfs_mkdir_at
-  
-  return -1;
+  return exafs_mknod(ctx, mode | S_IFDIR,  path);
 }
 
-int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path) {
-
+uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, uint32_t mode, const char * path) {
+ 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
     
   if (exafs_inode_entry_exists(ctx, child_ino, path)) {
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: error, inode %d already exists", child_ino);
 
-    return -1;
+    return 0;
   }
 
   time_t now = time(NULL);
@@ -234,119 +229,118 @@ int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_
   
   char * recordset = (char *)malloc(4096);
 
-  int recordset_length = exafs_inode_record(ctx, child_ino, S_IFDIR | S_IRWXU, now, recordset); // inode for subdir
+  int recordset_length = exafs_inode_record(ctx, child_ino, mode, now, recordset); // inode for subdir
 
   if (parent_ino) { // root has no parent
     
     recordset_length += exafs_inode_link_record(ctx, parent_ino, child_ino, path, now, recordset+recordset_length);
   }
 
-  recordset_length += exafs_inode_link_record(ctx, child_ino, child_ino, ".", now, recordset+recordset_length);
-
-  uint64_t top_ino = (parent_ino)?parent_ino:child_ino; // For handling case of root
-
-  recordset_length += exafs_inode_link_record(ctx, child_ino, top_ino, "..", now, recordset+recordset_length);
-
-  int res = exafs_meta_store(ctx, recordset, recordset_length);
-  
-  if (!res) {
-
-    res = exafs_meta_replay(ctx, recordset, recordset_length);
-  }
-
-  free(recordset);
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: res=%d", res);
-  
-  return res;
-
-#if OLD
-
-  char * recordset = malloc(4096);
-  
-  int res = exafs_inode_create(ctx, child_ino, S_IFDIR, recordset); // inode for subdir
-  
-  if (res < 0) {
-    
-    return -1;
-  }
-
-  int recordset_length = res;
-
   if (parent_ino) {
 
-    res = exafs_inode_link(ctx, parent_ino, child_ino, path, recordset+recordset_length);
-
-    if (res < 0) {
-
-      exafs_inode_delete(ctx, child_ino);
-      return -1;
-    }
-
-    recordset_length += res;
-  }
-
-  res = exafs_inode_link(ctx, child_ino, child_ino, ".", recordset+recordset_length);
-  
-  if (res < 0) {
-
-    if (parent_ino) {
-      exafs_inode_unlink(ctx, parent_ino, path);
-    }
+    struct stat stat;
+    uint32_t parent_nlink;
     
-    exafs_inode_delete(ctx, child_ino);
-    return -1;
-  }
+    exafs_inode_stat(ctx, parent_ino, &stat);
 
-  recordset_length += res;
+    if (mode & S_IFDIR) {
 
-  uint64_t top_ino = (parent_ino)?parent_ino:child_ino; // For handling case of root
-
-  res = exafs_inode_link(ctx, child_ino, top_ino, "..", recordset+recordset_length);
-  
-  if (res < 0) {
-
-    if (parent_ino) {
-      exafs_inode_unlink(ctx, parent_ino, path);
-    }
+      parent_nlink = stat.st_nlink+1;
     
-    exafs_inode_delete(ctx, child_ino);
-    return -1;
+      recordset_length += exafs_inode_set_nlink_record(ctx, parent_ino, parent_nlink, now, recordset+recordset_length); // '..' points to parent
+    }
+
+    uint64_t parent_size = stat.st_size + PATHNAME_LEN_MAX+sizeof(uint32_t); // path + ino
+
+    recordset_length += exafs_inode_set_size_record(ctx, parent_ino, parent_size, now, recordset+recordset_length);
+
+    recordset_length += exafs_inode_set_mtime_record(ctx, parent_ino, now, recordset+recordset_length);
   }
 
-  recordset_length += res;
+  uint32_t child_nlink = 1;
 
-  res = exafs_log_store(ctx, recordset, recordset_length);
+  if (mode & S_IFDIR) {
+
+    child_nlink++; // in case of dir, '.' also points to it
+  }
+  
+  recordset_length += exafs_inode_set_nlink_record(ctx, child_ino, child_nlink, now, recordset+recordset_length);
+
+  if (mode & S_IFDIR) {
+
+    recordset_length += exafs_inode_link_record(ctx, child_ino, child_ino, ".", now, recordset+recordset_length);
+
+    uint32_t top_ino = (parent_ino)?parent_ino:child_ino; // For handling case of root
+
+    recordset_length += exafs_inode_link_record(ctx, child_ino, top_ino, "..", now, recordset+recordset_length);
+  
+    recordset_length += exafs_inode_set_size_record(ctx, child_ino, 2*(PATHNAME_LEN_MAX+sizeof(uint32_t)), now, recordset+recordset_length);
+  }
+
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  if (!err) {
+
+    err = exafs_meta_replay(ctx, recordset, recordset_length);
+  }
 
   free(recordset);
 
-  if (res < 0) {
+  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: err=%d", err);
 
-    if (parent_ino) {
-      exafs_inode_unlink(ctx, parent_ino, path);
-    }
+  if (err < 0) {
     
-    exafs_inode_delete(ctx, child_ino);
-    return -1;
+    return 0;
   }
   
-  return 0;
-
-#endif
-  
+  return child_ino; 
 }
 
-int exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
+uint32_t exafs_mknod_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path) {
+ 
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mknod_at: parent_ino=%d mode=%x path=%s", parent_ino, mode, path);
 
-  int res = exafs_mkdir_at2(ctx, parent_ino, ctx->last_ino, path);
+  uint32_t ino = exafs_mknod_at2(ctx, parent_ino, ctx->last_ino, mode, path);
 
-  if (res < 0) {
+  if (!ino) {
 
-    return -1;
+    return 0;
   }
 
   ctx->last_ino++;
   
-  return 0;
+  return ino;
 }
 
+uint32_t exafs_mknod(struct exafs_ctx * ctx,  uint32_t mode, const char * path) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mknod: mode=%x path=%s", mode, path);
+
+  char * leaf = strrchr(path, '/');
+
+  if (!leaf) {
+
+    return 0;
+  }
+
+  uint32_t ino = exafs_inode_find_n(ctx, path, leaf-path/*, flags & O_NOFOLLOW*/);
+
+  if (!ino) {
+
+    return 0;
+  }
+
+  return exafs_mknod_at(ctx, ino, mode, leaf+1);
+}
+
+uint32_t exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path) {
+  
+  uint32_t ino = exafs_mknod_at(ctx, parent_ino, mode | S_IFDIR,  path);
+
+  if (!ino) {
+
+    return 0;
+  }
+  
+  return ino;
+}

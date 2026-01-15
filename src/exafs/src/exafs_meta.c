@@ -28,47 +28,6 @@
 #define emscripten_log(...)
 #endif
 
-#if OLD
-struct meta_record * exafs_record_create(struct exafs_ctx * ctx, enum meta_op op, void * buffer, int len, void * ptr) {
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_record_store: op=%d", op);
-
-  int l = sizeof(struct meta_record)+len+sizeof(uint32_t);
-  
-  struct meta_record * record;
-
-  if (ptr) {
-
-    record = ptr;
-  }
-  else {
-
-    record = malloc(l); // includes last crc
-
-    if (!record) {
-
-      return NULL;
-    }
-  }
-
-  record->seq = ctx->meta_log_seq;
-  record->op = op;
-  record->len = len;
-
-  char * data = (char *)record;
-
-  memcpy(data+sizeof(struct meta_record), buffer, len);
-
-  uint32_t crc = exafs_crc(data, l - sizeof(uint32_t), 0);
-
-  uint32_t * crc_p = (data+(l-sizeof(uint32_t)));
-
-  *crc_p = crc;
-
-  return record;
-}
-#endif // OLD
-
 int exafs_record_header(struct exafs_ctx * ctx, enum meta_op op, time_t now, int len, struct meta_record * record) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_header: op=%d len=%d", op, len);
@@ -137,14 +96,32 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
     case EXAFS_OP_CREATE_INODE:
 
-      exafs_inode_create(ctx, (struct exafs_inode_meta *)data, record->timestamp);
-
+      exafs_inode_create(ctx, (struct exafs_inode_meta *)data);
       break;
 
     case EXAFS_OP_LINK:
 
-      exafs_inode_link(ctx, (struct exafs_dir_entry_meta *)data, record->timestamp);
+      exafs_inode_link(ctx, (struct exafs_dir_entry_meta *)data);
+      break;
 
+    case EXAFS_OP_INODE_SET_SIZE:
+
+      exafs_inode_set_size(ctx, (struct exafs_set_size_meta *)data);
+      break;
+
+    case EXAFS_OP_INODE_SET_MTIME:
+
+      exafs_inode_set_mtime(ctx, (struct exafs_set_time_meta *)data);
+      break;
+
+    case EXAFS_OP_INODE_SET_NLINK:
+
+      exafs_inode_set_nlink(ctx, (struct exafs_set_nlink_meta *)data);
+      break;
+
+    case EXAFS_OP_WRITE_EXTENT:
+
+      // Do nothing
       break;
 
     default:

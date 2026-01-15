@@ -74,8 +74,6 @@ struct exafs_inode {
   
   struct exafs_dir_entry * entry_table;
 
-  uint64_t read_offset;
-
   UT_hash_handle hh;
 };
 
@@ -87,32 +85,46 @@ struct __dirent {
     char d_name[1];
   };
 
+struct exafs_set_size_meta {
+
+  uint32_t ino;
+  uint64_t size;
+};
+
+struct exafs_set_nlink_meta {
+
+  uint32_t ino;
+  uint32_t nlink;
+};
+
+struct exafs_set_time_meta {
+
+  uint32_t ino;
+  uint64_t time;
+};
+
 int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
 
 int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr);
-int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta, time_t now);
+int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta);
 
 int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, time_t now, char * ptr);
-int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta, time_t now);
+int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta);
 
-uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * pathname);
+int exafs_inode_set_size_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, time_t now, char * ptr);
+int exafs_inode_set_size(struct exafs_ctx * ctx, struct exafs_set_size_meta * meta);
+
+int exafs_inode_set_nlink_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t nlink, time_t now, char * ptr);
+int exafs_inode_set_nlink(struct exafs_ctx * ctx, struct exafs_set_nlink_meta * meta);
+
+int exafs_inode_set_mtime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr);
+int exafs_inode_set_mtime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta);
+
+struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino);
+uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * path);
+uint32_t exafs_inode_find_n(struct exafs_ctx * ctx, const char * path, int len);
 
 int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat);
 
-int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_entry);
-int exafs_dir_seek(struct exafs_ctx * ctx, uint32_t ino, int64_t offset, int whence);
 
-
-#if OLD
-int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr);
-
-int exafs_inode_add(struct exafs_ctx * ctx, struct exafs_inode * inode);
-
-int exafs_inode_delete(struct exafs_ctx * ctx, uint32_t ino);
-
-int exafs_inode_link(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, void * ptr);
-
-int exafs_inode_unlink(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
-#endif
-
-#endif
+#endif // _EXAFS_INODE_H

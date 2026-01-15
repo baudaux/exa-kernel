@@ -85,8 +85,11 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
 int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
-int exafs_mkdir(struct exafs_ctx * ctx, const char * path);
-int exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
-int exafs_mkdir_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path);
+uint32_t exafs_mkdir(struct exafs_ctx * ctx, uint32_t mode, const char * path);
+uint32_t exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path);
+
+uint32_t exafs_mknod(struct exafs_ctx * ctx, uint32_t mode, const char * path);
+uint32_t exafs_mknod_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path);
+uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, uint32_t mode, const char * path);
 
 #endif // _EXAFS_H

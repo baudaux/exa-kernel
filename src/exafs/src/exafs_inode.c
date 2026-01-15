@@ -41,203 +41,9 @@ static inline unsigned fold64_to_32(uint64_t h) {
         hashv = fold64_to_32(h64);                                  \
     } while (0)
 
-#if OLD
-int exafs_inode_create(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, void * ptr) {
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_create ino=%d mode=%07o", ino, mode);
-
-  struct exafs_inode * inode = malloc(sizeof(struct exafs_inode));
-
-  inode->ino = ino;
-  inode->size = 0;
-  inode->mode = mode;
-  inode->nlink = 0;
-  
-  // Add inode in inode table
-  
-  int res = exafs_inode_add(ctx, inode);
-
-  if (res < 0) {
-
-    return -1;
-  }
-
-  struct meta_record * record = exafs_record_create(ctx, EXAFS_OP_CREATE_INODE, inode, sizeof(struct exafs_inode), ptr);
-  
-  if (!record) {
-    
-    return -1;
-  }
-
-  if (!ptr && !record) { // if ptr is not null then record is set in it. So return is null
-    
-    return -1;
-  }
-
-  if (ptr) {
-
-    // we will store the record later for having all records in a same object
-    
-    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_create -> res=%d", res);
-    
-    return sizeof(struct meta_record)+record->len+sizeof(uint32_t);
-  }
-
-  // Store inode creation record
-  
-  res = exafs_record_store(ctx, record);
-
-  free(record);
-  
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_store -> res=%d", res);
-
-  if (res < 0) {
-
-    return -1;
-  }
-  
-  return 0;
-}
-
-int exafs_inode_add(struct exafs_ctx * ctx, struct exafs_inode * inode) {
-
-  uint32_t ino = inode->ino;
-  
-  struct exafs_inode * in = NULL;
-
-  HASH_FIND_INT( ctx->inode_table, &ino, in );
-
-  if (in) { // Not possible to have two inode with same id
-
-    return -1;
-  }
-  
-  HASH_ADD_INT( ctx->inode_table, ino, inode );
-
-#if DEBUG
-
-  unsigned int num_inodes;
-  num_inodes = HASH_COUNT(ctx->inode_table);
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_inode_add OK -> num=%d", num_inodes);
-#endif // DEBUG
-  
-  return 0;
-}
-
-int exafs_inode_delete(struct exafs_ctx * ctx, uint32_t ino) {
-
-  struct exafs_inode * inode = NULL;
-  
-  HASH_FIND_INT( ctx->inode_table, &ino, inode );
-
-  if (inode) {
-  
-    HASH_DEL( ctx->inode_table, inode );
-
-    free(inode);
-
-#if DEBUG
-    unsigned int num_inodes;
-    num_inodes = HASH_COUNT(ctx->inode_table);
-    
-    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_inode_delete OK -> num=%d", num_inodes);
-#endif // DEBUG
-
-    return 0;
-  }
-  
-  return -1;
-}
-
-int exafs_inode_link(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, void * ptr) {
-
-  struct exafs_inode * parent_inode = NULL;
-  struct exafs_inode * child_inode = NULL;
-  
-  HASH_FIND_INT( ctx->inode_table, &parent_ino, parent_inode );
-
-  if (!parent_inode) {
-
-    return -1;
-  }
-
-  HASH_FIND_INT( ctx->inode_table, &child_ino, child_inode );
-
-  if (!child_inode) {
-
-    return -1;
-  }
-
-  struct exafs_dir_entry * e;
-
-  HASH_FIND_STR( parent_inode->entry_table, path, e);
-
-  if (e) {
-
-    return -1;
-  }
-  
-  struct exafs_dir_entry * entry = malloc(sizeof(struct exafs_dir_entry));
-  
-  if (!entry) {
-
-    return -1;
-  }
-
-  entry->ino = child_ino;
-  strcpy(entry->path, path);
-  
-  HASH_ADD_STR( parent_inode->entry_table, path, entry );
-
-  child_inode->nlink++;
-
-  return 0;
-}
-
-int exafs_inode_unlink(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
-
-  struct exafs_inode * parent_inode = NULL;
-  struct exafs_inode * child_inode = NULL;
-  
-  HASH_FIND_INT( ctx->inode_table, &parent_ino, parent_inode );
-
-  if (!parent_inode) {
-
-    return -1;
-  }
-
-  struct exafs_dir_entry * e;
-
-  HASH_FIND_STR( parent_inode->entry_table, path, e);
-
-  if (e) {
-
-    HASH_FIND_INT( ctx->inode_table, &(e->ino), child_inode );
-
-    if (!child_inode) {
-
-      return -1;
-    }
-
-    HASH_DEL( parent_inode->entry_table, e );
-    
-    free(e);
-
-    child_inode->nlink--;
-
-    return 0;
-  }
-  
-  return -1;
-}
-#endif // OLD
-
 int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
 
-  struct exafs_inode * parent_inode = NULL;
-  
-  HASH_FIND_INT( ctx->inode_table, &parent_ino, parent_inode );
+  struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, parent_ino); 
 
   if (!parent_inode) {
 
@@ -282,7 +88,7 @@ int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time
   return header_len+record_size+crc_len;
 }
 
-int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta, time_t now) {
+int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_create: ino=%d", inode_meta->ino);
   
@@ -305,9 +111,7 @@ int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_m
   inode->nlink = inode_meta->nlink;
   
   inode->entry_table = NULL;
-
-  inode->read_offset = 0;
-
+  
   HASH_ADD_INT( ctx->inode_table, ino, inode );
   
   return 0;
@@ -333,7 +137,7 @@ int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_
   return header_len+record_size+crc_len;
 }
 
-int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta, time_t now) {
+int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_link: parent_ino=%d ino=%d path=%s", entry_meta->parent_ino, entry_meta->ino, entry_meta->path);
 
@@ -346,20 +150,16 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
 
   strcpy(dir_entry->path, entry_meta->path);
   dir_entry->ino = entry_meta->ino;
-
-  struct exafs_inode * parent_inode = NULL;
   
-  HASH_FIND_INT( ctx->inode_table, &(entry_meta->parent_ino), parent_inode );
+  struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, entry_meta->parent_ino); 
 
   if (!parent_inode) {
-
+    
     free(dir_entry);
     return -1;
   }
 
-  struct exafs_inode * child_inode = NULL;
-  
-  HASH_FIND_INT( ctx->inode_table, &(entry_meta->ino), child_inode );
+  struct exafs_inode * child_inode = exafs_inode_find_by_id(ctx, entry_meta->ino);
 
   if (!child_inode) {
 
@@ -368,80 +168,183 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
   }
 
   HASH_ADD_STR( parent_inode->entry_table, path, dir_entry );
-
-  child_inode->nlink++;
   
   return 0;
 }
 
+int exafs_inode_set_size_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_set_size_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_SIZE, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_set_size_meta * m = (struct exafs_set_size_meta *)(ptr+header_len);
+
+  m->ino = ino;
+  m->size = size;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_set_size(struct exafs_ctx * ctx, struct exafs_set_size_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  inode->size = meta->size;
+  
+  return 0;
+}
+
+int exafs_inode_set_mtime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_set_time_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_MTIME, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_set_time_meta * m = (struct exafs_set_time_meta *)(ptr+header_len);
+
+  m->ino = ino;
+  m->time = now;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_set_mtime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  inode->mtime = meta->time;
+  
+  return 0;
+}
+
+int exafs_inode_set_nlink_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t nlink, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_set_nlink_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_NLINK, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_set_nlink_meta * m = (struct exafs_set_nlink_meta *)(ptr+header_len);
+
+  m->ino = ino;
+  m->nlink = nlink;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_set_nlink(struct exafs_ctx * ctx, struct exafs_set_nlink_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+  
+  inode->nlink = meta->nlink;
+  
+  return 0;
+}
+
+struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino) {
+
+  struct exafs_inode * inode = NULL;
+
+  HASH_FIND_INT( ctx->inode_table, &ino, inode );
+
+  return inode;
+}
+
+uint32_t exafs_inode_find_n(struct exafs_ctx * ctx, const char * path, int len) {
+
+  char * p = (char *)path;
+
+  char c = p[len];
+  
+  p[len]= 0; // Temporary trunc the string
+  
+  uint32_t ino = exafs_inode_find(ctx, p);
+
+  p[len] = c; // Restore the string
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_inode_find_n: ino=%d", ino);
+  
+  return ino;
+}
+
 uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * path) {
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find path=%s", path);
+  if (!path) {
 
-  uint32_t ino = EXAFS_ROOT_INO;
-  struct exafs_inode * inode = NULL;
-  struct exafs_dir_entry * e = NULL;
-
-  char * tmp = (char *)malloc(PATHNAME_LEN_MAX);
+    return 0;
+  }
   
-  if (!path || (strchr(path, '/') != path) ) { // path shall start by '/'
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find: path=%s", path);
+
+  if (path[0] != '/') { // path shall start by '/'
 
     return 0;
   }
 
-  char * ptr = path+1;
+  if (strcmp(path, "/") == 0) {
 
-  while (1) {
-    
-    inode = NULL;
+    return EXAFS_ROOT_INO;
+  }
+  
+  char * leaf = strrchr(path, '/');
+  
+  uint32_t ino = exafs_inode_find_n(ctx, path, (leaf == path)?1:leaf-path);
 
-    HASH_FIND_INT( ctx->inode_table, &ino, inode );
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_inode_find_n -> ino=%d", ino);
+  
+  if (ino) {
+
+    struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino);
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: find inode -> inode=%x", inode);
 
     if (!inode) {
 
       return 0;
     }
 
-    char * s = strchr(ptr, '/');
+    if (strlen(leaf+1) == 0) {
 
-    if (!s) { // last node
+      if (inode->mode & S_IFDIR) {
 
-      e = NULL;
-
-      HASH_FIND_STR( inode->entry_table, ptr, e);
-
-      free(tmp);
-      
-      if (e) {
-	
-	return e->ino;
+	return ino;
       }
       else {
-
-	return 0;
+	
+	return -1;
       }
     }
-    else {
+    
+    struct exafs_dir_entry * e = NULL;
+    
+    HASH_FIND_STR( inode->entry_table, leaf+1, e);
 
-      strncpy(tmp, ptr, s-ptr);
-      tmp[s-ptr] = 0;
+    emscripten_log(EM_LOG_CONSOLE, "exafs: find entry -> e=%x", e);
 
-      e = NULL;
-      
-      HASH_FIND_STR( inode->entry_table, tmp, e);
-
-      if (!e) {
-
-	free(tmp);
-
-	return 0;
-      }
-      else {
-
-	ino = e->ino;
+    if (e) {
 	
-	ptr = s+1;
-      }
+      return e->ino;
     }
   }
   
@@ -457,9 +360,7 @@ int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
     return -1;
   }
   
-  struct exafs_inode * inode = NULL;
-
-  HASH_FIND_INT( ctx->inode_table, &ino, inode );
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino); 
 
   if (!inode) {
 
@@ -484,112 +385,3 @@ int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
   return 0;
 }
 
-int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_entry) {
-
-  struct exafs_inode * inode = NULL;
-
-  if (!dir_entry) {
-
-    return -1;
-  }
-
-  HASH_FIND_INT( ctx->inode_table, &ino, inode );
-
-  if (!inode) {
-
-    return -1;
-  }
-
-  if (!(inode->mode & S_IFDIR)) { // inode is not a dir
-
-    return -1;
-  }
-
-  struct exafs_dir_entry * e;
-  
-  int i = 0;
-
-  for (e = inode->entry_table; e != NULL; e = e->hh.next, i++) {
-    
-    if (i >= inode->read_offset) {
-
-      struct exafs_inode * child_inode = NULL;
-
-      HASH_FIND_INT( ctx->inode_table, &(e->ino), child_inode );
-
-      if (child_inode) {
-
-	strcpy(dir_entry->d_name, e->path);
-
-	switch(child_inode->mode & S_IFMT) {
-
-	   case S_IFBLK:
-	     dir_entry->d_type = DT_BLK;
-	     break;
-	   case S_IFCHR:
-	     dir_entry->d_type = DT_CHR;
-	     break;
-           case S_IFDIR:
-	     dir_entry->d_type = DT_DIR;
-	     break;
-           case S_IFIFO:
-	     dir_entry->d_type = DT_FIFO;
-	     break;
-           case S_IFLNK:
-	     dir_entry->d_type = DT_LNK;
-	     break;
-           case S_IFREG:
-	     dir_entry->d_type = DT_REG;
-	     break;
-           case S_IFSOCK:
-	     dir_entry->d_type = DT_SOCK;
-	     break;
-	   default:
-	     dir_entry->d_type = DT_REG;
-	     break;
-	}
-	
-	inode->read_offset = i+1;
-
-	return 0;
-      }
-    }
-  }
-  
-  return -1;
-}
-
-int exafs_dir_seek(struct exafs_ctx * ctx, uint32_t ino, int64_t offset, int whence) {
-
-  struct exafs_inode * inode = NULL;
-
-  HASH_FIND_INT( ctx->inode_table, &ino, inode );
-
-  if (!inode) {
-
-    return -1;
-  }
-
-  if (!(inode->mode & S_IFDIR)) { // inode is not a dir
-
-    return -1;
-  }
-
-  switch(whence) {
-
-    case SEEK_SET:
-
-      inode->read_offset = offset;
-      break;
-
-    case SEEK_CUR:
-
-      inode->read_offset += offset;
-      break;
-      
-    default:
-      break;
-  }
-  
-  return 0;
-}

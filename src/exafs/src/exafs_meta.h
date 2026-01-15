@@ -23,6 +23,9 @@ enum meta_op {
   EXAFS_OP_DELETE_INODE,
   EXAFS_OP_LINK,
   EXAFS_OP_UNLINK,
+  EXAFS_OP_INODE_SET_NLINK,
+  EXAFS_OP_INODE_SET_SIZE,
+  EXAFS_OP_INODE_SET_MTIME,
   EXAFS_OP_WRITE_EXTENT,
   EXAFS_OP_TRUNCATE,
   EXAFS_OP_CHMOD,
@@ -33,7 +36,7 @@ enum meta_op {
 struct meta_record {
   
   uint64_t seq;
-  time_t timestamp; // For replaying with original time
+  time_t timestamp;
   uint32_t  op;
   uint32_t len;
   //char  payload[];

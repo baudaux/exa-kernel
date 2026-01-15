@@ -30,6 +30,7 @@
 
 #include "exafs.h"
 #include "exafs_inode.h"
+#include "exafs_io.h"
 
 #include "exafs_local_dev.h"
 
@@ -86,7 +87,7 @@ struct fd_entry {
   int flags;
   unsigned short mode;
   uint32_t ino;
-  unsigned int offset;
+  uint64_t offset;
   int unlink_pending;
 };
 
@@ -243,10 +244,12 @@ static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * b
     return -EACCES;
   }
 
-  ssize_t ret = -1; //lfs_file_write(&(dev->lfs), fds[i].lfs_handle, buf, count);
+  ssize_t ret = exafs_write(&(dev->exafs_ctx), fds[i].ino, buf, count, fds[i].offset);
   
   if (ret < 0)
     ret = -exafs_errno(ret); // Negative value if error
+
+  fds[i].offset += ret;
 
   return ret;
 }
@@ -281,10 +284,6 @@ static int exafs_driver_close(struct exafs_dev * dev, int fd) {
 
   if (i < 0)
     return -1;
-
-  int res = 0;
-
-  exafs_dir_seek(&(dev->exafs_ctx), fds[i].ino, 0, SEEK_SET);
   
   if (fds[i].unlink_pending) {
 
@@ -293,11 +292,9 @@ static int exafs_driver_close(struct exafs_dev * dev, int fd) {
     fds[i].fd = fd;
   }
   
-  if (res == 0) {
-    del_fd_entry(i);
-  }
+  del_fd_entry(i);
   
-  return exafs_errno(res);
+  return 0;
 }
 
 static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, struct stat * stat) {
@@ -370,7 +367,7 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
   int _errno;
   struct stat stat;
 
-  uint32_t ino = exafs_inode_find(&(dev->exafs_ctx), pathname);
+  uint32_t ino = exafs_inode_find(&(dev->exafs_ctx), pathname /*, flags & O_NOFOLLOW*/);
 
   if (ino) {
 
@@ -382,18 +379,37 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
 	return -ENOTDIR;
     }
 
-    int fd = add_fd_entry(pid, dev-> minor, pathname, flags, mode, ino);
+    int fd = add_fd_entry(pid, dev->minor, pathname, flags, mode, ino);
 
     if (fd >= 0) {
 
       return fd;
     }
-
-    
   }
   else if (flags & O_CREAT) {
 
-    //TODO
+    emscripten_log(EM_LOG_CONSOLE,"exafs_driver: create file");
+
+    uint32_t mode2 = mode & ~S_IFMT; // Clear node type
+    
+    mode2 |= S_IFREG;
+    
+    // Create regular file
+    uint32_t ino = exafs_mknod(&(dev->exafs_ctx), mode2, pathname);
+
+    emscripten_log(EM_LOG_CONSOLE,"exafs_driver: file created -> ino=%d", ino);
+    
+    if (ino) {
+
+      int fd = add_fd_entry(pid, dev->minor, pathname, flags, mode2, ino);
+
+      emscripten_log(EM_LOG_CONSOLE,"exafs_driver: file created -> fd=%d", fd);
+
+      if (fd >= 0) {
+      
+	return fd;
+      }
+    }
   }
 
   return -ENOENT;
@@ -493,7 +509,9 @@ static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf,
 
   while (res >= 0) {
     
-    res = exafs_dir_read(&(dev->exafs_ctx), fds[i].ino, dir_entry);
+    res = exafs_dir_read(&(dev->exafs_ctx), fds[i].ino, dir_entry, fds[i].offset);
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_dir_read -> res=%d", res);
 
     if (res >= 0) {
     
@@ -511,13 +529,11 @@ static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf,
 	
 	len += dirent_ptr->d_reclen;
 	
-	dirent_ptr->d_off = len;	  
+	dirent_ptr->d_off = len;
+
+	fds[i].offset++;
       }
       else {
-
-	// Unread
-	
-	exafs_dir_seek(&(dev->exafs_ctx), fds[i].ino, -1, SEEK_CUR);
 	
 	res = -1;
       }
@@ -563,7 +579,14 @@ static int exafs_driver_ftruncate(struct exafs_dev * dev, int fd, int length) {
 
 static int exafs_driver_mkdir(struct exafs_dev * dev, const char * path, int mode) {
 
-  return -1; //localfs_errno(lfs_mkdir(&(dev->lfs), path));
+  uint32_t ino = exafs_mkdir(&(dev->exafs_ctx), mode, path);
+
+  if (!ino) {
+
+    return -EACCES;
+  }
+
+  return 0;
 }
 
 static int exafs_driver_rmdir(struct exafs_dev * dev, const char * path) {
@@ -937,7 +960,10 @@ int register_home() {
 
     if (res == 0) {
 
-      res = exafs_mkdir_at(&(devices[minor].exafs_ctx), EXAFS_ROOT_INO, "home");
+      if (exafs_mkdir_at(&(devices[minor].exafs_ctx), EXAFS_ROOT_INO, S_IRWXU, "home") == 0) {
+
+	res = -1;
+      }
     }
     
     if (res < 0) {
@@ -1020,7 +1046,7 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
-      #ifdef EXAFS_CTL
+#ifdef EXAFS_CTL
 
       devices[minor].ops = &remotefs_ctl_ops;
       
@@ -1032,11 +1058,11 @@ int main() {
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
 
-      #else
+#else
 
       register_home();
       
-      #endif
+#endif
     }
     else if (msg->msg_id == (REGISTER_DEVICE|0x80)) {
 
@@ -1045,7 +1071,7 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
-      #ifdef EXAFS_CTL
+#ifdef EXAFS_CTL
       if (msg->_u.dev_msg.minor == 0) { // lfs_ctl is registered
 
 	register_home();
@@ -1063,6 +1089,7 @@ int main() {
 	  sprintf(mnt_path, "/mnt/%s", current_fs);
 	}
 
+	// ????
 	mkdirat(AT_FDCWD, mnt_path, 0777);
 
 	msg->msg_id = MOUNT;
@@ -1417,28 +1444,21 @@ int main() {
       
       emscripten_log(EM_LOG_CONSOLE, "exafs: FSTAT from %d: %d", msg->pid, msg->_u.fstat_msg.fd);
 
-      struct stat stat_buf;
-
       int i = find_fd_entry(msg->_u.fstat_msg.fd);
 
       if (i >= 0) {
 
 	int min = fds[i].minor;
 
-	stat_buf.st_dev = makedev(major, min);
-	stat_buf.st_ino = (ino_t)&devices[min];
-	stat_buf.st_nlink = 1;	
-	stat_buf.st_uid = 1;
-	stat_buf.st_gid = 1;
-	
-	int _errno = 0;
+	struct stat * stat_buf = (struct stat * )msg->_u.fstat_msg.buf;
 
+	int _errno = 0;
+	
 	struct exafs_dev * dev = get_device(min);
 
-	if ((_errno=dev->ops->stat(dev, (const char *)fds[i].pathname, &stat_buf)) == 0) {
+	if ((_errno=dev->ops->stat(dev, (const char *)fds[i].pathname, stat_buf)) == 0) {
 	
 	  msg->_u.fstat_msg.len = sizeof(struct stat);
-	  memcpy(msg->_u.fstat_msg.buf, &stat_buf, sizeof(struct stat)); 
 	}
 	
 	msg->_errno = _errno;
@@ -1534,7 +1554,7 @@ int main() {
     
     }
     else if (msg->msg_id == MKDIRAT) {
-
+      
       emscripten_log(EM_LOG_CONSOLE, "exafs: MKDIRAT from %d: path=%s", msg->pid, msg->_u.mkdirat_msg.path);
       
       struct exafs_dev * dev = NULL;
