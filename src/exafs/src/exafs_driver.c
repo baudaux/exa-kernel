@@ -94,11 +94,13 @@ struct fd_entry {
 static struct exafs_cfg local_exafs_config = {
 
   .meta_log_size = META_LOG_SIZE,
-  
+
+  .clean_repo = &exafs_local_clean_repo,
   .read = &exafs_local_read,
   .read_range = &exafs_local_read_range,
   .write = &exafs_local_write,
   .write_range = &exafs_local_write_range,
+  .write_rand = &exafs_local_write_rand,
   .delete = &exafs_local_delete,
   .delete_range = &exafs_local_delete_range,
 };
@@ -947,8 +949,10 @@ int register_home() {
   memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
 
   //TOTEST: format each time
-  //int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
-  int res = -1;
+  int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
+  //int res = -1;
+
+  res = 0;
   
   //emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
 

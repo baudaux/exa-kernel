@@ -48,6 +48,6 @@ int exafs_record_crc(struct meta_record * record);
 
 int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len);
 
-int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len);
+uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len);
 
 #endif

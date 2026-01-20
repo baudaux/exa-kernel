@@ -17,11 +17,16 @@
 
 #define META_LOG_SIZE 10000
 
+#define GRP_SIZE 128
+#define SNAPSHOT_SIZE 100000
+
 struct exafs_ctx;
 
+typedef int (*clean_func)(struct exafs_ctx * ctx, const char * repo_name);
 typedef int (*rw_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
-typedef int (*r_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len);
+typedef int (*r_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
 typedef int (*w_range_func)(struct exafs_ctx * ctx, void * buffer, int len);
+typedef int (*w_rand_func)(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
 typedef int (*del_func)(struct exafs_ctx * ctx, uint32_t id);
 typedef int (*del_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
 
@@ -48,29 +53,39 @@ struct exafs_ctx {
   uint32_t meta_log_size;
   uint32_t meta_log_head;
   uint64_t meta_log_seq;
+
+  uint32_t grp_size;
+  uint32_t snapshot_size;
   
   uint32_t last_ino;
   
   struct exafs_inode * inode_table;
-  
+
+  clean_func clean_repo;
   rw_func read;
   r_range_func read_range;
   rw_func write;
   w_range_func write_range;
+  w_rand_func write_rand;
   del_func delete;
   del_range_func delete_range;
 };
 
 struct exafs_cfg {
 
+  clean_func clean_repo;
   rw_func read;
   r_range_func read_range;
   rw_func write;
   w_range_func write_range;
+  w_rand_func write_rand;
   del_func delete;
   del_range_func delete_range;
-
+  
   uint32_t meta_log_size;
+  uint32_t grp_size;
+  uint32_t snapshot_size;
+  
 };
 
 struct extent {

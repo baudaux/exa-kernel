@@ -41,6 +41,16 @@ struct exafs_dir_entry {
   UT_hash_handle hh;
 };
 
+struct exafs_chunk_entry {
+
+  uint64_t offset;
+  uint32_t size;
+
+  char * buf;
+  
+  struct exafs_chunk_entry * next;
+};
+
 struct exafs_inode_meta {
 
   uint32_t ino;

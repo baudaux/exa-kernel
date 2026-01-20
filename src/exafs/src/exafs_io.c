@@ -104,7 +104,7 @@ int exafs_extent_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, uin
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_extent_record: ino=%d size=%lld, offset=%lld", ino, size, offset);
   
-  int record_size = sizeof(struct exafs_extent_meta)+size;
+  int record_size = sizeof(struct exafs_extent_meta);
   
   int header_len = exafs_record_header(ctx, EXAFS_OP_WRITE_EXTENT, now, record_size, (struct meta_record *)ptr);
 
@@ -114,15 +114,28 @@ int exafs_extent_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, uin
   extent->size = size;
   extent->offset = offset;
   extent->id = id;
+
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
   
-  return header_len+record_size;
+  return header_len+record_size+crc_len;
 }
 
 ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t size, uint64_t offset) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_write: ino=%d size=%lld, offset=%lld", ino, size, offset);
 
-  uint32_t id = 0; //exafs_extent_write(buf, size);
+  uint32_t id = 0;
+  
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino);
+  
+  if (!inode) {
+
+    return -1;
+  }
+
+  ctx->write_rand(ctx, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, buf, size, &id);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_write: id=%d", id);
   
   if (!id) {
 
@@ -134,13 +147,6 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
   char * recordset = (char *)malloc(4096);
 
   int recordset_length = exafs_extent_record(ctx, ino, size, offset, id, now, recordset);
-
-  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino);
-  
-  if (!inode) {
-
-    return -1;
-  }
 
   if (inode->size < (offset+size)) { // File size has been increased
   
@@ -155,7 +161,10 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
 
   if (!err) {
 
-    err = exafs_meta_replay(ctx, recordset, recordset_length);
+    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+      err = -1;
+    }
   }
   
   free(recordset);

@@ -17,13 +17,17 @@
 
 struct exafs_ctx;
 
+int exafs_local_clean_repo(struct exafs_ctx * ctx, const char * repo_name);
+
 int exafs_local_read(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
 
-int exafs_local_read_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len);
+int exafs_local_read_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
 
 int exafs_local_write(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
 
 int exafs_local_write_range(struct exafs_ctx * ctx, void * buffer, int len);
+
+int exafs_local_write_rand(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
 
 int exafs_local_delete(struct exafs_ctx * ctx, uint32_t id);
 

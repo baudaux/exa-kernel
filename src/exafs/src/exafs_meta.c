@@ -132,11 +132,13 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
   return 0;
 }
 
-int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
+uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
   char * data = (char *)obj;
   
   int offset = 0;
+
+  uint64_t last_seq = 0;
 
   while (offset < len) {
 
@@ -147,7 +149,9 @@ int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
     exafs_meta_replay_record(ctx, record);
 
     offset += sizeof(struct meta_record)+record->len+sizeof(uint32_t);
+
+    last_seq = record->seq;
   }
 
-  return 0;
+  return last_seq;
 }

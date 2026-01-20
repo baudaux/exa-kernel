@@ -49,11 +49,13 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->last_ino = 0;
 
   ctx->inode_table = NULL;
-  
+
+  ctx->clean_repo = cfg->clean_repo;
   ctx->read = cfg->read;
   ctx->read_range = cfg->read_range;
   ctx->write = cfg->write;
   ctx->write_range = cfg->write_range;
+  ctx->write_rand = cfg->write_rand;
   ctx->delete = cfg->delete;
   ctx->delete_range = cfg->delete_range;
 
@@ -65,7 +67,21 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     ctx->meta_log_size = META_LOG_SIZE;
   }
 
-  if ( (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
+  if (cfg->grp_size > 0) {
+    ctx->grp_size = cfg->grp_size;
+  }
+  else {
+    ctx->grp_size = GRP_SIZE;
+  }
+
+  if (cfg->snapshot_size > 0) {
+    ctx->snapshot_size = cfg->snapshot_size;
+  }
+  else {
+    ctx->snapshot_size = SNAPSHOT_SIZE;
+  }
+
+  if ( (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
     return -1;
   }
   
@@ -130,6 +146,33 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   ctx->meta_log_size = ctx->superblocks[ctx->active_superblock].meta_log_size;
 
+  // Read metadata logs by group of (ctx->meta_log_size/10)
+
+  int buf_len = ctx->meta_log_size*10;
+  char * buf = malloc(buf_len);
+
+  for (int i=EXAFS_NB_SUPERBLOCKS; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
+
+    uint32_t last_obj;
+
+    // Read at maximum (ctx->meta_log_size/10) objects
+  
+    int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
+
+    if (size <= 0) {
+      break;
+    }
+
+    // Replay them
+
+    ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
+    ctx->meta_log_seq++;
+    
+    ctx->meta_log_head = last_obj+1;
+  }
+  
+  free(buf);
+
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mount: success (active superblock %d generation %lld)", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation);
   
   return 0;
@@ -148,6 +191,8 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
   int res = -1;
 
+  //ctx->clean_repo(ctx, "home"); // TODO: configure repo name
+  
   // Write superblock in all the slots
 
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
@@ -281,7 +326,10 @@ uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t c
   
   if (!err) {
 
-    err = exafs_meta_replay(ctx, recordset, recordset_length);
+    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+      err = -1;
+    }
   }
 
   free(recordset);
