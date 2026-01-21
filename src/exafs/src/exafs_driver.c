@@ -225,11 +225,15 @@ static ssize_t exafs_driver_read(struct exafs_dev * dev, int fd, void * buf, siz
     return -EACCES;
   }
   
-  ssize_t ret = -1; //lfs_file_read(&(dev->lfs), fds[i].lfs_handle, buf, count);
+  ssize_t ret = exafs_read(&(dev->exafs_ctx), fds[i].ino, buf, count, fds[i].offset);
 
   if (ret < 0) {
     ret = -exafs_errno(ret); // Negative value if error
   }
+
+  // Increment offset
+  
+  fds[i].offset += ret;
   
   return ret;
 }
@@ -251,6 +255,8 @@ static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * b
   if (ret < 0)
     ret = -exafs_errno(ret); // Negative value if error
 
+  // Increment offset
+  
   fds[i].offset += ret;
 
   return ret;
@@ -319,47 +325,6 @@ static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, stru
   emscripten_log(EM_LOG_CONSOLE,"exafs_driver: <-- exafs_stat: mode=%x size=%d", stat->st_mode, stat->st_size);
   
   return 0;
-  
-  //struct lfs_info info;
-
-  int res = -1; //lfs_stat(&(dev->lfs), pathname, &info);
-
-  /*if (res == 0) {
-
-    emscripten_log(EM_LOG_CONSOLE,"exafs_stat -> %d %d %s", info.type, info.size, info.name);
-  }
-
-  if ((res == LFS_ERR_OK) && stat) {
-
-    stat->st_dev = makedev(major, 1);
-    
-    if (info.type == LFS_TYPE_REG) {
-      stat->st_mode = S_IFREG;
-      stat->st_size = info.size;
-      stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-    }
-    else if (info.type == LFS_TYPE_DIR) {
-      stat->st_mode = S_IFDIR;
-      stat->st_size = 0;
-      stat->st_mode |= S_IRWXU | S_IRWXG | S_IRWXO;
-    }
-    else {
-      stat->st_mode = S_IFREG;
-      stat->st_size = 0;
-      stat->st_mode |= S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-      }
-
-    int i = 0;
-    
-    for (char * c = pathname; *c; ++c)
-      i += *c;
-
-    stat->st_ino = i;
-    }*/
-
-  emscripten_log(EM_LOG_CONSOLE,"<-- exafs_stat: %d (mode=%d)", -res, stat->st_mode);
-  
-  return exafs_errno(res);
 }
 
 static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid) {
@@ -951,8 +916,6 @@ int register_home() {
   //TOTEST: format each time
   int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
   //int res = -1;
-
-  res = 0;
   
   //emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
 

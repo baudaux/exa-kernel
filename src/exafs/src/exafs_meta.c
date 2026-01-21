@@ -17,6 +17,7 @@
 #include "exafs_meta.h"
 #include "exafs_util.h"
 #include "exafs_inode.h"
+#include "exafs_io.h"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -121,7 +122,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
     case EXAFS_OP_WRITE_EXTENT:
 
-      // Do nothing
+      exafs_inode_write_extent(ctx, (struct exafs_extent_meta *)data);
       break;
 
     default:

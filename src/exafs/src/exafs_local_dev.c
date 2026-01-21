@@ -29,7 +29,7 @@ int exafs_local_clean_repo(struct exafs_ctx * ctx, const char * repo_name) {
   return 0;
 }
 
-EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len), {
+EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int off), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -59,11 +59,11 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer
 
 		if (request.result) {
 
-		  if (request.result.data.length <= len) {
+		  Module.HEAPU8.set(request.result.data.subarray(off, off+len), buffer);
 
-		    Module.HEAPU8.set(request.result.data, buffer);
+		  if ((request.result.data.length-off) <= len) {
 
-		    wakeUp(request.result.data.length);
+		    wakeUp(request.result.data.length-off);
 		  }
 		  else {
 

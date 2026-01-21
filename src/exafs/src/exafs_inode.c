@@ -52,7 +52,7 @@ int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const 
 
   struct exafs_dir_entry * e = NULL;
 
-  HASH_FIND_STR( parent_inode->entry_table, path, e);
+  HASH_FIND_STR( parent_inode->e.entry_table, path, e);
 
   if (e) {
     
@@ -110,9 +110,11 @@ int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_m
   inode->gid = inode_meta->gid;
   inode->nlink = inode_meta->nlink;
   
-  inode->entry_table = NULL;
+  inode->e.entry_table = NULL;
   
   HASH_ADD_INT( ctx->inode_table, ino, inode );
+
+  ctx->next_ino = inode->ino+1;
   
   return 0;
 }
@@ -167,7 +169,7 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
     return -1;
   }
 
-  HASH_ADD_STR( parent_inode->entry_table, path, dir_entry );
+  HASH_ADD_STR( parent_inode->e.entry_table, path, dir_entry );
   
   return 0;
 }
@@ -338,7 +340,7 @@ uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * path) {
     
     struct exafs_dir_entry * e = NULL;
     
-    HASH_FIND_STR( inode->entry_table, leaf+1, e);
+    HASH_FIND_STR( inode->e.entry_table, leaf+1, e);
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: find entry -> e=%x", e);
 
@@ -375,8 +377,8 @@ int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
   stat->st_gid = inode->gid;      /* Group ID of owner */
   //dev_t      st_rdev;     /* Device ID (if special file) */
   stat->st_size = inode->size;     /* Total size, in bytes */
-  stat->st_blksize = 0;  /* Block size for filesystem I/O */
-  stat->st_blocks = 0;
+  stat->st_blksize = 4096;  /* Block size for filesystem I/O */
+  stat->st_blocks = (inode->size / 4096)+1;
 
   stat->st_atim.tv_sec = inode->atime;  /* Time of last access */
   stat->st_mtim.tv_sec = inode->mtime;  /* Time of last modification */

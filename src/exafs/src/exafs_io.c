@@ -54,7 +54,7 @@ int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_e
   
   int i = 0;
 
-  for (e = inode->entry_table; e != NULL; e = e->hh.next, i++) {
+  for (e = inode->e.entry_table; e != NULL; e = e->hh.next, i++) {
     
     if (i >= offset) {
 
@@ -170,4 +170,107 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
   free(recordset);
   
   return (err == 0)?size:err;
+}
+
+int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  struct exafs_chunk_entry * new_entry = (struct exafs_chunk_entry *)malloc(sizeof(struct exafs_chunk_entry));
+  
+  new_entry->size = meta->size;
+  new_entry->offset = meta->offset;
+  new_entry->id = meta->id;
+  new_entry->buf = NULL;
+  new_entry->next = NULL;
+
+  struct exafs_chunk_entry * entry = inode->e.chunk_entry_list;
+  struct exafs_chunk_entry * prev_entry = NULL;
+
+  // Find the end of the list
+  
+  while (entry) {
+
+    prev_entry = entry;
+    entry = entry->next;
+  }
+
+  // Add entry at the end in order to keep the sequence order
+
+  if (prev_entry) {
+    prev_entry->next = new_entry;
+  }
+  else {
+
+    inode->e.chunk_entry_list = new_entry;
+  }
+  
+  return 0;
+}
+
+ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t size, uint64_t offset) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  memset(buf, 0, size);
+
+  struct exafs_chunk_entry * entry = inode->e.chunk_entry_list;
+
+  char * data = (char*)buf;
+
+  uint64_t max_size = 0;
+
+  while (entry) {
+
+    if ( (entry->offset+entry->size) > max_size) {
+      max_size = entry->offset+entry->size;
+    }
+
+    if ( ( (entry->offset >= offset) && (entry->offset <= (offset+size)) ) ||
+	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= (offset+size)) ) ||
+	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= (offset+size)) ) ) {
+
+      emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_read: entry is needed: off=%lld size=%lld", entry->offset, entry->size);
+
+      uint32_t src_off, dst_off, len;
+
+      src_off = (entry->offset < offset)?offset-entry->offset:0;
+
+      dst_off = (entry->offset <= offset)?0:entry->offset-offset;
+
+      len = entry->size-src_off;
+
+      if (len > (size-dst_off)) {
+
+	len = size-dst_off;
+      }
+      
+      int res = ctx->read(ctx, entry->id, data+dst_off, len, src_off);
+
+      if (res == -1)
+	return -1;
+    }
+	
+    entry = entry->next;
+  }
+
+  if (max_size <= offset) {
+    return 0;
+  }
+  else if (max_size <= (offset+size)) {
+    return max_size-offset;
+  }
+  else {
+    return size;
+  }
 }

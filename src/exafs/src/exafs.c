@@ -46,7 +46,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->active_superblock = -1;
   ctx->meta_log_head = 0;
   ctx->meta_log_seq = 0;
-  ctx->last_ino = 0;
+  ctx->next_ino = 0;
 
   ctx->inode_table = NULL;
 
@@ -105,7 +105,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
 
-    int len = ctx->read(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock));
+    int len = ctx->read(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock), 0);
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: read block %d -> %d bytes", i, len);
 
@@ -169,6 +169,10 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     ctx->meta_log_seq++;
     
     ctx->meta_log_head = last_obj+1;
+
+    if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
+      break;
+    }
   }
   
   free(buf);
@@ -225,11 +229,11 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
   uint32_t tmp;
   
-  int len = ctx->read(ctx, EXAFS_NB_SUPERBLOCKS, &tmp, sizeof(tmp));
+  int len = ctx->read(ctx, EXAFS_NB_SUPERBLOCKS, &tmp, sizeof(tmp), 0);
   
   emscripten_log(EM_LOG_CONSOLE, "exafs: reading deleted object -> len=%d", len);
 
-  if (len > 0) {
+  if (len != -1) {
 
     return -1;
   }
@@ -241,7 +245,7 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->meta_log_seq = 1;
   
   // Inode seq is reset
-  ctx->last_ino = EXAFS_START_INO;
+  ctx->next_ino = EXAFS_START_INO;
 
   exafs_mknod_at2(ctx, 0, EXAFS_ROOT_INO, S_IFDIR | S_IRWXU, "/");
   
@@ -348,14 +352,12 @@ uint32_t exafs_mknod_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mo
  
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mknod_at: parent_ino=%d mode=%x path=%s", parent_ino, mode, path);
 
-  uint32_t ino = exafs_mknod_at2(ctx, parent_ino, ctx->last_ino, mode, path);
+  uint32_t ino = exafs_mknod_at2(ctx, parent_ino, ctx->next_ino, mode, path);
 
   if (!ino) {
 
     return 0;
   }
-
-  ctx->last_ino++;
   
   return ino;
 }

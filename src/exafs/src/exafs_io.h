@@ -30,7 +30,10 @@ struct exafs_extent_meta {
 int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_entry, uint64_t offset);
 
 ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t size, uint64_t offset);
+ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t size, uint64_t offset);
 
 int exafs_extent_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, uint64_t offset, uint32_t id, time_t now, char * ptr);
+
+int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * meta);
 
 #endif // _EXAFS_IO_H

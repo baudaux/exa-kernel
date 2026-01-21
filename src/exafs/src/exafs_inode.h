@@ -44,8 +44,9 @@ struct exafs_dir_entry {
 struct exafs_chunk_entry {
 
   uint64_t offset;
-  uint32_t size;
-
+  uint64_t size;
+  uint32_t id;
+  
   char * buf;
   
   struct exafs_chunk_entry * next;
@@ -81,8 +82,10 @@ struct exafs_inode {
   //uint32_t extent_head;
   
   // No need to store in metadata log after here
-  
-  struct exafs_dir_entry * entry_table;
+  union {
+    struct exafs_dir_entry * entry_table;
+    struct exafs_chunk_entry * chunk_entry_list;
+  } e;
 
   UT_hash_handle hh;
 };
