@@ -88,7 +88,6 @@ struct fd_entry {
   unsigned short mode;
   uint32_t ino;
   uint64_t offset;
-  int unlink_pending;
 };
 
 static struct exafs_cfg local_exafs_config = {
@@ -136,8 +135,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
       fds[i].mode = mode;
       fds[i].ino = ino;
       fds[i].offset = 0;
-      fds[i].unlink_pending = 0;
-
+      
       emscripten_log(EM_LOG_CONSOLE, "<-- exafs:add_fd_entry : remote_fd=%d", last_fd);
 
       return last_fd;
@@ -218,7 +216,7 @@ static ssize_t exafs_driver_read(struct exafs_dev * dev, int fd, void * buf, siz
   int i = find_fd_entry(fd);
 
   if (i < 0) {
-    return -1;
+    return -EBADF;
   }
 
   if ((fds[i].flags & O_ACCMODE) == O_WRONLY) { // Not opened with read access
@@ -227,13 +225,12 @@ static ssize_t exafs_driver_read(struct exafs_dev * dev, int fd, void * buf, siz
   
   ssize_t ret = exafs_read(&(dev->exafs_ctx), fds[i].ino, buf, count, fds[i].offset);
 
-  if (ret < 0) {
-    ret = -exafs_errno(ret); // Negative value if error
-  }
+  if (ret > 0) {
 
-  // Increment offset
+    // Increment offset
   
-  fds[i].offset += ret;
+    fds[i].offset += ret;
+  }
   
   return ret;
 }
@@ -243,7 +240,7 @@ static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * b
   int i = find_fd_entry(fd);
 
   if (i < 0) {
-    return -1;
+    return -EBADF;
   }
 
   if ((fds[i].flags & O_ACCMODE) == 0) { // Not opened with write access
@@ -264,40 +261,27 @@ static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * b
 
 static int exafs_driver_ioctl(struct exafs_dev * dev, int fildes, int request, ... /* arg */) {
 
-  return -EINVAL;
+  return EINVAL;
 }
 
 static int exafs_driver_unlink(struct exafs_dev * dev, const char * path, int flags) {
-
-  int unlink_pending_set = 0;
   
-  for (int i = 0; i < NB_FD_MAX; ++i) {
+  uint32_t ino = exafs_unlink(&(dev->exafs_ctx), path);
+  
+  if (!ino) {
 
-    if ( (fds[i].fd >= 0) && (strcmp(path, fds[i].pathname) == 0) ) {
-
-      fds[i].unlink_pending = 1;
-      unlink_pending_set = 1;
-    }
+    return ENOENT;
   }
 
-  if (unlink_pending_set)
-    return -EBUSY;
-  
-  return -1; //exafs_errno(lfs_remove(&(dev->lfs), path));
+  return 0;
 }
 
 static int exafs_driver_close(struct exafs_dev * dev, int fd) {
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
-    return -1;
-  
-  if (fds[i].unlink_pending) {
-
-    fds[i].fd = -1; // not to take this entry during unlink
-    //exafs_driver_unlink(dev, fds[i].pathname, 0);
-    fds[i].fd = fd;
+  if (i < 0) {
+    return EBADF;
   }
   
   del_fd_entry(i);
@@ -315,7 +299,7 @@ static int exafs_driver_stat(struct exafs_dev * dev, const char * pathname, stru
   
   if (!ino) {
 
-    return -1;
+    return ENOENT;
   }
 
   stat->st_dev = makedev(major, dev->minor);
@@ -380,94 +364,15 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
   }
 
   return -ENOENT;
-  
-
-  _errno = -1; //localfs_stat(dev, pathname, &stat);
-
-  if ( (_errno == 0) || (flags & O_CREAT) ) {
-
-    int lfs_flags = 0;
-    void * lfs_handle = NULL;
-
-    if (_errno != 0) {
-
-      stat.st_mode = S_IFREG; // Create a regular file if it does not exist
-    }
-
-    /*
-
-    if ((flags & 3) == 0)
-      lfs_flags |= LFS_O_RDONLY;
-    if (flags & O_WRONLY)
-      lfs_flags |= LFS_O_WRONLY;
-    if (flags & O_RDWR)
-      lfs_flags |= LFS_O_RDWR;
-    if (flags & O_CREAT)
-      lfs_flags |= LFS_O_CREAT;
-    if (flags & O_EXCL)
-      lfs_flags |= LFS_O_EXCL;
-    if (flags & O_TRUNC)
-      lfs_flags |= LFS_O_TRUNC;
-    if (flags & O_APPEND)
-      lfs_flags |= LFS_O_APPEND;
-
-    */
-
-    if (stat.st_mode & S_IFREG) {
-
-      if (flags & O_DIRECTORY)   // Error pathname is not a directory
-	return -ENOTDIR;
-
-      emscripten_log(EM_LOG_CONSOLE,"exafs_open -> lfs_open_file: %x %x", flags, lfs_flags);
-
-      lfs_handle = NULL; //malloc(sizeof(lfs_file_t));
-      
-      _errno = -1; //exafs_errno(lfs_file_open(&(dev->lfs), (lfs_file_t *)lfs_handle, pathname, lfs_flags));
-    }
-    else if (stat.st_mode & S_IFDIR) {
-
-      /*if (flags & O_TMPFILE) {
-
-	//TODO
-      }
-      else {*/
-
-	emscripten_log(EM_LOG_CONSOLE,"exafs_open -> exafs_open_dir");
-
-	lfs_handle = NULL; // malloc(sizeof(lfs_dir_t));
-
-	_errno = -1; //localfs_errno(lfs_dir_open(&(dev->lfs), lfs_handle, pathname));
-	/*}*/
-    }
-
-    if (_errno == 0) {
-      
-      /*int fd = add_fd_entry(pid, minor, pathname, flags, mode, stat.st_mode, stat.st_size, lfs_handle);
-
-      if (fd >= 0)
-      return fd;*/
-      
-      _errno = ENOMEM;
-    }
-    else {
-
-      if (lfs_handle)
-	free(lfs_handle);
-    }
-  }
-
-  emscripten_log(EM_LOG_CONSOLE,"<-- exafs_open : errno=%d", _errno);
-
-  return -_errno; // Negative value if error
-  
 }
 
 static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf, ssize_t count) {
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
+  if (i < 0) {
     return -EBADF;
+  }
   
   int res = 0;
   int len = 0;
@@ -516,10 +421,31 @@ static int exafs_driver_seek(struct exafs_dev * dev, int fd, int offset, int whe
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
+  if (i < 0) {
     return -EBADF;
+  }
 
-  return -1; //lfs_file_seek(&(dev->lfs), fds[i].lfs_handle, offset, whence);
+  struct exafs_inode * inode = exafs_inode_find_by_id(&(dev->exafs_ctx), fds[i].ino);
+
+  switch (whence) {
+
+  case SEEK_SET:
+
+    fds[i].offset = offset;
+    break;
+
+  case SEEK_CUR:
+
+    fds[i].offset += offset;
+    break;
+
+  case SEEK_END:
+
+    fds[i].offset = inode->size+offset;
+    break;
+  }  
+
+  return fds[i].offset;
 }
 
 static int exafs_driver_faccess(struct exafs_dev * dev, const char * pathname, int amode, int flags) {
@@ -531,15 +457,16 @@ static int exafs_driver_faccess(struct exafs_dev * dev, const char * pathname, i
 
 static int exafs_driver_rename(struct exafs_dev * dev, const char * oldpath, const char * newpath) {
   
-  return -1; //localfs_errno(lfs_rename(&(dev->lfs), oldpath, newpath));
+  return exafs_rename(&(dev->exafs_ctx), oldpath, newpath);
 }
 
 static int exafs_driver_ftruncate(struct exafs_dev * dev, int fd, int length) {
 
   int i = find_fd_entry(fd);
 
-  if (i < 0)
-    return -EBADF;
+  if (i < 0) {
+    return EBADF;
+  }
 
   return -1; //localfs_errno(lfs_file_truncate(&(dev->lfs), fds[i].lfs_handle, length));
 }
@@ -550,7 +477,7 @@ static int exafs_driver_mkdir(struct exafs_dev * dev, const char * path, int mod
 
   if (!ino) {
 
-    return -EACCES;
+    return EACCES;
   }
 
   return 0;
@@ -1384,7 +1311,7 @@ int main() {
 	msg->_u.seek_msg.offset = dev->ops->seek(dev, msg->_u.seek_msg.fd, msg->_u.seek_msg.offset, msg->_u.seek_msg.whence);
 	
 	if (msg->_u.seek_msg.offset < 0)
-	  msg->_errno = exafs_errno(msg->_u.seek_msg.offset);
+	  msg->_errno = -msg->_u.seek_msg.offset;
 	else
 	  msg->_errno = 0;
 
@@ -1469,21 +1396,15 @@ int main() {
 
       int rem_bytes_rec = recvfrom(sock, buf2+bytes_rec, 12+sizeof(struct renameat_message)-bytes_rec, 0, (struct sockaddr *) &remote_addr, &len);
 
-      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT bytes_rec=%d rem=%d (%d)", bytes_rec, rem_bytes_rec, sizeof(struct renameat_message));
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: RENAMEAT bytes_rec=%d rem=%d (%d)", bytes_rec, rem_bytes_rec, sizeof(struct renameat_message));
 
       struct message * msg2 = (struct message *)&buf2[0];
 
-      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT from %d: (%d %d %d) %s %s", msg2->pid, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor, msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath);
-
-      char newpath[1024];
-
-      sprintf(newpath, "/home%s", (const char *)msg2->_u.renameat_msg.newpath);
-
-      //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT: newpath=%s", newpath);
-
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: RENAMEAT from %d: (%d %d %d) %s %s", msg2->pid, msg2->_u.renameat_msg.type, msg2->_u.renameat_msg.major, msg2->_u.renameat_msg.minor, msg2->_u.renameat_msg.oldpath, msg2->_u.renameat_msg.newpath);
+      
       struct exafs_dev * dev = get_device(msg2->_u.renameat_msg.minor);
       
-      msg2->_errno = dev->ops->rename(dev, (const char *)msg2->_u.renameat_msg.oldpath, (const char *)&newpath[0]);
+      msg2->_errno = dev->ops->rename(dev, (const char *)msg2->_u.renameat_msg.oldpath, (const char *)msg2->_u.renameat_msg.newpath);
       
       //emscripten_log(EM_LOG_CONSOLE, "localfs: RENAMEAT from %d: errno=%d", msg2->pid, msg2->_errno);
 

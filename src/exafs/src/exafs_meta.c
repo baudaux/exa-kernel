@@ -59,7 +59,7 @@ int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
 
   int res = ctx->write(ctx, ctx->meta_log_head, obj, len);
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_store at object %d (size=%d) -> res=%d", ctx->meta_log_head, len, res);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_store at object %d (len=%d) -> res=%d", ctx->meta_log_head, len, res);
 
   if (res < len) {
 
@@ -81,14 +81,18 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
   
   // Compute CRC on header + data
   uint32_t crc = exafs_crc(record, len, 0);
-
+  
   char * crc_p = ((char *)record)+len;
 
   if (*((uint32_t *)crc_p) != crc) {
 
-    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay_record --> bad crc");
+    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay_record --> bad crc (%x %x)", *((uint32_t *)crc_p), crc);
     
     return -1;
+  }
+  else {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay_record --> crc=%x", crc);
   }
 
   char * data = ((char *)record)+sizeof(struct meta_record);
@@ -103,6 +107,11 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
     case EXAFS_OP_LINK:
 
       exafs_inode_link(ctx, (struct exafs_dir_entry_meta *)data);
+      break;
+
+    case EXAFS_OP_UNLINK:
+
+      exafs_inode_unlink(ctx, (struct exafs_dir_entry_meta *)data);
       break;
 
     case EXAFS_OP_INODE_SET_SIZE:
@@ -135,6 +144,8 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
 uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay: len=%d", len);
+
   char * data = (char *)obj;
   
   int offset = 0;
@@ -152,6 +163,8 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
     offset += sizeof(struct meta_record)+record->len+sizeof(uint32_t);
 
     last_seq = record->seq;
+    
+    emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay: offset=%d", offset);
   }
 
   return last_seq;

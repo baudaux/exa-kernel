@@ -2176,7 +2176,7 @@ int main() {
 
 	  struct sockaddr_un driver_addr;
 	  
-	  char node_path[1024];
+	  /*char node_path[1024];
 	
 	  vfs_get_path(oldvnode, node_path);
 
@@ -2186,7 +2186,10 @@ int main() {
 	  strncpy(msg2->_u.renameat_msg.oldpath, node_path, 1024);
 
 	  if (newtrail)
-	    strncpy(msg2->_u.renameat_msg.newpath, newtrail, 1024);
+	  strncpy(msg2->_u.renameat_msg.newpath, newtrail, 1024);*/
+
+	  strcpy(msg2->_u.renameat_msg.oldpath, oldpath);
+	  strcpy(msg2->_u.renameat_msg.newpath, newpath);
 
 	  msg2->_u.renameat_msg.type = oldvnode->_u.dev.type;
 	  msg2->_u.renameat_msg.major = oldvnode->_u.dev.major;

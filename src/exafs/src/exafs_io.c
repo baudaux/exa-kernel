@@ -264,6 +264,8 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
     entry = entry->next;
   }
 
+  // TODO: update atime
+
   if (max_size <= offset) {
     return 0;
   }

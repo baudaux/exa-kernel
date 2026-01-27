@@ -265,7 +265,7 @@ uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t c
  
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
     
-  if (exafs_inode_entry_exists(ctx, child_ino, path)) {
+  if (exafs_inode_get_entry(ctx, child_ino, path)) {
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: error, inode %d already exists", child_ino);
 
@@ -393,4 +393,252 @@ uint32_t exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mo
   }
   
   return ino;
+}
+
+uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path) {
+
+  if (!path) {
+
+    return 0;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find: path=%s", path);
+
+  if (path[0] != '/') { // path shall start by '/'
+
+    return 0;
+  }
+
+  if (strcmp(path, "/") == 0) {
+
+    return 0;
+  }
+
+  char * leaf = strrchr(path, '/');
+
+  uint32_t ino = exafs_inode_find_n(ctx, path, (leaf == path)?1:leaf-path);
+
+  if (!ino) {
+    return 0;
+  }
+  
+  struct exafs_dir_entry * e = exafs_inode_get_entry(ctx, ino, leaf+1);
+
+  if (!e) {
+    return 0;
+  }
+
+  struct stat stat, stat_child;
+    
+  exafs_inode_stat(ctx, ino, &stat);
+  exafs_inode_stat(ctx, e->ino, &stat_child);
+  
+  char * recordset = (char *)malloc(4096);
+
+  time_t now = time(NULL);
+  
+  int recordset_length = exafs_inode_unlink_record(ctx, ino, leaf+1, now, recordset);
+  
+  recordset_length += exafs_inode_set_size_record(ctx, ino, stat.st_size-(PATHNAME_LEN_MAX+sizeof(uint32_t)), now, recordset+recordset_length);
+  
+  recordset_length += exafs_inode_set_mtime_record(ctx, ino, now, recordset+recordset_length);
+
+  uint32_t nlink = stat_child.st_nlink-1;
+  
+  recordset_length += exafs_inode_set_nlink_record(ctx, stat_child.st_ino, nlink, now, recordset+recordset_length);
+  
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  if (!err) {
+
+    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+      err = -1;
+    }
+  }
+
+  free(recordset);
+
+  return (err < 0)?0:stat_child.st_ino;
+}
+
+int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newpath) {
+
+  if (!oldpath || !newpath) {
+
+    return EINVAL;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: oldpath=%s newpath=%s", oldpath, newpath);
+
+  char * old_leaf = strrchr(oldpath, '/');
+
+  uint32_t old_ino = exafs_inode_find_n(ctx, oldpath, (old_leaf == oldpath)?1:old_leaf-oldpath);
+
+  if (!old_ino) {
+    return ENOENT;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: old_ino=%d", old_ino);
+
+  char * new_leaf = strrchr(newpath, '/');
+  
+  uint32_t new_ino = exafs_inode_find_n(ctx, newpath, (new_leaf == newpath)?1:new_leaf-newpath);
+
+  if (!new_ino) {
+    return ENOENT;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: new_ino=%d", new_ino);
+
+  struct exafs_dir_entry * old_e = exafs_inode_get_entry(ctx, old_ino, old_leaf+1);
+
+  if (!old_e) {
+    return ENOENT;
+  }
+
+  struct exafs_dir_entry * new_e = exafs_inode_get_entry(ctx, new_ino, new_leaf+1);
+
+  struct stat old_stat;
+    
+  exafs_inode_stat(ctx, old_e->ino, &old_stat);
+
+  if (new_e) {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: newpath exists");
+
+    if (old_e->ino == new_e->ino) {
+
+      // oldpath and newpath point to same file/directory -> do nothing
+      return 0;
+    }
+    else {
+
+      struct stat new_stat;
+      
+      exafs_inode_stat(ctx, new_e->ino, &new_stat);
+
+      if (new_stat.st_mode & S_IFDIR) {
+
+	if (old_stat.st_mode & S_IFREG) {
+
+	  // Cannot transform a file into a dir
+	
+	  return EISDIR;
+	}
+	else {
+
+	  uint32_t nb_entries = exafs_inode_get_nb_entries(ctx, new_e->ino);
+
+	  if ( (nb_entries == 2) && (strcmp(new_leaf+1, ".")) && (strcmp(new_leaf+1, "..")) ) {
+
+	    // new path is an empty dir so it can replace old path
+
+	    char * recordset = (char *)malloc(4096);
+
+	    time_t now = time(NULL);
+
+	    int recordset_length = exafs_inode_unlink_record(ctx, new_ino, new_leaf+1, now, recordset);
+
+	    // And . and .. ??
+
+	    recordset_length += exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset+recordset_length);
+
+	    recordset_length += exafs_inode_unlink_record(ctx, old_e->ino, "..", now, recordset+recordset_length);
+	    recordset_length += exafs_inode_link_record(ctx, old_e->ino, new_ino, "..", now, recordset+recordset_length);
+	    
+	    recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+	    
+	    int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+	    if (!err) {
+
+	      if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+		err = -1;
+	      }
+	    }
+	    
+	    free(recordset);
+
+	    return 0;
+	    
+	  }
+	  else {
+
+	    return ENOTEMPTY;
+	  }
+	}
+      }
+      else {
+
+	if (old_stat.st_mode & S_IFDIR) {
+
+	  // Cannot transform a dir into a file
+	
+	  return ENOTDIR;
+	}
+	else {
+
+	  char * recordset = (char *)malloc(4096);
+
+	  time_t now = time(NULL);
+
+	  int recordset_length = exafs_inode_unlink_record(ctx, new_ino, new_leaf+1, now, recordset);
+
+	  recordset_length += exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset+recordset_length);
+
+	  recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+
+	  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+	  if (!err) {
+
+	    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+	      err = -1;
+	    }
+	  }
+	    
+	  free(recordset);
+
+	  return 0;
+	}
+      }
+    }
+  }
+  else {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: newpath does not exists");
+
+    char * recordset = (char *)malloc(4096);
+
+    time_t now = time(NULL);
+
+    int recordset_length = exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset);
+
+    if (old_stat.st_mode & S_IFDIR) {
+
+      recordset_length += exafs_inode_unlink_record(ctx, old_e->ino, "..", now, recordset+recordset_length);
+      recordset_length += exafs_inode_link_record(ctx, old_e->ino, new_ino, "..", now, recordset+recordset_length);
+    }
+
+    recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+    
+    int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+    if (!err) {
+
+      if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+	err = -1;
+      }
+    }
+	    
+    free(recordset);
+
+    return 0;
+  }
+  
+  return 0;
 }

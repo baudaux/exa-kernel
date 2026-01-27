@@ -41,7 +41,7 @@ static inline unsigned fold64_to_32(uint64_t h) {
         hashv = fold64_to_32(h64);                                  \
     } while (0)
 
-int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
+struct exafs_dir_entry * exafs_inode_get_entry(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
 
   struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, parent_ino); 
 
@@ -54,12 +54,7 @@ int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const 
 
   HASH_FIND_STR( parent_inode->e.entry_table, path, e);
 
-  if (e) {
-    
-    return 0;
-  }
-
-  return 1;
+  return e;
 }
 
 int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr) {
@@ -154,7 +149,7 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
   dir_entry->ino = entry_meta->ino;
   
   struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, entry_meta->parent_ino); 
-
+  
   if (!parent_inode) {
     
     free(dir_entry);
@@ -170,6 +165,53 @@ int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry
   }
 
   HASH_ADD_STR( parent_inode->e.entry_table, path, dir_entry );
+  
+  return 0;
+}
+
+int exafs_inode_unlink_record(struct exafs_ctx * ctx, uint32_t ino, const char * path, time_t now, char * ptr) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_unlink_record: ino=%d path=%s", ino, path);
+  
+  int record_size = sizeof(struct exafs_dir_entry_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_UNLINK, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_dir_entry_meta * entry = (struct exafs_dir_entry_meta *)(ptr+header_len);
+
+  entry->parent_ino = ino;
+  entry->ino = 0;
+  
+  strcpy(entry->path, path);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_unlink(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_unlink: ino=%d path=%s", entry_meta->parent_ino, entry_meta->path);
+  
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, entry_meta->parent_ino); 
+
+  if (!inode) {
+    
+    return -1;
+  }
+
+  struct exafs_dir_entry * e = NULL;
+    
+  HASH_FIND_STR( inode->e.entry_table, entry_meta->path, e);
+
+  if (!e) {
+
+    return -1;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_unlink: entry found");
+
+  HASH_DEL(inode->e.entry_table, e);
   
   return 0;
 }
@@ -387,3 +429,19 @@ int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat) {
   return 0;
 }
 
+uint32_t exafs_inode_get_nb_entries(struct exafs_ctx * ctx, uint32_t ino) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino);
+
+  if (!inode) {
+
+    return 0;
+  }
+
+  if (!(inode->mode & S_IFDIR)) {
+
+    return 0;
+  }
+
+  return HASH_COUNT(inode->e.entry_table);
+}

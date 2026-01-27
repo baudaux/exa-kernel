@@ -116,13 +116,16 @@ struct exafs_set_time_meta {
   uint64_t time;
 };
 
-int exafs_inode_entry_exists(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
+struct exafs_dir_entry * exafs_inode_get_entry(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
 
 int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr);
 int exafs_inode_create(struct exafs_ctx * ctx, struct exafs_inode_meta * inode_meta);
 
 int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, const char * path, time_t now, char * ptr);
 int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta);
+
+int exafs_inode_unlink_record(struct exafs_ctx * ctx, uint32_t ino, const char * path, time_t now, char * ptr);
+int exafs_inode_unlink(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta);
 
 int exafs_inode_set_size_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, time_t now, char * ptr);
 int exafs_inode_set_size(struct exafs_ctx * ctx, struct exafs_set_size_meta * meta);
@@ -139,5 +142,6 @@ uint32_t exafs_inode_find_n(struct exafs_ctx * ctx, const char * path, int len);
 
 int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat);
 
+uint32_t exafs_inode_get_nb_entries(struct exafs_ctx * ctx, uint32_t ino);
 
 #endif // _EXAFS_INODE_H

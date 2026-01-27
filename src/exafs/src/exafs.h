@@ -86,7 +86,6 @@ struct exafs_cfg {
   uint32_t meta_log_size;
   uint32_t grp_size;
   uint32_t snapshot_size;
-  
 };
 
 struct extent {
@@ -107,5 +106,9 @@ uint32_t exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mo
 uint32_t exafs_mknod(struct exafs_ctx * ctx, uint32_t mode, const char * path);
 uint32_t exafs_mknod_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path);
 uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, uint32_t mode, const char * path);
+
+uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path);
+
+int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newpath);
 
 #endif // _EXAFS_H
