@@ -137,34 +137,36 @@ int exafs_inode_link_record(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_
 int exafs_inode_link(struct exafs_ctx * ctx, struct exafs_dir_entry_meta * entry_meta) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_link: parent_ino=%d ino=%d path=%s", entry_meta->parent_ino, entry_meta->ino, entry_meta->path);
-
-  struct exafs_dir_entry * dir_entry = (struct exafs_dir_entry *)malloc(sizeof(struct exafs_dir_entry));
-
-  if (!dir_entry) {
-
-    return -1;
-  }
-
-  strcpy(dir_entry->path, entry_meta->path);
-  dir_entry->ino = entry_meta->ino;
   
   struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, entry_meta->parent_ino); 
   
   if (!parent_inode) {
     
-    free(dir_entry);
     return -1;
   }
 
-  struct exafs_inode * child_inode = exafs_inode_find_by_id(ctx, entry_meta->ino);
+  struct exafs_dir_entry * dir_entry = NULL;
 
-  if (!child_inode) {
+  HASH_FIND_STR( parent_inode->e.entry_table, entry_meta->path, dir_entry);
 
-    free(dir_entry);
-    return -1;
+  if (dir_entry) {
+
+    dir_entry->ino = entry_meta->ino;
   }
+  else {
 
-  HASH_ADD_STR( parent_inode->e.entry_table, path, dir_entry );
+    dir_entry = (struct exafs_dir_entry *)malloc(sizeof(struct exafs_dir_entry));
+
+    if (!dir_entry) {
+
+      return -1;
+    }
+    
+    strcpy(dir_entry->path, entry_meta->path);
+    dir_entry->ino = entry_meta->ino;
+
+    HASH_ADD_STR( parent_inode->e.entry_table, path, dir_entry );
+  }
   
   return 0;
 }
@@ -275,6 +277,68 @@ int exafs_inode_set_mtime(struct exafs_ctx * ctx, struct exafs_set_time_meta * m
   
   return 0;
 }
+
+
+int exafs_inode_set_ctime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_set_time_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_CTIME, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_set_time_meta * m = (struct exafs_set_time_meta *)(ptr+header_len);
+
+  m->ino = ino;
+  m->time = now;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_set_ctime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  inode->ctime = meta->time;
+  
+  return 0;
+}
+
+int exafs_inode_set_atime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_set_time_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_ATIME, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_set_time_meta * m = (struct exafs_set_time_meta *)(ptr+header_len);
+
+  m->ino = ino;
+  m->time = now;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
+int exafs_inode_set_atime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  inode->atime = meta->time;
+  
+  return 0;
+}
+
 
 int exafs_inode_set_nlink_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t nlink, time_t now, char * ptr) {
 

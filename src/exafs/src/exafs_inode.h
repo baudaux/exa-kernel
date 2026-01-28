@@ -136,6 +136,12 @@ int exafs_inode_set_nlink(struct exafs_ctx * ctx, struct exafs_set_nlink_meta * 
 int exafs_inode_set_mtime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr);
 int exafs_inode_set_mtime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta);
 
+int exafs_inode_set_ctime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr);
+int exafs_inode_set_ctime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta);
+
+int exafs_inode_set_atime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr);
+int exafs_inode_set_atime(struct exafs_ctx * ctx, struct exafs_set_time_meta * meta);
+
 struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino);
 uint32_t exafs_inode_find(struct exafs_ctx * ctx, const char * path);
 uint32_t exafs_inode_find_n(struct exafs_ctx * ctx, const char * path, int len);

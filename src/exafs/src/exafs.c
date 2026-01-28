@@ -518,7 +518,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
       
       exafs_inode_stat(ctx, new_e->ino, &new_stat);
 
-      if (new_stat.st_mode & S_IFDIR) {
+      if (new_stat.st_mode & S_IFDIR) { // Destination is a directory
 
 	if (old_stat.st_mode & S_IFREG) {
 
@@ -541,13 +541,22 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 	    int recordset_length = exafs_inode_unlink_record(ctx, new_ino, new_leaf+1, now, recordset);
 
 	    // And . and .. ??
-
+	    
 	    recordset_length += exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset+recordset_length);
 
-	    recordset_length += exafs_inode_unlink_record(ctx, old_e->ino, "..", now, recordset+recordset_length);
-	    recordset_length += exafs_inode_link_record(ctx, old_e->ino, new_ino, "..", now, recordset+recordset_length);
+	    if  (new_ino != old_ino) {
+	      recordset_length += exafs_inode_link_record(ctx, old_e->ino, new_ino, "..", now, recordset+recordset_length);
+	    }
 	    
 	    recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+
+	    recordset_length += exafs_inode_set_ctime_record(ctx, old_e->ino, now, recordset+recordset_length);
+
+	    recordset_length += exafs_inode_set_mtime_record(ctx, old_ino, now, recordset+recordset_length);
+
+	    if (new_ino != old_ino) {
+	      recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
+	    }
 	    
 	    int err = exafs_meta_store(ctx, recordset, recordset_length);
   
@@ -570,7 +579,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 	  }
 	}
       }
-      else {
+      else { // Destination is a file
 
 	if (old_stat.st_mode & S_IFDIR) {
 
@@ -589,6 +598,14 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 	  recordset_length += exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset+recordset_length);
 
 	  recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+
+	  recordset_length += exafs_inode_set_ctime_record(ctx, old_e->ino, now, recordset+recordset_length);
+
+	  recordset_length += exafs_inode_set_mtime_record(ctx, old_ino, now, recordset+recordset_length);
+
+	  if (new_ino != old_ino) {
+	    recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
+	  }
 
 	  int err = exafs_meta_store(ctx, recordset, recordset_length);
   
@@ -609,7 +626,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
   }
   else {
 
-    emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: newpath does not exists");
+    emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rename: newpath does not existx");
 
     char * recordset = (char *)malloc(4096);
 
@@ -617,13 +634,20 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 
     int recordset_length = exafs_inode_link_record(ctx, new_ino, old_e->ino, new_leaf+1, now, recordset);
 
-    if (old_stat.st_mode & S_IFDIR) {
+    if ( (old_stat.st_mode & S_IFDIR) && (new_ino != old_ino) ) {
 
-      recordset_length += exafs_inode_unlink_record(ctx, old_e->ino, "..", now, recordset+recordset_length);
       recordset_length += exafs_inode_link_record(ctx, old_e->ino, new_ino, "..", now, recordset+recordset_length);
     }
 
     recordset_length += exafs_inode_unlink_record(ctx, old_ino, old_leaf+1, now, recordset+recordset_length);
+
+    recordset_length += exafs_inode_set_ctime_record(ctx, old_e->ino, now, recordset+recordset_length);
+
+    recordset_length += exafs_inode_set_mtime_record(ctx, old_ino, now, recordset+recordset_length);
+    
+    if (new_ino != old_ino) {
+      recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
+    }
     
     int err = exafs_meta_store(ctx, recordset, recordset_length);
   

@@ -124,6 +124,16 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
       exafs_inode_set_mtime(ctx, (struct exafs_set_time_meta *)data);
       break;
 
+    case EXAFS_OP_INODE_SET_CTIME:
+
+      exafs_inode_set_ctime(ctx, (struct exafs_set_time_meta *)data);
+      break;
+
+    case EXAFS_OP_INODE_SET_ATIME:
+
+      exafs_inode_set_atime(ctx, (struct exafs_set_time_meta *)data);
+      break;
+
     case EXAFS_OP_INODE_SET_NLINK:
 
       exafs_inode_set_nlink(ctx, (struct exafs_set_nlink_meta *)data);
