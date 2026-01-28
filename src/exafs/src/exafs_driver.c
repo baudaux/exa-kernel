@@ -68,6 +68,7 @@ struct device_ops {
   int (*rename)(struct exafs_dev * dev, const char * oldpath, const char * newpath);
   int (*ftruncate)(struct exafs_dev * dev, int fd, int length);
   int (*mkdir)(struct exafs_dev * dev, const char * path, int mode);
+  int (*rmdir)(struct exafs_dev * dev, const char * path);
 };
 
 struct exafs_dev {
@@ -266,14 +267,7 @@ static int exafs_driver_ioctl(struct exafs_dev * dev, int fildes, int request, .
 
 static int exafs_driver_unlink(struct exafs_dev * dev, const char * path, int flags) {
   
-  uint32_t ino = exafs_unlink(&(dev->exafs_ctx), path);
-  
-  if (!ino) {
-
-    return ENOENT;
-  }
-
-  return 0;
+  return exafs_unlink(&(dev->exafs_ctx), path);
 }
 
 static int exafs_driver_close(struct exafs_dev * dev, int fd) {
@@ -468,7 +462,11 @@ static int exafs_driver_ftruncate(struct exafs_dev * dev, int fd, int length) {
     return EBADF;
   }
 
-  return -1; //localfs_errno(lfs_file_truncate(&(dev->lfs), fds[i].lfs_handle, length));
+  if ((fds[i].flags & O_ACCMODE) == 0) { // Not opened with write access
+    return EACCES;
+  }
+
+  return exafs_ftruncate(&(dev->exafs_ctx), fds[i].ino, (uint64_t)length);
 }
 
 static int exafs_driver_mkdir(struct exafs_dev * dev, const char * path, int mode) {
@@ -485,7 +483,7 @@ static int exafs_driver_mkdir(struct exafs_dev * dev, const char * path, int mod
 
 static int exafs_driver_rmdir(struct exafs_dev * dev, const char * path) {
 
-  return -1; //localfs_errno(lfs_remove(&(dev->lfs), path));
+  return exafs_rmdir(&(dev->exafs_ctx), path);
 }
 
 static struct device_ops exafs_ops = {
@@ -503,6 +501,7 @@ static struct device_ops exafs_ops = {
   .rename = exafs_driver_rename,
   .ftruncate = exafs_driver_ftruncate,
   .mkdir = exafs_driver_mkdir,
+  .rmdir = exafs_driver_rmdir,
 };
 
 int register_device(unsigned short min, struct device_ops * dev_ops) {
@@ -1472,7 +1471,7 @@ int main() {
       
       if (dev) {
       
-	msg->_errno = dev->ops->unlink(dev, msg->_u.rmdir_msg.path, 0);
+	msg->_errno = dev->ops->rmdir(dev, msg->_u.rmdir_msg.path);
       }
       else {
 

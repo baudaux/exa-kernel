@@ -107,8 +107,10 @@ uint32_t exafs_mknod(struct exafs_ctx * ctx, uint32_t mode, const char * path);
 uint32_t exafs_mknod_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mode, const char * path);
 uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, uint32_t mode, const char * path);
 
-uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path);
-
+int exafs_unlink(struct exafs_ctx * ctx, const char * path);
 int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newpath);
+int exafs_rmdir(struct exafs_ctx * ctx, const char * path);
+
+int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length);
 
 #endif // _EXAFS_H

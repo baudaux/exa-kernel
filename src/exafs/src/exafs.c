@@ -395,23 +395,23 @@ uint32_t exafs_mkdir_at(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t mo
   return ino;
 }
 
-uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path) {
+int exafs_unlink(struct exafs_ctx * ctx, const char * path) {
 
   if (!path) {
 
-    return 0;
+    return ENOENT;
   }
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find: path=%s", path);
 
   if (path[0] != '/') { // path shall start by '/'
 
-    return 0;
+    return ENOENT;
   }
 
   if (strcmp(path, "/") == 0) {
 
-    return 0;
+    return ENOENT;
   }
 
   char * leaf = strrchr(path, '/');
@@ -419,19 +419,24 @@ uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path) {
   uint32_t ino = exafs_inode_find_n(ctx, path, (leaf == path)?1:leaf-path);
 
   if (!ino) {
-    return 0;
+    return ENOENT;
   }
   
   struct exafs_dir_entry * e = exafs_inode_get_entry(ctx, ino, leaf+1);
 
   if (!e) {
-    return 0;
+    return ENOENT;
   }
 
   struct stat stat, stat_child;
     
   exafs_inode_stat(ctx, ino, &stat);
   exafs_inode_stat(ctx, e->ino, &stat_child);
+
+  if (stat_child.st_mode & S_IFDIR) {
+    
+    return EISDIR;
+  }
   
   char * recordset = (char *)malloc(4096);
 
@@ -453,13 +458,17 @@ uint32_t exafs_unlink(struct exafs_ctx * ctx, const char * path) {
 
     if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
 
-      err = -1;
+      err = ENOMEM;
     }
+  }
+  else {
+
+    err = ENOMEM;
   }
 
   free(recordset);
 
-  return (err < 0)?0:stat_child.st_ino;
+  return err;
 }
 
 int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newpath) {
@@ -554,6 +563,8 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 
 	    recordset_length += exafs_inode_set_mtime_record(ctx, old_ino, now, recordset+recordset_length);
 
+	    //TODO: update size
+
 	    if (new_ino != old_ino) {
 	      recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
 	    }
@@ -607,6 +618,8 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 	    recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
 	  }
 
+	  //TODO: update size
+
 	  int err = exafs_meta_store(ctx, recordset, recordset_length);
   
 	  if (!err) {
@@ -648,6 +661,8 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
     if (new_ino != old_ino) {
       recordset_length += exafs_inode_set_mtime_record(ctx, new_ino, now, recordset+recordset_length);
     }
+
+    //TODO: update size
     
     int err = exafs_meta_store(ctx, recordset, recordset_length);
   
@@ -665,4 +680,110 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
   }
   
   return 0;
+}
+
+int exafs_rmdir(struct exafs_ctx * ctx, const char * path) {
+
+  if (!path) {
+
+    return EINVAL;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_rmdir: path=%s", path);
+
+  char * leaf = strrchr(path, '/');
+
+  uint32_t ino = exafs_inode_find_n(ctx, path, (leaf == path)?1:leaf-path);
+
+  if (!ino) {
+    return ENOENT;
+  }
+
+  if ( (strcmp(leaf+1, ".") == 0) || (strcmp(leaf+1, "..") == 0) ) {
+
+    return EINVAL;
+  }
+
+  struct exafs_dir_entry * e = exafs_inode_get_entry(ctx, ino, leaf+1);
+
+  if (!e) {
+
+    return ENOENT;
+  }
+
+  struct stat stat;
+  
+  exafs_inode_stat(ctx, e->ino, &stat);
+
+  if (!(stat.st_mode & S_IFDIR)) {
+
+    return ENOTDIR;
+  }
+
+  if (stat.st_nlink > 2) {
+
+    return ENOTEMPTY;
+  }
+
+  struct stat parent_stat;
+  
+  exafs_inode_stat(ctx, ino, &parent_stat);
+
+  char * recordset = (char *)malloc(4096);
+  
+  time_t now = time(NULL);
+  
+  int recordset_length = exafs_inode_unlink_record(ctx, ino, leaf+1, now, recordset);
+  
+  recordset_length += exafs_inode_set_size_record(ctx, ino, parent_stat.st_size-(PATHNAME_LEN_MAX+sizeof(uint32_t)), now, recordset+recordset_length);
+  
+  recordset_length += exafs_inode_set_mtime_record(ctx, ino, now, recordset+recordset_length);
+  
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  if (!err) {
+    
+    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+      err = ENOMEM;
+    }
+  }
+  else {
+
+    err = ENOMEM;
+  }
+
+  free(recordset);
+
+  return err;
+}
+
+int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length) {
+
+  char * recordset = (char *)malloc(4096);
+  
+  time_t now = time(NULL);
+
+  int recordset_length = exafs_inode_set_size_record(ctx, ino, length, now, recordset);
+  
+  recordset_length += exafs_inode_set_mtime_record(ctx, ino, now, recordset+recordset_length);
+  recordset_length += exafs_inode_set_ctime_record(ctx, ino, now, recordset+recordset_length);
+
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  if (!err) {
+    
+    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+
+      err = ENOMEM;
+    }
+  }
+  else {
+
+    err = ENOMEM;
+  }
+
+  free(recordset);
+
+  return err;
 }
