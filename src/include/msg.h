@@ -92,6 +92,7 @@ enum message_id {
   CLONEFD,
   NEW_EXT_TTY,
   NEW_PROCESS = 70,
+  SHUTDOWN
 };
 
 enum dev_type {

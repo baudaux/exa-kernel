@@ -2653,6 +2653,10 @@ int main() {
 	emscripten_log(EM_LOG_CONSOLE,"starting new process %d...", pid2);
       }
     }
+    else if (msg->msg_id == SHUTDOWN) {
+
+      emscripten_log(EM_LOG_CONSOLE, "resmgr: SHUTDOWN");
+    }
   }
   
   return 0;

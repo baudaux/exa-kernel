@@ -15,19 +15,6 @@
 
 #include <sys/types.h>
 
-#ifdef HASH
-struct hnode {
-  uint64_t key;          // inode id for example
-  void * value;   // pointer to data
-  struct hnode * next;
-};
-
-struct htable {
-    size_t bucket_count;
-    struct hnode ** buckets;
-};
-#endif
-
 uint32_t exafs_crc(const void * data, size_t length, uint32_t previousCrc32);
 
 #endif // _EXAFS_UTIL_H

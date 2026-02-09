@@ -34,6 +34,10 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
 int exafs_extent_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, uint64_t offset, uint32_t id, time_t now, char * ptr);
 
+void exafs_inode_add_extent(struct exafs_inode * inode, uint64_t size, uint64_t offset, uint32_t id);
 int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * meta);
+
+int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t now);
+int exafs_io_write_group(struct exafs_ctx * ctx, int group, char * buf, int slot);
 
 #endif // _EXAFS_IO_H

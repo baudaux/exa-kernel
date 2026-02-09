@@ -67,11 +67,11 @@ The snapshot descriptor contains:
 
 Descriptor and object are duplicated for handling copy-in-write (COW). Old and new version are stored consecutively (a and b).
 
-If an inode has been deleted or is not allocated In a given object, its number is put to zero.
+If an inode has been deleted or is not allocated in a given object, its number is put to zero.
 
 Each obect contain:
 1. The generation number,
-2. For each inode, id of extent containing either list of extents (case of file) or directory entries (case of directory).
+2. For each inode, inode stats and id of object containing either list of extents (case of file) or directory entries (case of directory).
 3. CRC
 
 When loading a snapshot object, all the included inodes (with a valid number) are added into the inode table.

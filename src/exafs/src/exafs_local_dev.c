@@ -24,10 +24,68 @@
 #define emscripten_log(...)
 #endif
 
-int exafs_local_clean_repo(struct exafs_ctx * ctx, const char * repo_name) {
+EM_JS(int, exafs_local_clean_repo, (struct exafs_ctx * ctx, const char * repo_name), {
 
-  return 0;
-}
+  return Asyncify.handleSleep(function (wakeUp) {
+
+      window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+      if (!window.indexedDB)
+	return -1;
+
+      window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+      window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+      let do_clean_repo = (db) => {
+
+	let store = db.transaction(["objects"], "readwrite").objectStore("objects");
+	      
+	let request = store.clear();
+	      
+	request.onerror = function(event) {
+
+	  wakeUp(-1);
+	};
+	      
+	request.onsuccess = function(event) {
+
+	  wakeUp(0);
+		
+	};
+      };
+
+      if (typeof window.exafs_local === 'undefined') {
+
+	      let request = window.indexedDB.open("exafs_local", 1);
+
+	      request.onerror = function(event) {
+
+		wakeUp(-1);
+	      };
+
+	      request.onupgradeneeded = function(event) {
+
+		let db = event.target.result;
+
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		window.exafs_local = event.target.result;
+		
+		do_clean_repo(window.exafs_local);
+		
+	      };
+	    }
+	    else {
+
+	      do_clean_repo(window.exafs_local);
+	    }
+	
+    });
+  });
 
 EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int off), {
 

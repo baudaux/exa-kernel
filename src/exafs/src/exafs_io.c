@@ -41,7 +41,7 @@ int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_e
   struct exafs_inode * inode = exafs_inode_find_by_id(ctx, ino);
 
   if (!inode) {
-
+    
     return -2;
   }
 
@@ -49,10 +49,15 @@ int exafs_dir_read(struct exafs_ctx * ctx, uint32_t ino, struct __dirent * dir_e
 
     return -3;
   }
+  
+  if (inode->e.entry_table == NULL) {
+
+    exafs_inode_read_entry(ctx, inode);
+  }
 
   struct exafs_dir_entry * e;
   
-  int i = 0;
+  uint64_t i = 0;
 
   for (e = inode->e.entry_table; e != NULL; e = e->hh.next, i++) {
     
@@ -172,20 +177,13 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
   return (err == 0)?size:err;
 }
 
-int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * meta) {
-
-  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
-
-  if (!inode) {
-
-    return -1;
-  }
+void exafs_inode_add_extent(struct exafs_inode * inode, uint64_t size, uint64_t offset, uint32_t id) {
 
   struct exafs_chunk_entry * new_entry = (struct exafs_chunk_entry *)malloc(sizeof(struct exafs_chunk_entry));
   
-  new_entry->size = meta->size;
-  new_entry->offset = meta->offset;
-  new_entry->id = meta->id;
+  new_entry->size = size;
+  new_entry->offset = offset;
+  new_entry->id = id;
   new_entry->buf = NULL;
   new_entry->next = NULL;
 
@@ -209,6 +207,18 @@ int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * 
 
     inode->e.chunk_entry_list = new_entry;
   }
+}
+
+int exafs_inode_write_extent(struct exafs_ctx * ctx, struct exafs_extent_meta * meta) {
+
+  struct exafs_inode * inode = exafs_inode_find_by_id(ctx, meta->ino); 
+
+  if (!inode) {
+
+    return -1;
+  }
+
+  exafs_inode_add_extent(inode, meta->size, meta->offset, meta->id);
   
   return 0;
 }
@@ -226,6 +236,13 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
   struct exafs_chunk_entry * entry = inode->e.chunk_entry_list;
 
+  if (entry == NULL) {
+
+    exafs_inode_read_entry(ctx, inode);
+    
+    entry = inode->e.chunk_entry_list;
+  }
+  
   char * data = (char*)buf;
 
   uint64_t max_size = 0;
@@ -275,4 +292,199 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
   else {
     return size;
   }
+}
+
+void exafs_io_reset_slot_a(char * buf, uint64_t now) {
+
+  char * ptr = buf;
+
+  // Slot a is initialized
+
+  *((uint64_t *)ptr) = now;
+  ptr += sizeof(uint64_t);
+
+  for (int i= 0; i < GRP_SIZE; i++) {
+
+    ((struct exafs_inode_meta *)ptr)->ino = 0;
+    ptr += sizeof(struct exafs_inode_meta)+sizeof(uint32_t);
+  }
+}
+
+void exafs_io_copy_slot(char * buf, int dst_slot, uint64_t now) {
+
+  int group_size = sizeof(uint64_t) + GRP_SIZE * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
+  
+  char * src = buf;
+  char * dst = buf;
+
+  if (dst_slot == 0) {
+
+    src += group_size;
+  }
+  else {
+
+    dst += group_size;
+  }
+	  
+  *((uint64_t *)dst) = now;
+  dst += sizeof(uint64_t);
+
+  memcpy(dst, src+sizeof(uint64_t), group_size-sizeof(uint64_t));
+}
+
+int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t now) {
+
+  int updating_slot = -1; // if now is null, it is the valid slot
+  
+  int group_size = sizeof(uint64_t) + GRP_SIZE * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
+	
+  int idx = EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+2*group;
+
+  uint32_t last_obj;
+	  
+  int size = ctx->read_range(ctx, idx, idx+1, buf, 2 * group_size, &last_obj);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_io_read_group: group=%d idx=%d size=%d last_obj=%d", group, idx, size, last_obj);
+
+  if (last_obj == 0) { // No object is read
+
+    if (now) {
+
+      exafs_io_reset_slot_a(buf, now);
+
+      updating_slot = 0;
+    }
+  }
+  else if (last_obj == idx) { // Only first object is read
+
+    char * ptr = buf;
+	  
+    uint64_t gen_a = *((uint64_t *)ptr);
+
+    if (gen_a <= ctx->superblocks[ctx->active_superblock].generation) { // Slot a is valid
+
+      if (now) {
+	
+	updating_slot = 1;
+      
+	// Slot b is initialized with content of slot a
+
+	exafs_io_copy_slot(buf, updating_slot, now);
+      }
+      else {
+	updating_slot = 0;
+      }
+    }
+    else {
+
+      if (now) {
+
+	exafs_io_reset_slot_a(buf, now);
+
+	updating_slot = 0;
+      }
+    }
+  }
+  else { // Both objects are read, valid object is the one with highest generation low or equal to snapshot generation
+
+    char * ptr = buf;
+	  
+    uint64_t gen_a = *((uint64_t *)ptr);
+
+    ptr += group_size;
+
+    uint64_t gen_b = *((uint64_t *)ptr);
+
+    if (gen_a <= ctx->superblocks[ctx->active_superblock].generation) {
+
+      if ( (gen_b <= gen_a) || (gen_b > ctx->superblocks[ctx->active_superblock].generation) )  { // Slot a is valid
+
+	if (now) {
+	  
+	  updating_slot = 1;
+
+	  // Slot b is initialized with content of slot a
+
+	  exafs_io_copy_slot(buf, updating_slot, now);
+	}
+	else {
+
+	  updating_slot = 0;
+	}
+      }
+      else { // Slot b is valid
+
+	if (now) {
+	  updating_slot = 0;
+
+	  // Slot a is initialized with content of slot b
+
+	  exafs_io_copy_slot(buf, updating_slot, now);
+	}
+	else {
+
+	  updating_slot = 1;
+	}
+      }
+    }
+    else if (gen_b <= ctx->superblocks[ctx->active_superblock].generation) {
+
+      if ( (gen_a <= gen_b) || (gen_a > ctx->superblocks[ctx->active_superblock].generation) )  { // Slot b is valid
+
+	if (now) {
+	  
+	  updating_slot = 0;
+
+	  // Slot a is initialized with content of slot b
+
+	  exafs_io_copy_slot(buf, updating_slot, now);
+	}
+	else {
+
+	  updating_slot = 1;
+	}
+      }
+      else { // Slot a is valid
+
+	if (now) {
+
+	  updating_slot = 1;
+
+	  // Slot b is initialized with content of slot a
+
+	  exafs_io_copy_slot(buf, updating_slot, now);
+	}
+	else {
+
+	  updating_slot = 0;
+	}
+      }
+    }
+    else { // No slot valid
+
+      if (now) {
+
+	exafs_io_reset_slot_a(buf, now);
+
+	updating_slot = 0;
+      }
+    }
+  }
+
+  return updating_slot;
+}
+
+int exafs_io_write_group(struct exafs_ctx * ctx, int group, char * buf, int slot) {
+
+  int group_size = sizeof(uint64_t) + GRP_SIZE * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
+
+  int offset = (slot == 0)?0:group_size;
+
+  int idx = EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+2*group;
+	
+  int size = ctx->write(ctx, idx+slot, buf+offset, group_size);
+  
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_io_write_group: group=%d idx=%d size=%d", group, idx, size);
+
+  return size;
 }

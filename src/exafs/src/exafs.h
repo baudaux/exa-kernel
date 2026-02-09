@@ -13,6 +13,8 @@
 #ifndef _EXAFS_H
 #define _EXAFS_H
 
+#include <time.h>
+
 #define EXAFS_NB_SUPERBLOCKS 4
 
 #define META_LOG_SIZE 10000
@@ -37,11 +39,12 @@ struct superblock {
   uint64_t generation;
   uint32_t fs_uuid;
   uint32_t meta_log_size;
+  uint64_t meta_log_seq;
   uint32_t meta_log_head;
-  uint32_t inode_table_head;
-  uint32_t dir_index_head;
+  uint32_t snapshot_size;
+  uint32_t grp_size;
+  uint32_t next_ino;
   uint32_t flags;
-  uint32_t padding;
   uint32_t crc;
 };
 
@@ -54,9 +57,8 @@ struct exafs_ctx {
   uint32_t meta_log_size;
   uint32_t meta_log_head;
   uint64_t meta_log_seq;
-
-  uint32_t grp_size;
   uint32_t snapshot_size;
+  uint32_t grp_size;
   
   uint32_t next_ino;
   
@@ -97,6 +99,7 @@ struct extent {
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
 int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
+int exafs_unmount(struct exafs_ctx * ctx);
 
 int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
 
@@ -112,5 +115,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
 int exafs_rmdir(struct exafs_ctx * ctx, const char * path);
 
 int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length);
+
+int exafs_create_snapshot(struct exafs_ctx * ctx);
 
 #endif // _EXAFS_H

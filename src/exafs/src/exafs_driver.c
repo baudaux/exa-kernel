@@ -51,6 +51,8 @@
 #define NB_EXAFS_MAX  16
 #define NB_FD_MAX     128
 
+#define CTL_DEV "exafs_ctl"
+
 struct exafs_dev;
 
 struct device_ops {
@@ -384,7 +386,7 @@ static ssize_t exafs_driver_getdents(struct exafs_dev * dev, int fd, char * buf,
       struct __dirent * dirent_ptr = (struct __dirent *)(buf+len);
 
       if ((len+sizeof(struct __dirent)+strlen(dir_entry->d_name)) < count) {  // there is space for this entry
-
+	
 	strcpy(dirent_ptr->d_name, dir_entry->d_name);
 
 	emscripten_log(EM_LOG_CONSOLE, "exafs_driver_getdents: ino=%d -> entry=%s", fds[i].ino, dirent_ptr->d_name);
@@ -545,14 +547,13 @@ struct exafs_dev * get_device_from_fd(int fd) {
   return &devices[fds[i].minor];
 }
 
-#ifdef EXAFS_CTL
-static int exafs_ctl_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid, unsigned short minor) {
+static int exafs_ctl_open(struct exafs_dev * dev, const char * pathname, int flags, mode_t mode, pid_t pid) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_open: %s", pathname);
 
   if (strcmp(pathname, "/dev/exafs_ctl") == 0) {
 
-    int fd = add_fd_entry(pid, minor, pathname, flags, mode, 0, 0, NULL);
+    int fd = add_fd_entry(pid, dev->minor, pathname, flags, mode, 0);
 
     if (fd >= 0)
       return fd;
@@ -571,7 +572,7 @@ static ssize_t exafs_ctl_read(struct exafs_dev * dev, int fd, void * buf, size_t
 #ifdef SECURE
 static int create_master_key(char * view, char * password, char * key) {
 
-  emscripten_log(EM_LOG_CONSOLE, "remotefs: create_master_key %s %s", view, password);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: create_master_key %s %s", view, password);
 
   char salt[crypto_pwhash_SALTBYTES];
 
@@ -649,12 +650,14 @@ static int retrieve_master_key(char * view, char * password, char * key) {
   
   return res;
 }
-#endif
+#endif // SECURE
 
 static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_write: (%d) %s", count, buf);
-
+  
+#if 0
+  
   if (strncmp(buf, "mkfs", 4) == 0) {
 
     char * fs = strchr(buf, ':');
@@ -680,11 +683,15 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       
       char * key = NULL;
 
+#ifdef SECURE
+
       if (strlen(password) > 0) {
 
 	key = malloc(crypto_kdf_KEYBYTES);
 	create_master_key(view, password, key);
       }
+
+#endif // SECURE
       
       lfs_t lfs;
       struct lfs_config lfs_config;
@@ -796,29 +803,38 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
     }
     
   }
+#endif // 0
+
+  if (strncmp(buf, "unmount", 7) == 0) {
+
+    // home minor = 1
+    int minor = 1;
+
+    exafs_unmount(&(devices[minor].exafs_ctx));
+  }
   
   return -EINVAL;
 }
 
-static int remotefs_ctl_ioctl(struct lfs_dev * dev, int fildes, int request, ... /* arg */) {
+static int exafs_ctl_ioctl(struct lfs_dev * dev, int fildes, int request, ... /* arg */) {
 
   return EINVAL;
 }
 
-static int remotefs_ctl_close(struct lfs_dev * dev, int fd) {
+static int exafs_ctl_close(struct lfs_dev * dev, int fd) {
 
-  emscripten_log(EM_LOG_CONSOLE, "remotefs_ctl_close: %d", fd);
+  emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_close: %d", fd);
   
   return 0;
 }
 
-static struct device_ops remotefs_ctl_ops = {
+static struct device_ops exafs_ctl_ops = {
 
-  .open = remotefs_ctl_open,
-  .read = remotefs_ctl_read,
-  .write = remotefs_ctl_write,
-  .ioctl = remotefs_ctl_ioctl,
-  .close = remotefs_ctl_close,
+  .open = exafs_ctl_open,
+  .read = exafs_ctl_read,
+  .write = exafs_ctl_write,
+  .ioctl = exafs_ctl_ioctl,
+  .close = exafs_ctl_close,
   .stat = NULL,
   .getdents = NULL,
   .seek = NULL,
@@ -829,11 +845,9 @@ static struct device_ops remotefs_ctl_ops = {
   .mkdir = NULL,
 };
 
-#endif //EXAFS_CTL
-
 int register_home() {
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> register_home");
+  
+  emscripten_log(EM_LOG_CONSOLE, "exafs_driver: --> register_home");
   
   minor++;
   
@@ -843,10 +857,13 @@ int register_home() {
   int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
   //int res = -1;
   
-  //emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: res=%d", res);
 
   if (res < 0) {
 
+    //TOTEST
+    return -1;
+    
     res = exafs_format(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
 
     emscripten_log(EM_LOG_CONSOLE, "register_home: exafs_format: res=%d", res);
@@ -939,23 +956,15 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
-#ifdef EXAFS_CTL
-
-      devices[minor].ops = &remotefs_ctl_ops;
+      devices[minor].ops = &exafs_ctl_ops;
       
       msg->msg_id = REGISTER_DEVICE;
       msg->_u.dev_msg.minor = minor;
 
       memset(msg->_u.dev_msg.dev_name, 0, sizeof(msg->_u.dev_msg.dev_name));
-      sprintf((char *)&msg->_u.dev_msg.dev_name[0], "lfs_ctl");
+      sprintf((char *)&msg->_u.dev_msg.dev_name[0], CTL_DEV);
       
       sendto(sock, buf, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
-
-#else
-
-      register_home();
-      
-#endif
     }
     else if (msg->msg_id == (REGISTER_DEVICE|0x80)) {
 
@@ -964,13 +973,11 @@ int main() {
 
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DEVICE successful: %d,%d,%d", msg->_u.dev_msg.dev_type, msg->_u.dev_msg.major, msg->_u.dev_msg.minor);
 
-#ifdef EXAFS_CTL
-      if (msg->_u.dev_msg.minor == 0) { // lfs_ctl is registered
+      if (msg->_u.dev_msg.minor == 0) { // exafs_ctl is registered
 
 	register_home();
       }
       else if (msg->_u.dev_msg.minor > 0)
-#endif
 	{
 
 	char mnt_path[256];
@@ -983,7 +990,7 @@ int main() {
 	}
 
 	// ????
-	mkdirat(AT_FDCWD, mnt_path, 0777);
+	//mkdirat(AT_FDCWD, mnt_path, 0777);
 
 	msg->msg_id = MOUNT;
 	msg->_u.mount_msg.dev_type = FS_DEV;
@@ -1005,13 +1012,13 @@ int main() {
 	
 	continue;
       }
-
+      
       emscripten_log(EM_LOG_CONSOLE, "exafs device mounted successfully: %d,%d,%d", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor);
     }
     else if (msg->msg_id == OPEN) {
       
-      emscripten_log(EM_LOG_CONSOLE, "exafs: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
-
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: OPEN from %d: minor=%d pathname=%s dirfd=%d", msg->pid, msg->_u.open_msg.minor, msg->_u.open_msg.pathname, msg->_u.open_msg.fd);
+      
       int remote_fd = -ENOENT;
 
       if ( (msg->_u.open_msg.fd == 0) || ((msg->_u.open_msg.fd == AT_FDCWD)) ) { // open absolute
@@ -1115,21 +1122,21 @@ int main() {
     }
     else if (msg->msg_id == WRITE) {
 
-      emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
+      emscripten_log(EM_LOG_CONSOLE, "exafs_driver: WRITE from %d: fd=%d -> %d bytes", msg->pid, msg->_u.io_msg.fd, msg->_u.io_msg.len);
 
       char * buf2 = msg->_u.io_msg.buf;
 
       if (msg->_u.io_msg.len > (bytes_rec - 20)) {
 	
-	emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
+	emscripten_log(EM_LOG_CONSOLE, "exafs_driver: WRITE need to read %d remaining bytes (%d read)", msg->_u.io_msg.len - (bytes_rec - 20), bytes_rec - 20);
 
 	buf2 = (char *)malloc(msg->_u.io_msg.len);
 
 	memcpy(buf2, msg->_u.io_msg.buf, bytes_rec - 20);
 
 	int bytes_rec2 = recvfrom(sock, buf2+bytes_rec - 20, msg->_u.io_msg.len - (bytes_rec - 20), 0, (struct sockaddr *) &remote_addr, &len);
-
-	emscripten_log(EM_LOG_CONSOLE, "exafs: WRITE %d read", bytes_rec2);
+	
+	emscripten_log(EM_LOG_CONSOLE, "exafs_driver: WRITE %d read", bytes_rec2);
       }
       
       struct exafs_dev * dev = NULL;
@@ -1137,7 +1144,7 @@ int main() {
       int i = find_fd_entry(msg->_u.io_msg.fd);
 
       if (i >= 0) {
-        
+
 	dev = get_device(fds[i].minor);
       }
       

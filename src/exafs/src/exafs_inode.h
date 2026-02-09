@@ -87,6 +87,8 @@ struct exafs_inode {
     struct exafs_chunk_entry * chunk_entry_list;
   } e;
 
+  uint32_t obj;
+
   UT_hash_handle hh;
 };
 
@@ -149,5 +151,11 @@ uint32_t exafs_inode_find_n(struct exafs_ctx * ctx, const char * path, int len);
 int exafs_inode_stat(struct exafs_ctx * ctx, uint32_t ino, struct stat * stat);
 
 uint32_t exafs_inode_get_nb_entries(struct exafs_ctx * ctx, uint32_t ino);
+
+void exafs_inode_sort(struct exafs_ctx * ctx);
+
+void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now);
+
+int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode);
 
 #endif // _EXAFS_INODE_H

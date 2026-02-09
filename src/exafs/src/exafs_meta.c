@@ -66,8 +66,6 @@ int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
     return -1;
   }
 
-  ctx->meta_log_seq++;
-  
   ctx->meta_log_head++;
   
   return 0;
@@ -166,13 +164,18 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
     struct meta_record * record = (struct meta_record *)(data+offset);
 
-    //if (record->seq > ctx->)
+    if (record->seq >= ctx->meta_log_seq) {
 
-    exafs_meta_replay_record(ctx, record);
+      exafs_meta_replay_record(ctx, record);
+
+      last_seq = record->seq;
+    }
+    else {
+
+      emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay -> record in the past  %lld < %lld", record->seq, ctx->meta_log_seq);
+    }
 
     offset += sizeof(struct meta_record)+record->len+sizeof(uint32_t);
-
-    last_seq = record->seq;
     
     emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay: offset=%d", offset);
   }
