@@ -439,7 +439,19 @@ struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino
 
 	struct exafs_inode_meta * inode_meta = (struct exafs_inode_meta *)ptr;
 
+	int found = 0;
+
 	if (inode_meta->ino) {
+
+	  uint32_t ino2 = inode_meta->ino;
+	  struct exafs_inode * inode2 = NULL;
+
+	  HASH_FIND_INT( ctx->inode_table, &ino2, inode2 );
+
+	  found = (inode2 != NULL);
+	}
+
+	if ((inode_meta->ino) && !found) {
 
 	  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_find_by_id: load inode %d", inode_meta->ino);
 

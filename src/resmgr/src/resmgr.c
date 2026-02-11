@@ -359,6 +359,29 @@ int main() {
 	}
       }
     }
+    else if (msg->msg_id == UMOUNT) {
+
+      struct device * dev = NULL;
+      char pathname[1024];
+
+      emscripten_log(EM_LOG_CONSOLE, "UMOUNT %d %d %d %s", msg->_u.mount_msg.dev_type, msg->_u.mount_msg.major, msg->_u.mount_msg.minor, (const char *)&msg->_u.mount_msg.pathname[0]);
+
+      struct vnode * vnode = vfs_find_node((const char *)&msg->_u.mount_msg.pathname[0], NULL);
+
+      msg->msg_id |= 0x80;
+      msg->_errno = 0;
+
+      if (vnode && (vnode->type == VMOUNT)) {
+
+	vnode->type = VDIR;
+      }
+      else {
+
+	msg->_errno = ENOENT;
+      }
+
+      sendto(sock, buf, 256, 0, (struct sockaddr *) &remote_addr, sizeof(remote_addr));
+    }
     else if (msg->msg_id == SOCKET) {
 
       emscripten_log(EM_LOG_CONSOLE, "SOCKET %d %d %d %d", msg->pid, msg->_u.socket_msg.domain, msg->_u.socket_msg.type, msg->_u.socket_msg.protocol);

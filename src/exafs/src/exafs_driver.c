@@ -79,6 +79,7 @@ struct exafs_dev {
   struct exafs_cfg exafs_config;
   struct device_ops * ops;
   unsigned short minor;
+  char name[128];
 };
 
 struct fd_entry {
@@ -344,7 +345,7 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
     // Create regular file
     uint32_t ino = exafs_mknod(&(dev->exafs_ctx), mode2, pathname);
 
-    emscripten_log(EM_LOG_CONSOLE,"exafs_driver: file created -> ino=%d", ino);
+    emscripten_log(EM_LOG_CONSOLE,"exafs_driver: file created -> ino=%d mode=%x", ino, mode2);
     
     if (ino) {
 
@@ -807,13 +808,140 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
 
   if (strncmp(buf, "unmount", 7) == 0) {
 
-    // home minor = 1
-    int minor = 1;
+    char * fs = strchr(buf, ':');
 
-    exafs_unmount(&(devices[minor].exafs_ctx));
+    if (!fs) {
+
+      return -EINVAL;
+    }
+
+    fs++;
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs_driver: unmount %s", fs);
+
+    int min = 0;
+    
+    for (min=0; min <= minor; min++) {
+      
+      if (strcmp(fs, devices[min].name) == 0) {
+
+	break;
+      }
+    }
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs_driver: unmount %s -> min=%d", fs, min);
+
+    if (min > minor) {
+
+      return -EINVAL;
+    }
+
+    int res = exafs_unmount(&(devices[min].exafs_ctx));
+
+    if (res < 0) {
+
+      return -EINVAL;
+    }
+
+    char buf2[1256];
+    struct message * msg = (struct message *)&buf2[0];
+    
+    struct sockaddr_un resmgr_addr;
+    memset(&resmgr_addr, 0, sizeof(resmgr_addr));
+    resmgr_addr.sun_family = AF_UNIX;
+    strcpy(resmgr_addr.sun_path, RESMGR_PATH);
+
+    msg->msg_id = UMOUNT;
+    msg->_u.mount_msg.dev_type = FS_DEV;
+    msg->_u.mount_msg.major = major;
+    msg->_u.mount_msg.minor = min;
+
+    memset(msg->_u.mount_msg.pathname, 0, sizeof(msg->_u.mount_msg.pathname));
+
+    char mnt_path[1024];
+
+    if (strcmp(devices[min].name, "home") == 0) {
+
+      strcpy(mnt_path, "/home");
+    }
+    else {
+
+      sprintf(mnt_path, "/mnt/%s", devices[min].name);
+    }
+	
+    strcpy((char *)&msg->_u.mount_msg.pathname[0], mnt_path);
+	
+    sendto(sock, buf2, 1256, 0, (struct sockaddr *) &resmgr_addr, sizeof(resmgr_addr));
+  }
+  else if (strncmp(buf, "format", 6) == 0) {
+
+    char * fs = strchr(buf, ':');
+
+    if (!fs) {
+
+      return -EINVAL;
+    }
+
+    fs++;
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs_driver: unmount %s", fs);
+
+    int min = 0;
+    
+    for (min=0; min <= minor; min++) {
+      
+      if (strcmp(fs, devices[min].name) == 0) {
+
+	break;
+      }
+    }
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs_driver: unmount %s -> min=%d", fs, min);
+
+    if (min > minor) {
+
+      return -EINVAL;
+    }
+    
+    int res = exafs_format(&(devices[min].exafs_ctx), &(devices[min].exafs_config));
+
+    if (res == 0) {
+
+      char mnt_path[1024];
+
+      if (strcmp(devices[min].name, "home") == 0) {
+
+	if (exafs_mkdir_at(&(devices[min].exafs_ctx), EXAFS_ROOT_INO, S_IRWXU, "home") == 0) {
+
+	  res = -1;
+	}
+      }
+      else {
+
+	uint32_t ino = exafs_mkdir_at(&(devices[min].exafs_ctx), EXAFS_ROOT_INO, S_IRWXU, "mnt");
+
+	if (ino > 0) {
+
+	  if (exafs_mkdir_at(&(devices[min].exafs_ctx), ino, S_IRWXU, fs) == 0) {
+
+	    res = -1;
+	  }
+	}
+	else {
+
+	  res = -1;
+	}
+	
+      }
+    }
+    
+    if (res < 0) {
+
+      return -EINVAL;
+    }
   }
   
-  return -EINVAL;
+  return count;
 }
 
 static int exafs_ctl_ioctl(struct lfs_dev * dev, int fildes, int request, ... /* arg */) {
@@ -852,6 +980,7 @@ int register_home() {
   minor++;
   
   memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
+  strcpy(devices[minor].name, "home");
 
   //TOTEST: format each time
   int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
@@ -957,6 +1086,7 @@ int main() {
       emscripten_log(EM_LOG_CONSOLE, "REGISTER_DRIVER successful: major=%d", major);
 
       devices[minor].ops = &exafs_ctl_ops;
+      strcpy(devices[minor].name, CTL_DEV);
       
       msg->msg_id = REGISTER_DEVICE;
       msg->_u.dev_msg.minor = minor;

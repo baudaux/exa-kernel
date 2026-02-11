@@ -296,11 +296,11 @@ uint32_t exafs_mkdir(struct exafs_ctx * ctx, uint32_t mode, const char * path) {
 
 uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t child_ino, uint32_t mode, const char * path) {
   
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mkdir_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_mknod_at2: parent_ino=%d child_ino=%d path=%s", parent_ino, child_ino, path);
     
-  if (exafs_inode_get_entry(ctx, child_ino, path)) {
+  if (exafs_inode_get_entry(ctx, parent_ino, path)) {
 
-    emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mkdir_at2: error, inode %d already exists", child_ino);
+    emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mknod_at2: error, path %s already exists", path);
 
     return 0;
   }
