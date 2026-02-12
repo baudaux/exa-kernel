@@ -58,6 +58,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->write_rand = cfg->write_rand;
   ctx->delete = cfg->delete;
   ctx->delete_range = cfg->delete_range;
+  ctx->delete_set = cfg->delete_set;
 
   if (cfg->meta_log_size > 0) {
 
@@ -490,6 +491,8 @@ int exafs_unlink(struct exafs_ctx * ctx, const char * path) {
   
   recordset_length += exafs_inode_set_nlink_record(ctx, stat_child.st_ino, nlink, now, recordset+recordset_length);
   
+  recordset_length += exafs_inode_set_ctime_record(ctx, stat_child.st_ino, now, recordset+recordset_length);
+  
   int err = exafs_meta_store(ctx, recordset, recordset_length);
   
   if (!err) {
@@ -753,7 +756,7 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path) {
   char * leaf = strrchr(path, '/');
 
   uint32_t ino = exafs_inode_find_n(ctx, path, (leaf == path)?1:leaf-path);
-
+  
   if (!ino) {
     return ENOENT;
   }
@@ -775,11 +778,11 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path) {
   exafs_inode_stat(ctx, e->ino, &stat);
 
   if (!(stat.st_mode & S_IFDIR)) {
-
+    
     return ENOTDIR;
   }
 
-  if (stat.st_nlink > 2) {
+  if (exafs_inode_get_nb_entries(ctx, e->ino) > 2) {
 
     return ENOTEMPTY;
   }
@@ -797,6 +800,10 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path) {
   recordset_length += exafs_inode_set_size_record(ctx, ino, parent_stat.st_size-(PATHNAME_LEN_MAX+sizeof(uint32_t)), now, recordset+recordset_length);
   
   recordset_length += exafs_inode_set_mtime_record(ctx, ino, now, recordset+recordset_length);
+
+  recordset_length += exafs_inode_set_nlink_record(ctx, e->ino, 0, now, recordset+recordset_length);
+
+  recordset_length += exafs_inode_set_ctime_record(ctx, e->ino, now, recordset+recordset_length);
   
   int err = exafs_meta_store(ctx, recordset, recordset_length);
   

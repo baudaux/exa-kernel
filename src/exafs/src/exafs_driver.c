@@ -106,6 +106,7 @@ static struct exafs_cfg local_exafs_config = {
   .write_rand = &exafs_local_write_rand,
   .delete = &exafs_local_delete,
   .delete_range = &exafs_local_delete_range,
+  .delete_set = &exafs_local_delete_set,
 };
 
 static char current_fs[128];

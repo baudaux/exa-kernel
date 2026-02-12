@@ -32,6 +32,7 @@ typedef int (*w_range_func)(struct exafs_ctx * ctx, void * buffer, int len);
 typedef int (*w_rand_func)(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
 typedef int (*del_func)(struct exafs_ctx * ctx, uint32_t id);
 typedef int (*del_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
+typedef int (*del_set_func)(struct exafs_ctx * ctx, uint32_t * buffer, int len);
 
 struct superblock {
   
@@ -72,6 +73,7 @@ struct exafs_ctx {
   w_rand_func write_rand;
   del_func delete;
   del_range_func delete_range;
+  del_set_func delete_set;
 };
 
 struct exafs_cfg {
@@ -84,6 +86,7 @@ struct exafs_cfg {
   w_rand_func write_rand;
   del_func delete;
   del_range_func delete_range;
+  del_set_func delete_set;
   
   uint32_t meta_log_size;
   uint32_t grp_size;

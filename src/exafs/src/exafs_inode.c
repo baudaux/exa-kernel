@@ -46,7 +46,7 @@ struct exafs_dir_entry * exafs_inode_get_entry(struct exafs_ctx * ctx, uint32_t 
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_get_entry: ino=%d", parent_ino);
   
-  struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, parent_ino); 
+  struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, parent_ino);
 
   if (!parent_inode) {
 
@@ -637,6 +637,11 @@ uint32_t exafs_inode_get_nb_entries(struct exafs_ctx * ctx, uint32_t ino) {
     return 0;
   }
 
+  if (!inode->e.entry_table) {
+
+    exafs_inode_read_entry(ctx, inode);
+  }
+
   return HASH_COUNT(inode->e.entry_table);
 }
 
@@ -775,7 +780,7 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
 
   HASH_ITER(hh, ctx->inode_table, current_inode, tmp) {
 
-    if (current_inode->mtime > ctx->superblocks[ctx->active_superblock].generation) {
+    if ( (current_inode->mtime > ctx->superblocks[ctx->active_superblock].generation) && (current_inode->nlink > 0) ) {
 
       exafs_inode_snap_content(ctx, current_inode);
     }
@@ -802,30 +807,41 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
 	updating_slot = exafs_io_read_group(ctx, updating_group, buf, now);
       }
 
-      int offset = (updating_slot == 0)?0:group_size;
+      if (current_inode->nlink > 0) {
 
-      char * ptr = buf+offset;
+	int offset = (updating_slot == 0)?0:group_size;
 
-      ptr += sizeof(uint64_t);
+	char * ptr = buf+offset;
 
-      ptr += (current_inode->ino % ctx->grp_size) * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
+	ptr += sizeof(uint64_t);
 
-      struct exafs_inode_meta * meta = (struct exafs_inode_meta *)ptr;
+	ptr += (current_inode->ino % ctx->grp_size) * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
 
-      meta->ino = current_inode->ino;
-      meta->size = current_inode->size;
-      meta->atime = current_inode->atime;
-      meta->btime = current_inode->btime;
-      meta->ctime = current_inode->ctime;
-      meta->mtime = current_inode->mtime;
-      meta->mode = current_inode->mode;
-      meta->uid = current_inode->uid;
-      meta->gid = current_inode->gid;
-      meta->nlink = current_inode->nlink;
+	struct exafs_inode_meta * meta = (struct exafs_inode_meta *)ptr;
 
-      ptr += sizeof(struct exafs_inode_meta);
+	meta->ino = current_inode->ino;
+	meta->size = current_inode->size;
+	meta->atime = current_inode->atime;
+	meta->btime = current_inode->btime;
+	meta->ctime = current_inode->ctime;
+	meta->mtime = current_inode->mtime;
+	meta->mode = current_inode->mode;
+	meta->uid = current_inode->uid;
+	meta->gid = current_inode->gid;
+	meta->nlink = current_inode->nlink;
 
-      *((uint32_t *)ptr) = current_inode->obj;
+	ptr += sizeof(struct exafs_inode_meta);
+
+	*((uint32_t *)ptr) = current_inode->obj;
+      }
+      else { // Delete file/dir
+
+	if (!(current_inode->mode & S_IFDIR)) {
+
+	  exafs_inode_del_file(ctx, current_inode);
+	}
+	
+      }
     }
     else {
 
@@ -860,10 +876,12 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
 
     free(buf);
 
+    size = -len;
+
     buf = (char *)malloc(size);
 
-    if (ctx->read(ctx, inode->obj, buf, len, 0) != len) {
-
+    if (ctx->read(ctx, inode->obj, buf, size, 0) != size) {
+      
       return -1;
     }
   }
@@ -873,7 +891,7 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
   if (inode->mode & S_IFDIR) {
 
     while ((ptr-buf) < len) {
-
+      
       struct exafs_dir_entry * dir_entry = (struct exafs_dir_entry *)malloc(sizeof(struct exafs_dir_entry));
 
       if (!dir_entry) {
@@ -908,4 +926,40 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
   }
   
   return 0;
+}
+
+int exafs_inode_del_file(struct exafs_ctx * ctx, struct exafs_inode * inode) {
+
+  if (!inode->e.chunk_entry_list) {
+
+    exafs_inode_read_entry(ctx, inode);
+  }
+
+  struct exafs_chunk_entry * chunk_entry = inode->e.chunk_entry_list;
+
+  int nb_entries = 0;
+
+  while (chunk_entry) {
+
+    nb_entries++;
+
+    chunk_entry = chunk_entry->next;
+  }
+
+  uint32_t * buf = (char*)malloc(nb_entries * sizeof(uint32_t));
+
+  chunk_entry = inode->e.chunk_entry_list;
+
+  uint32_t * ptr = buf;
+
+  while (chunk_entry) {
+    
+    *ptr = chunk_entry->id;
+    ptr++;
+
+    chunk_entry = chunk_entry->next;
+  }
+  
+  return ctx->delete_set(ctx, buf, nb_entries * sizeof(uint32_t));
+  
 }

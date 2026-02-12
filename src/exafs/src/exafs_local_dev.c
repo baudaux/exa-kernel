@@ -590,3 +590,12 @@ EM_JS(int, exafs_local_delete_range, (struct exafs_ctx * ctx, uint32_t id_min, u
 
       });
 });
+
+EM_JS(int, exafs_local_delete_set, (struct exafs_ctx * ctx, uint32_t * buffer, int len), {
+    
+    return Asyncify.handleSleep(function (wakeUp) {
+	
+	console.log("exafs: exafs_local_delete_set");
+
+      });
+  });
