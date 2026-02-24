@@ -32,7 +32,9 @@ enum meta_op {
   EXAFS_OP_TRUNCATE,
   EXAFS_OP_CHMOD,
   EXAFS_OP_CHOWN,
-  EXAFS_OP_RENAME
+  EXAFS_OP_RENAME,
+  EXAFS_OP_SNAPSHOT,
+  EXAFS_OP_DEL_OBJ,
 };
 
 struct meta_record {

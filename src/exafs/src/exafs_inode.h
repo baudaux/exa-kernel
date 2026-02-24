@@ -158,6 +158,6 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now);
 
 int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode);
 
-int exafs_inode_del_file(struct exafs_ctx * ctx, struct exafs_inode * inode);
+int exafs_inode_del_obj(struct exafs_ctx * ctx, struct exafs_inode * inode, uint64_t now);
 
 #endif // _EXAFS_INODE_H

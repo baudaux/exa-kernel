@@ -216,7 +216,7 @@ int exafs_write_superblock(struct exafs_ctx * ctx, int index, uint64_t now) {
   ctx->superblocks[index].crc = exafs_crc(&(ctx->superblocks[index]), sizeof(struct superblock) - sizeof(uint32_t), 0);
   
   int len = ctx->write(ctx, index, &(ctx->superblocks[index]), sizeof(struct superblock));
-
+  
   return len;
 }
 
@@ -864,9 +864,28 @@ int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length) {
   return err;
 }
 
+int exafs_snapshot_record(struct exafs_ctx * ctx, time_t now, char * ptr) {
+
+  int record_size = 0;
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT, now, record_size, (struct meta_record *)ptr);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
 int exafs_create_snapshot(struct exafs_ctx * ctx) {
 
   time_t now = time(NULL);
+
+  char * recordset = (char *)malloc(1024);
+  
+  int recordset_length = exafs_snapshot_record(ctx, now, recordset); // or now+1 ?
+  
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  free(recordset);
   
   // Sort inodes by ino
   exafs_inode_sort(ctx);
