@@ -42,6 +42,7 @@ struct superblock {
   uint32_t meta_log_size;
   uint64_t meta_log_seq;
   uint32_t meta_log_head;
+  uint32_t meta_log_tail;
   uint32_t snapshot_size;
   uint32_t grp_size;
   uint32_t next_ino;
@@ -57,6 +58,7 @@ struct exafs_ctx {
 
   uint32_t meta_log_size;
   uint32_t meta_log_head;
+  uint32_t meta_log_tail;
   uint64_t meta_log_seq;
   uint32_t snapshot_size;
   uint32_t grp_size;
@@ -74,6 +76,8 @@ struct exafs_ctx {
   del_func delete;
   del_range_func delete_range;
   del_set_func delete_set;
+
+  int snapshot_aborted;
 };
 
 struct exafs_cfg {
@@ -97,6 +101,12 @@ struct extent {
   uint64_t offset;
   uint64_t length;
   //u64 object_id; ??
+};
+
+struct exafs_snap_end_meta {
+
+  uint32_t erase_start;
+  uint32_t erase_end;
 };
 
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg);

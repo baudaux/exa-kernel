@@ -118,6 +118,11 @@ struct exafs_set_time_meta {
   uint64_t time;
 };
 
+struct exafs_obj_meta {
+
+  uint32_t id;
+};
+
 struct exafs_dir_entry * exafs_inode_get_entry(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path);
 
 int exafs_inode_record(struct exafs_ctx * ctx, uint32_t ino, uint32_t mode, time_t now, char * ptr);

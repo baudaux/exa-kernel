@@ -142,6 +142,22 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
       exafs_inode_write_extent(ctx, (struct exafs_extent_meta *)data);
       break;
 
+    case EXAFS_OP_SNAPSHOT:
+      
+      return -2;
+
+    case EXAFS_OP_SNAPSHOT_END:
+    case EXAFS_OP_SNAPSHOT_ABORTED:
+
+      return -3;
+      
+    case EXAFS_OP_WRITE_OBJ:
+    case EXAFS_OP_DEL_OBJ:
+
+      // Do nothing
+
+      break;
+      
     default:
 
       break;
@@ -166,7 +182,16 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
     if (record->seq >= ctx->meta_log_seq) {
 
-      exafs_meta_replay_record(ctx, record);
+      int ret = exafs_meta_replay_record(ctx, record);
+
+      if (ret == -2) { // Snapshot has been aborted ?
+
+	ctx->snapshot_aborted = 1;
+      }
+      else if (ret == -3) {
+	
+	ctx->snapshot_aborted = 0;
+      }
 
       last_seq = record->seq;
     }

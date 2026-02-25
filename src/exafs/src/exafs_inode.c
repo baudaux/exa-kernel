@@ -766,11 +766,11 @@ int exafs_del_obj(struct exafs_ctx * ctx, uint32_t id, uint64_t now) {
   return 0;
 }
 
-void exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode, uint64_t now) {
+int exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode, uint64_t now) {
   
   char * buf;
   uint32_t size;
-  uint32_t id;
+  uint32_t id = 0;
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_snap_content: ino=%d", inode->ino);
 
@@ -784,10 +784,41 @@ void exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode
   }
 
   if (!buf) {
-    return;
+    return -1;
   }
   
   ctx->write_rand(ctx, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, buf, size, &id);
+
+  if (!id) {
+
+    return -1;
+  }
+
+  char * recordset = (char *)malloc(1024);
+
+  if (!recordset) {
+    return -1;
+  }
+
+  int record_size = sizeof(struct exafs_obj_meta);
+  
+  int header_len = exafs_record_header(ctx, EXAFS_OP_WRITE_OBJ, now, record_size, (struct meta_record *)recordset);
+
+  struct exafs_obj_meta * obj = (struct exafs_obj_meta *)(recordset+header_len);
+
+  obj->id = id;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)recordset);
+
+  int recordset_length = header_len+record_size+crc_len;
+
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+
+  free(recordset);
+
+  if (err < 0) {
+    return -1;
+  }
 
   if (inode->obj) {
 
@@ -801,6 +832,8 @@ void exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_snap_content -> obj=%d", id);
   
   free(buf);
+
+  return 0;
 }
 
 void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
@@ -1038,6 +1071,10 @@ int exafs_inode_del_obj(struct exafs_ctx * ctx, struct exafs_inode * inode, uint
   int err = exafs_meta_store(ctx, ptr, recordset_length);
 
   free(ptr);
+
+  if (err < 0) {
+    return -1;
+  }
   
   return 0;
 }

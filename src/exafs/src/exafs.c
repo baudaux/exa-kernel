@@ -45,6 +45,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   ctx->active_superblock = -1;
   ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
+  ctx->meta_log_tail = EXAFS_NB_SUPERBLOCKS;
   ctx->meta_log_seq = 0;
   ctx->next_ino = 0;
   
@@ -85,6 +86,8 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   if ( (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
     return -1;
   }
+
+  ctx->snapshot_aborted = 0;
   
   return 0;
 }
@@ -147,12 +150,13 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   ctx->meta_log_size = ctx->superblocks[ctx->active_superblock].meta_log_size;
   ctx->meta_log_head = ctx->superblocks[ctx->active_superblock].meta_log_head;
+  ctx->meta_log_tail = ctx->superblocks[ctx->active_superblock].meta_log_tail;
   ctx->meta_log_seq = ctx->superblocks[ctx->active_superblock].meta_log_seq;
   ctx->snapshot_size = ctx->superblocks[ctx->active_superblock].snapshot_size;
   ctx->grp_size = ctx->superblocks[ctx->active_superblock].grp_size;
   ctx->next_ino = ctx->superblocks[ctx->active_superblock].next_ino;
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: active_superblock=%d generation %lld log_size=%d log_head=%d log_seq=%lld snapshot_size=%d grp_size=%d next_ino=%d", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation, ctx->meta_log_size, ctx->meta_log_head, ctx->meta_log_seq, ctx->snapshot_size, ctx->grp_size, ctx->next_ino);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: active_superblock=%d generation %lld log_size=%d log_head=%d log_tail=%d log_seq=%lld snapshot_size=%d grp_size=%d next_ino=%d", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation, ctx->meta_log_size, ctx->meta_log_head, ctx->meta_log_tail, ctx->meta_log_seq, ctx->snapshot_size, ctx->grp_size, ctx->next_ino);
   
   // Read metadata logs by group of (ctx->meta_log_size/10)
 
@@ -187,6 +191,11 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
   free(buf);
   
+  if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a flag for continuing 
+
+    // Objects written during aborted snapshot have to be deleted
+  }
+  
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mount: success (active superblock %d generation %lld)", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation);
   
   return 0;
@@ -209,6 +218,7 @@ int exafs_write_superblock(struct exafs_ctx * ctx, int index, uint64_t now) {
   ctx->superblocks[index].generation = now;
   ctx->superblocks[index].meta_log_size = ctx->meta_log_size;
   ctx->superblocks[index].meta_log_head = ctx->meta_log_head;
+  ctx->superblocks[index].meta_log_tail = ctx->meta_log_tail;
   ctx->superblocks[index].meta_log_seq = ctx->meta_log_seq;
   ctx->superblocks[index].snapshot_size = ctx->snapshot_size;
   ctx->superblocks[index].grp_size = ctx->grp_size;
@@ -271,9 +281,6 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
     return -1;
   }
-
-  // Metadata log head is reset
-  ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
   
   // Metadata log seq is reset
   ctx->meta_log_seq = 1;
@@ -572,7 +579,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
       struct stat new_stat;
       
       exafs_inode_stat(ctx, new_e->ino, &new_stat);
-
+      
       if (new_stat.st_mode & S_IFDIR) { // Destination is a directory
 
 	if (old_stat.st_mode & S_IFREG) {
@@ -875,24 +882,68 @@ int exafs_snapshot_record(struct exafs_ctx * ctx, time_t now, char * ptr) {
   return header_len+record_size+crc_len;
 }
 
+int exafs_snapshot_end_record(struct exafs_ctx * ctx, uint32_t erase_start, uint32_t erase_end, time_t now, char * ptr) {
+
+  int record_size = sizeof(struct exafs_snap_end_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_END, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_snap_end_meta * snap_end = (struct exafs_snap_end_meta *)(ptr+header_len);
+
+  snap_end->erase_start = erase_start;
+  snap_end->erase_end = erase_end;
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
+
 int exafs_create_snapshot(struct exafs_ctx * ctx) {
 
   time_t now = time(NULL);
 
+  // We first need to erase objects according to records between snapshot tail and head
+
+  // TODO
+
   char * recordset = (char *)malloc(1024);
   
-  int recordset_length = exafs_snapshot_record(ctx, now, recordset); // or now+1 ?
+  // Objects between ctx->meta_log_tail and erase_end, included, need to be erased once snapshot is done
+  
+  uint32_t erase_end = ctx->meta_log_head - 1;
+  
+  int recordset_length = exafs_snapshot_record(ctx, now, recordset);
   
   int err = exafs_meta_store(ctx, recordset, recordset_length);
-  
-  free(recordset);
+
+  if (err < 0) {
+
+    free(recordset);
+    
+    return -1;
+  }
   
   // Sort inodes by ino
   exafs_inode_sort(ctx);
   
   // Snap all inodes
   exafs_inode_snap(ctx, now);
+  
+  recordset_length = exafs_snapshot_end_record(ctx, ctx->meta_log_tail, erase_end, now, recordset);
+  
+  err = exafs_meta_store(ctx, recordset, recordset_length);
+  
+  free(recordset);
 
+  if (err < 0) {
+
+    return -1;
+  }
+
+  ctx->meta_log_tail = erase_end + 1;
+
+  // Records between meta_log_tail and (meta_log_head - 1) will be handled (objects erased) while doing next snapshot
+  
   int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
   int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
   
