@@ -207,6 +207,8 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
       
       exafs_write_superblock(ctx, next, now);
       exafs_write_superblock(ctx, next2, now);
+
+      // TODO: and then ?
     }
     
     ctx->meta_log_seq++;
