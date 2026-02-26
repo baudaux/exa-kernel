@@ -143,18 +143,70 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
       break;
 
     case EXAFS_OP_SNAPSHOT:
-      
-      return -2;
+
+      if (ctx->delete_obj) {
+
+	ctx->delete_buf_size = 64*1024;
+	ctx->delete_buf = (char *)malloc(ctx->delete_buf_size*sizeof(uint32_t));
+	ctx->delete_offset = 0;
+      }
+      else {
+	
+	return -2;
+      }
+
+      break;
 
     case EXAFS_OP_SNAPSHOT_END:
+      {
+
+	struct exafs_snap_end_meta * snap_end_meta = (struct exafs_snap_end_meta *)data;
+
+	if (ctx->delete_obj) {
+
+	  if (ctx->delete_offset > 0) {
+
+	    ctx->delete_set(ctx, ctx->delete_buf, ctx->delete_offset);
+
+	    ctx->delete_offset = 0;
+	  }
+	  
+	  ctx->delete_range(ctx, snap_end_meta->erase_start, snap_end_meta->erase_end);
+
+	  free(ctx->delete_buf);
+
+	  ctx->delete_obj = snap_end_meta->obj;
+	  
+	  //TODO: when to delete obj between EXAFS_OP_SNAPSHOT and EXAFS_OP_SNAPSHOT_END ?
+	}
+
+	return -3;
+
+      }
+      
     case EXAFS_OP_SNAPSHOT_ABORTED:
 
-      return -3;
+      return -4;
       
     case EXAFS_OP_WRITE_OBJ:
+
+      break;
+      
     case EXAFS_OP_DEL_OBJ:
 
-      // Do nothing
+      if (ctx->delete_obj) {
+
+	if ((ctx->delete_buf_size - ctx->delete_offset) > (record->len - sizeof(uint32_t))) {
+
+	  ctx->delete_set(ctx, ctx->delete_buf, ctx->delete_offset);
+
+	  ctx->delete_offset = 0;
+	}
+
+	memcpy(ctx->delete_buf+ctx->delete_offset, data+sizeof(uint32_t), record->len - sizeof(uint32_t));
+	  
+	ctx->delete_offset += record->len - sizeof(uint32_t);
+      }
 
       break;
       
@@ -191,6 +243,11 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
       else if (ret == -3) {
 	
 	ctx->snapshot_aborted = 0;
+
+	if (ctx->delete_obj) {
+
+	  return 0;
+	}
       }
 
       last_seq = record->seq;

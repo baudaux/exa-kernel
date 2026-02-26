@@ -78,6 +78,11 @@ struct exafs_ctx {
   del_set_func delete_set;
 
   int snapshot_aborted;
+
+  int delete_obj;
+  int delete_buf_size;
+  char * delete_buf;
+  int delete_offset;
 };
 
 struct exafs_cfg {
@@ -107,6 +112,7 @@ struct exafs_snap_end_meta {
 
   uint32_t erase_start;
   uint32_t erase_end;
+  uint32_t obj;
 };
 
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
