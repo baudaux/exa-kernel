@@ -913,7 +913,7 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       if (strcmp(devices[min].name, "home") == 0) {
 
 	if (exafs_mkdir_at(&(devices[min].exafs_ctx), EXAFS_ROOT_INO, S_IRWXU, "home") == 0) {
-
+	  
 	  res = -1;
 	}
       }

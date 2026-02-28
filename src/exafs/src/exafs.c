@@ -118,7 +118,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
       ctx->superblocks[i].generation = 0;
     }
     else {
-
+      
       uint32_t crc = exafs_crc(&(ctx->superblocks[i]), sizeof(struct superblock) - sizeof(uint32_t), 0);
       
       emscripten_log(EM_LOG_CONSOLE, "exafs: read block %d -> magic=%s generation=%lld crc=%x (computed crc=%x)", i, ctx->superblocks[i].magic, ctx->superblocks[i].generation, ctx->superblocks[i].crc, crc);
@@ -158,73 +158,58 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: active_superblock=%d generation %lld log_size=%d log_head=%d log_tail=%d log_seq=%lld snapshot_size=%d grp_size=%d next_ino=%d", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation, ctx->meta_log_size, ctx->meta_log_head, ctx->meta_log_tail, ctx->meta_log_seq, ctx->snapshot_size, ctx->grp_size, ctx->next_ino);
 
-  ctx->delete_obj = 0;
+  ctx->finalize_snapshot = 0;
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: ctx->meta_log_tail=%d ctx->meta_log_head=%d", ctx->meta_log_tail, ctx->meta_log_head);
 
   if (ctx->meta_log_tail < ctx->meta_log_head) {
 
-    // We need to erase objects between snapshot tail and head and all deleted obj
-    
-    ctx->delete_obj = 1;
-  }
-  
-  // Read metadata logs by group of (ctx->meta_log_size/10)
+    if (exafs_finalize_snapshot(ctx, 0) < 0) {
 
-  int buf_len = ctx->meta_log_size*10;
-  char * buf = malloc(buf_len);
-
-  for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
-
-    uint32_t last_obj;
-
-    // Read at maximum (ctx->meta_log_size/10) objects
-  
-    int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
-    
-    if (size <= 0) {
-      break;
-    }
-
-    emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
-
-    // Replay them
-
-    ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
-
-    if (ctx->delete_obj > 1) {
-
-      // Snapshot has been finalized with object deletion
-      // (ctx->delete_obj + 1) points to the new tail/head
-
-      time_t now = time(NULL);
-
-      ctx->meta_log_tail = ctx->delete_obj + 1;
-      ctx->meta_log_head = ctx->meta_log_tail;
-
-      int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
-      int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
-  
-      // Write snapshot twice
-      
-      exafs_write_superblock(ctx, next, now);
-      exafs_write_superblock(ctx, next2, now);
-
-      // TODO: and then ?
-    }
-    
-    ctx->meta_log_seq++;
-    
-    ctx->meta_log_head = last_obj+1;
-
-    if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
-      break;
+      return -1;
     }
   }
+  else {
   
-  free(buf);
-  
-  if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a flag for continuing 
+    // Read metadata logs by group of (ctx->meta_log_size/10)
 
-    // Objects written during aborted snapshot have to be deleted
+    int buf_len = ctx->meta_log_size*10;
+    char * buf = malloc(buf_len);
+
+    for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
+
+      uint32_t last_obj;
+
+      // Read at maximum (ctx->meta_log_size/10) objects
+  
+      int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
+    
+      if (size <= 0) {
+	break;
+      }
+
+      emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
+
+      // Replay them
+
+      ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
+    
+      ctx->meta_log_seq++;
+    
+      ctx->meta_log_head = last_obj+1;
+
+      if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
+	break;
+      }
+    }
+  
+    free(buf);
+  
+    if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a flag for continuing 
+
+      // Objects written during aborted snapshot have to be deleted
+    }
+
   }
   
   emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_mount: success (active superblock %d generation %lld)", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation);
@@ -913,17 +898,27 @@ int exafs_snapshot_record(struct exafs_ctx * ctx, time_t now, char * ptr) {
   return header_len+record_size+crc_len;
 }
 
-int exafs_snapshot_end_record(struct exafs_ctx * ctx, uint32_t erase_start, uint32_t erase_end, uint32_t obj, time_t now, char * ptr) {
+int exafs_snapshot_end_record(struct exafs_ctx * ctx, time_t now, char * ptr) {
 
-  int record_size = sizeof(struct exafs_snap_end_meta);
+  int record_size = 0;
 
   int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_END, now, record_size, (struct meta_record *)ptr);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
+}
 
-  struct exafs_snap_end_meta * snap_end = (struct exafs_snap_end_meta *)(ptr+header_len);
+int exafs_snapshot_finalize_record(struct exafs_ctx * ctx, uint32_t erase_start, uint32_t erase_end, time_t now, char * ptr) {
 
-  snap_end->erase_start = erase_start;
-  snap_end->erase_end = erase_end;
-  snap_end->obj = obj;
+  int record_size = sizeof(struct exafs_snap_finalize_meta);
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_FINALIZE, now, record_size, (struct meta_record *)ptr);
+
+  struct exafs_snap_finalize_meta * snap_finalize = (struct exafs_snap_finalize_meta *)(ptr+header_len);
+
+  snap_finalize->erase_start = erase_start;
+  snap_finalize->erase_end = erase_end;
   
   int crc_len = exafs_record_crc((struct meta_record *)ptr);
   
@@ -935,10 +930,15 @@ int exafs_create_snapshot(struct exafs_ctx * ctx) {
   time_t now = time(NULL);
 
   char * recordset = (char *)malloc(1024);
-  
-  // Objects between ctx->meta_log_tail and erase_end, included, need to be erased once snapshot is done
-  
-  uint32_t erase_end = ctx->meta_log_head - 1;
+
+  if (!recordset) {
+    
+    return -1;
+  }
+
+  uint32_t head = ctx->meta_log_head;
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_create_snapshot -> record EXAFS_OP_SNAPSHOT is at object %d", head);
   
   int recordset_length = exafs_snapshot_record(ctx, now, recordset);
   
@@ -956,8 +956,8 @@ int exafs_create_snapshot(struct exafs_ctx * ctx) {
   
   // Snap all inodes
   exafs_inode_snap(ctx, now);
-  
-  recordset_length = exafs_snapshot_end_record(ctx, ctx->meta_log_tail, erase_end, ctx->meta_log_head, now, recordset);
+
+  recordset_length = exafs_snapshot_end_record(ctx, now, recordset);
   
   err = exafs_meta_store(ctx, recordset, recordset_length);
   
@@ -968,9 +968,7 @@ int exafs_create_snapshot(struct exafs_ctx * ctx) {
     return -1;
   }
 
-  ctx->meta_log_tail = erase_end + 1;
-
-  // Records between meta_log_tail and (meta_log_head - 1) will be handled (objects erased) while doing next snapshot
+  ctx->meta_log_head = head; // For replaying del obj created by the snapshot
   
   int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
   int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
@@ -979,4 +977,172 @@ int exafs_create_snapshot(struct exafs_ctx * ctx) {
   
   exafs_write_superblock(ctx, next, now);
   exafs_write_superblock(ctx, next2, now);
+
+  exafs_finalize_snapshot(ctx, now+1);
+}
+
+int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_finalize_snapshot");
+
+  if (now == 0) {
+
+    now = time(NULL);
+  }
+
+  int buf_len = 1024;
+  char * buf = malloc(buf_len);
+
+  // Read only one record as there can be only one
+
+  int size = ctx->read(ctx, ctx->meta_log_head, buf, buf_len, 0);
+  
+  if (size <= 0) {
+    
+    free(buf);
+    return -1;
+  }
+
+  struct meta_record * record = (struct meta_record *)buf;
+
+  if (record->op == EXAFS_OP_SNAPSHOT_FINALIZE) {
+
+    free(buf);
+
+    int ret = exafs_finalize_snapshot_2(ctx, now+1);
+
+    return ret;
+  }
+  else if (record->op != EXAFS_OP_SNAPSHOT) {
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_finalize_snapshot -> record is not EXAFS_OP_SNAPSHOT !!");
+    
+    return -1;
+  }
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_finalize_snapshot -> step 1");
+  
+  // We need to erase objects indicated by the records
+
+  ctx->finalize_snapshot = 1;
+  
+  // Read metadata logs by group of (ctx->meta_log_size/10)
+
+  buf_len = ctx->meta_log_size*10;
+  buf = malloc(buf_len);
+
+  for (int i=ctx->meta_log_head+1; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
+
+    uint32_t last_obj;
+
+    // Read at maximum (ctx->meta_log_size/10) objects
+  
+    int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
+    
+    if (size <= 0) {
+      break;
+    }
+
+    emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
+
+    // Replay them
+
+    ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
+    
+    ctx->meta_log_seq++;
+    
+    ctx->meta_log_head = last_obj+1;
+
+    if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
+      break;
+    }
+  }
+  
+  free(buf);
+  
+  // Snapshot has been finalized with object deletion
+
+  char * recordset = (char *)malloc(1024);
+
+  if (!recordset) {
+
+    return -1;
+  }
+
+  // Objects between ctx->meta_log_tail and (ctx->meta_log_head-1) will be deleted at once
+  
+  int recordset_length = exafs_snapshot_finalize_record(ctx, ctx->meta_log_tail, ctx->meta_log_head-1, now, recordset);
+  
+  int err = exafs_meta_store(ctx, recordset, recordset_length);
+
+  if (err < 0) {
+
+    free(recordset);
+    
+    return -1;
+  }
+
+  ctx->meta_log_head--; // Points to the finalize record
+
+  int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
+  int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
+  
+  // Write snapshot twice
+      
+  exafs_write_superblock(ctx, next, now);
+  exafs_write_superblock(ctx, next2, now);
+
+  return exafs_finalize_snapshot_2(ctx, now+1);
+}
+
+int exafs_finalize_snapshot_2(struct exafs_ctx * ctx, time_t now) {
+
+  // We need to erase objects indicated by the records
+
+  ctx->finalize_snapshot = 1;
+  
+  int buf_len = 1024;
+  char * buf = malloc(buf_len);
+
+  // Read only one record as there can be only one
+
+  int size = ctx->read(ctx, ctx->meta_log_head, buf, buf_len, 0);
+  
+  if (size <= 0) {
+
+    free(buf);
+    return -1;
+  }
+
+  struct meta_record * record = (struct meta_record *)buf;
+
+  if (record->op != EXAFS_OP_SNAPSHOT_FINALIZE) {
+
+    free(buf);
+    return -2;
+  }
+
+  int ret = exafs_meta_replay_record(ctx, record);
+
+  free(buf);
+  
+  if (ret < 0) {
+    
+    return -1;
+  }
+
+  ctx->meta_log_head++;
+  ctx->meta_log_tail = ctx->meta_log_head;
+
+  int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
+  int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
+  
+  // Write snapshot twice
+      
+  exafs_write_superblock(ctx, next, now);
+  exafs_write_superblock(ctx, next2, now);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_finalize_snapshot_2");
+
+  return 0;
 }

@@ -144,15 +144,15 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
     case EXAFS_OP_SNAPSHOT:
 
-      if (ctx->delete_obj) {
+      if (ctx->finalize_snapshot) {
 
 	ctx->delete_buf_size = 64*1024;
 	ctx->delete_buf = (char *)malloc(ctx->delete_buf_size*sizeof(uint32_t));
 	ctx->delete_offset = 0;
       }
       else {
-	
-	return -2;
+
+	ctx->snapshot_aborted = 1;
       }
 
       break;
@@ -160,9 +160,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
     case EXAFS_OP_SNAPSHOT_END:
       {
 
-	struct exafs_snap_end_meta * snap_end_meta = (struct exafs_snap_end_meta *)data;
-
-	if (ctx->delete_obj) {
+	if (ctx->finalize_snapshot) {
 
 	  if (ctx->delete_offset > 0) {
 
@@ -171,17 +169,25 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 	    ctx->delete_offset = 0;
 	  }
 	  
-	  ctx->delete_range(ctx, snap_end_meta->erase_start, snap_end_meta->erase_end);
-
 	  free(ctx->delete_buf);
 
-	  ctx->delete_obj = snap_end_meta->obj;
-	  
-	  //TODO: when to delete obj between EXAFS_OP_SNAPSHOT and EXAFS_OP_SNAPSHOT_END ?
+	  ctx->finalize_snapshot = 0;
 	}
+	
+	break;
+      }
 
-	return -3;
+    case EXAFS_OP_SNAPSHOT_FINALIZE:
+      {
 
+	if (ctx->finalize_snapshot) {
+
+	  struct exafs_snap_finalize_meta * snap_finalize_meta = (struct exafs_snap_finalize_meta *)data;
+	  
+	  ctx->delete_range(ctx, snap_finalize_meta->erase_start, snap_finalize_meta->erase_end);
+	}
+	
+	break;
       }
       
     case EXAFS_OP_SNAPSHOT_ABORTED:
@@ -194,7 +200,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
       
     case EXAFS_OP_DEL_OBJ:
 
-      if (ctx->delete_obj) {
+      if (ctx->finalize_snapshot) {
 
 	if ((ctx->delete_buf_size - ctx->delete_offset) > (record->len - sizeof(uint32_t))) {
 
@@ -236,7 +242,7 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
       int ret = exafs_meta_replay_record(ctx, record);
 
-      if (ret == -2) { // Snapshot has been aborted ?
+      /*if (ret == -2) { // Snapshot has been aborted ?
 
 	ctx->snapshot_aborted = 1;
       }
@@ -248,7 +254,7 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
 	  return 0;
 	}
-      }
+	}*/
 
       last_seq = record->seq;
     }

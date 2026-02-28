@@ -597,5 +597,80 @@ EM_JS(int, exafs_local_delete_set, (struct exafs_ctx * ctx, uint32_t * buffer, i
 	
 	console.log("exafs: exafs_local_delete_set");
 
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	let do_delete_set = (db) => {
+	  
+	  let store = db.transaction(["objects"], "readwrite").objectStore("objects");
+
+	  let do_delete_obj = (offset) => {
+	    
+	    if (offset >= len) {
+
+	      wakeUp(0);
+	      return;
+	    }
+
+	    let id = Module.HEAPU8[buffer+offset] | (Module.HEAPU8[buffer+offset+1] << 8) | (Module.HEAPU8[buffer+offset+2] << 16) | (Module.HEAPU8[buffer+offset+3] << 24);
+
+	    offset += 4;
+	      
+	    let request = store.delete(id);
+	      
+	    request.onerror = function(event) {
+
+	      wakeUp(-1);
+	    };
+	      
+	    request.onsuccess = function(event) {
+
+	      console.log("exafs: exafs_local_delete_set -> obj deleted = "+id);
+
+	      do_delete_obj(offset);
+	    };
+	  };
+
+	  do_delete_obj(0);
+	};
+
+	if (typeof window.exafs_local === 'undefined') {
+	      
+	      let request = window.indexedDB.open("exafs_local", 1);
+
+	      request.onerror = function(event) {
+
+		wakeUp(-1);
+	      };
+
+	      request.onupgradeneeded = function(event) {
+
+		let db = event.target.result;
+
+		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+
+		//TODO
+		//objectStore.createIndex("cluster", "cluster", { unique: true });
+	      };
+	      
+	      request.onsuccess = function(event) {
+
+		window.exafs_local = event.target.result;
+		
+		do_delete_set(window.exafs_local);
+		
+	      };
+	    }
+	    else {
+
+	      do_delete_set(window.exafs_local);
+	    }
+
       });
   });

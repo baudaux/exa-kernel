@@ -35,6 +35,7 @@ enum meta_op {
   EXAFS_OP_RENAME,
   EXAFS_OP_SNAPSHOT,
   EXAFS_OP_SNAPSHOT_END,
+  EXAFS_OP_SNAPSHOT_FINALIZE,
   EXAFS_OP_SNAPSHOT_ABORTED,
   EXAFS_OP_WRITE_OBJ,
   EXAFS_OP_DEL_OBJ,
@@ -56,5 +57,6 @@ int exafs_record_crc(struct meta_record * record);
 int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len);
 
 uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len);
+int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record);
 
 #endif

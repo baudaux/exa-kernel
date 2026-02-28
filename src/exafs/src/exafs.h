@@ -47,6 +47,7 @@ struct superblock {
   uint32_t grp_size;
   uint32_t next_ino;
   uint32_t flags;
+  uint32_t padding;
   uint32_t crc;
 };
 
@@ -79,7 +80,8 @@ struct exafs_ctx {
 
   int snapshot_aborted;
 
-  int delete_obj;
+  int finalize_snapshot;
+  
   int delete_buf_size;
   char * delete_buf;
   int delete_offset;
@@ -108,11 +110,10 @@ struct extent {
   //u64 object_id; ??
 };
 
-struct exafs_snap_end_meta {
+struct exafs_snap_finalize_meta {
 
   uint32_t erase_start;
   uint32_t erase_end;
-  uint32_t obj;
 };
 
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg);
@@ -136,5 +137,7 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path);
 int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length);
 
 int exafs_create_snapshot(struct exafs_ctx * ctx);
+int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now);
+int exafs_finalize_snapshot_2(struct exafs_ctx * ctx, time_t now);
 
 #endif // _EXAFS_H
