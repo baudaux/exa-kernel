@@ -87,9 +87,33 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     return -1;
   }
 
+  ctx->finalize_snapshot = 0;
   ctx->snapshot_aborted = 0;
+
+  ctx->delete_buf = NULL;
+  ctx->delete_buf_size = 0;
+  ctx->delete_offset = 0;
   
   return 0;
+}
+
+int exafs_snapshot_aborted_record(struct exafs_ctx * ctx, int buf_size, char * buf, time_t now, char * ptr) {
+
+  int record_size = sizeof(uint32_t) + buf_size;
+
+  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_ABORTED, now, record_size, (struct meta_record *)ptr);
+
+  char * p = ((char *)ptr)+header_len;
+
+  *((uint32_t *)p) = buf_size;
+
+  p += sizeof(uint32_t);
+
+  memcpy(p, buf, buf_size);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+  
+  return header_len+record_size+crc_len;
 }
 
 int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
@@ -173,18 +197,42 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
     // Read metadata logs by group of (ctx->meta_log_size/10)
 
-    int buf_len = ctx->meta_log_size*10;
-    char * buf = malloc(buf_len);
+    int step = ctx->meta_log_size/10;
 
-    for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
+    int buf_len = 0;
+    char * buf = NULL;
+
+    for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= step) {
 
       uint32_t last_obj;
 
-      // Read at maximum (ctx->meta_log_size/10) objects
+      // Read at maximum 'step' objects
+
+      int size = -1;
+
+      while (size < 0) {
+
+	if (buf) {
+
+	  free(buf);
+
+	  buf_len = -size;
+	}
+	else {
+
+	  buf_len = step*100;
+	}
+
+	buf = malloc(buf_len);
   
-      int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
+	size = ctx->read_range(ctx, i, i+step-1, buf, buf_len, &last_obj);
     
-      if (size <= 0) {
+	if (size == 0) {
+	  break;
+	}
+      }
+
+      if (size == 0) {
 	break;
       }
 
@@ -198,16 +246,37 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     
       ctx->meta_log_head = last_obj+1;
 
-      if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
+      if (last_obj < (i+step-1)) { // we read less objects so there is no more object to read
 	break;
       }
     }
-  
+    
     free(buf);
   
-    if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a flag for continuing 
+    if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a record with the obj to be deleted
+      
+      // Objects written during the aborted snapshot have to be deleted
+      
+      time_t now = time(NULL);
+      
+      char * recordset = (char *)malloc(sizeof(struct meta_record) + sizeof(uint32_t) + ctx->delete_offset + sizeof(uint32_t));
 
-      // Objects written during aborted snapshot have to be deleted
+      if (!recordset) {
+    
+	return -1;
+      }
+  
+      int recordset_length = exafs_snapshot_aborted_record(ctx, ctx->delete_offset, ctx->delete_buf, now, recordset);
+  
+      int err = exafs_meta_store(ctx, recordset, recordset_length);
+
+      free(recordset);
+
+      if (err < 0) {
+    
+	return -1;
+      }
+      
     }
 
   }

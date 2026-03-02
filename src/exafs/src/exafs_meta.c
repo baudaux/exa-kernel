@@ -144,17 +144,22 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
     case EXAFS_OP_SNAPSHOT:
 
-      if (ctx->finalize_snapshot) {
+      // Use for both finalizing and aborting
 
-	ctx->delete_buf_size = 64*1024;
-	ctx->delete_buf = (char *)malloc(ctx->delete_buf_size*sizeof(uint32_t));
-	ctx->delete_offset = 0;
+      if (ctx->delete_buf) {
+
+	free(ctx->delete_buf);
       }
-      else {
+      
+      ctx->delete_buf_size = 64*1024;
+      ctx->delete_buf = (char *)malloc(ctx->delete_buf_size * sizeof(uint32_t));
+      ctx->delete_offset = 0;
+      
+      if (!(ctx->finalize_snapshot)) {
 
 	ctx->snapshot_aborted = 1;
       }
-
+      
       break;
 
     case EXAFS_OP_SNAPSHOT_END:
@@ -191,12 +196,43 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
       }
       
     case EXAFS_OP_SNAPSHOT_ABORTED:
+      {
 
-      return -4;
+	// Snapshot has already been aborted, So no need to create the abort record twice
+
+	ctx->snapshot_aborted = 0;
+	
+	break;
+      }
       
     case EXAFS_OP_WRITE_OBJ:
+      {
 
-      break;
+	struct exafs_obj_meta * obj_meta = (struct exafs_obj_meta *)data;
+
+	if (ctx->snapshot_aborted) { // Need to delete obj of the aborted snapshot
+
+	  if (ctx->delete_offset ==  (ctx->delete_buf_size * sizeof(uint32_t))) { // Need to increase the size of the buffer
+
+	    int new_size = 2 * ctx->delete_buf_size;
+	      
+	    char * buf = malloc(new_size * sizeof(uint32_t));
+
+	    memcpy(buf, ctx->delete_buf, ctx->delete_buf_size * sizeof(uint32_t));
+
+	    free(ctx->delete_buf);
+
+	    ctx->delete_buf = buf;
+	    ctx->delete_buf_size = new_size;
+	  }
+
+	  *((uint32_t *)&(ctx->delete_buf[ctx->delete_offset])) = obj_meta->id;
+
+	  ctx->delete_offset += sizeof(uint32_t);
+	}
+	
+	break;
+      }
       
     case EXAFS_OP_DEL_OBJ:
 
