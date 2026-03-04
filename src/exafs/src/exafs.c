@@ -97,23 +97,16 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   return 0;
 }
 
-int exafs_snapshot_aborted_record(struct exafs_ctx * ctx, int buf_size, char * buf, time_t now, char * ptr) {
+int exafs_meta_size(struct exafs_ctx * ctx) {
 
-  int record_size = sizeof(uint32_t) + buf_size;
+  if (ctx->meta_log_head >= ctx->meta_log_tail) {
 
-  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_ABORTED, now, record_size, (struct meta_record *)ptr);
+    return ctx->meta_log_head - ctx->meta_log_tail;
+  }
+  else {
 
-  char * p = ((char *)ptr)+header_len;
-
-  *((uint32_t *)p) = buf_size;
-
-  p += sizeof(uint32_t);
-
-  memcpy(p, buf, buf_size);
-  
-  int crc_len = exafs_record_crc((struct meta_record *)ptr);
-  
-  return header_len+record_size+crc_len;
+    return (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS - ctx->meta_log_tail) + (ctx->meta_log_head - EXAFS_NB_SUPERBLOCKS);
+  }
 }
 
 int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
@@ -171,7 +164,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     
     return -1;
   }
-
+  
   ctx->meta_log_size = ctx->superblocks[ctx->active_superblock].meta_log_size;
   ctx->meta_log_head = ctx->superblocks[ctx->active_superblock].meta_log_head;
   ctx->meta_log_tail = ctx->superblocks[ctx->active_superblock].meta_log_tail;
@@ -201,7 +194,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
     int buf_len = 0;
     char * buf = NULL;
-
+    
     for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= step) {
 
       uint32_t last_obj;
@@ -253,30 +246,13 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     
     free(buf);
   
-    if (ctx->snapshot_aborted) { // Snapshot has been aborted, add a record with the obj to be deleted
+    if (ctx->snapshot_aborted) { // Snapshot has been aborted, restart the snapshot
       
-      // Objects written during the aborted snapshot have to be deleted
+      exafs_create_snapshot(ctx, 1);
+    }
+    else if (exafs_meta_size(ctx) > SNAPSHOT_THRESHOLD) {
       
-      time_t now = time(NULL);
-      
-      char * recordset = (char *)malloc(sizeof(struct meta_record) + sizeof(uint32_t) + ctx->delete_offset + sizeof(uint32_t));
-
-      if (!recordset) {
-    
-	return -1;
-      }
-  
-      int recordset_length = exafs_snapshot_aborted_record(ctx, ctx->delete_offset, ctx->delete_buf, now, recordset);
-  
-      int err = exafs_meta_store(ctx, recordset, recordset_length);
-
-      free(recordset);
-
-      if (err < 0) {
-    
-	return -1;
-      }
-      
+      exafs_create_snapshot(ctx, 0);
     }
 
   }
@@ -290,7 +266,7 @@ int exafs_unmount(struct exafs_ctx * ctx) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_unmount");
 
-  exafs_create_snapshot(ctx);
+  exafs_create_snapshot(ctx, 0);
   
   return 0;
 }
@@ -994,7 +970,31 @@ int exafs_snapshot_finalize_record(struct exafs_ctx * ctx, uint32_t erase_start,
   return header_len+record_size+crc_len;
 }
 
-int exafs_create_snapshot(struct exafs_ctx * ctx) {
+int exafs_snapshot_aborted(struct exafs_ctx * ctx, time_t now) {
+
+  int record_size = ctx->delete_offset;
+     
+  char * ptr = (char *)malloc(sizeof(struct meta_record) + record_size + sizeof(uint32_t));
+  
+  if (!ptr) {
+    
+    return -1;
+  }
+  
+  int header_len = exafs_record_header(ctx, EXAFS_OP_SNAPSHOT_ABORTED, now, record_size, (struct meta_record *)ptr);
+
+  memcpy(ptr+header_len, ctx->delete_buf, ctx->delete_offset);
+  
+  int crc_len = exafs_record_crc((struct meta_record *)ptr);
+
+  int recordset_length = header_len+record_size+crc_len;
+
+  int err = exafs_meta_store(ctx, ptr, recordset_length);
+
+  return err;
+}
+
+int exafs_create_snapshot(struct exafs_ctx * ctx, int restart) {
 
   time_t now = time(NULL);
 
@@ -1018,6 +1018,11 @@ int exafs_create_snapshot(struct exafs_ctx * ctx) {
     free(recordset);
     
     return -1;
+  }
+
+  if (restart) {
+    
+    exafs_snapshot_aborted(ctx, now);
   }
   
   // Sort inodes by ino

@@ -65,8 +65,13 @@ int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
 
     return -1;
   }
-
+  
   ctx->meta_log_head++;
+
+  if (ctx->meta_log_head == (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
+
+    ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
+  }
   
   return 0;
 }
@@ -198,9 +203,23 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
     case EXAFS_OP_SNAPSHOT_ABORTED:
       {
 
-	// Snapshot has already been aborted, So no need to create the abort record twice
+	if ( (ctx->delete_offset+record->len) > (ctx->delete_buf_size * sizeof(uint32_t)) ) {
 
-	ctx->snapshot_aborted = 0;
+	  int new_size = ctx->delete_buf_size + (record->len + 4) / sizeof(uint32_t);
+
+	  char * buf = malloc(new_size * sizeof(uint32_t));
+
+	  memcpy(buf, ctx->delete_buf, ctx->delete_offset);
+
+	  free(ctx->delete_buf);
+
+	  ctx->delete_buf = buf;
+	  ctx->delete_buf_size = new_size;
+	}
+
+	memcpy(ctx->delete_buf+ctx->delete_offset, data, record->len);
+
+	ctx->delete_offset += record->len;
 	
 	break;
       }
@@ -218,7 +237,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 	      
 	    char * buf = malloc(new_size * sizeof(uint32_t));
 
-	    memcpy(buf, ctx->delete_buf, ctx->delete_buf_size * sizeof(uint32_t));
+	    memcpy(buf, ctx->delete_buf, ctx->delete_offset);
 
 	    free(ctx->delete_buf);
 
@@ -238,16 +257,16 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
       if (ctx->finalize_snapshot) {
 
-	if ((ctx->delete_buf_size - ctx->delete_offset) > (record->len - sizeof(uint32_t))) {
+	if ((ctx->delete_buf_size - ctx->delete_offset) > record->len) {
 
 	  ctx->delete_set(ctx, ctx->delete_buf, ctx->delete_offset);
 
 	  ctx->delete_offset = 0;
 	}
 
-	memcpy(ctx->delete_buf+ctx->delete_offset, data+sizeof(uint32_t), record->len - sizeof(uint32_t));
+	memcpy(ctx->delete_buf+ctx->delete_offset, data, record->len);
 	  
-	ctx->delete_offset += record->len - sizeof(uint32_t);
+	ctx->delete_offset += record->len;
       }
 
       break;

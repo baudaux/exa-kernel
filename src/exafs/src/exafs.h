@@ -22,6 +22,8 @@
 #define GRP_SIZE 128
 #define SNAPSHOT_SIZE 100000
 
+#define SNAPSHOT_THRESHOLD 16
+
 struct exafs_ctx;
 
 typedef int (*clean_func)(struct exafs_ctx * ctx, const char * repo_name);
@@ -136,7 +138,7 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path);
 
 int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length);
 
-int exafs_create_snapshot(struct exafs_ctx * ctx);
+int exafs_create_snapshot(struct exafs_ctx * ctx, int restart);
 int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now);
 int exafs_finalize_snapshot_2(struct exafs_ctx * ctx, time_t now);
 

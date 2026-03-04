@@ -1033,19 +1033,17 @@ int exafs_inode_del_obj(struct exafs_ctx * ctx, struct exafs_inode * inode, uint
     return 0;
   }
 
-  char * ptr = (char*)malloc(sizeof(struct meta_record) + (2+nb_entries) * sizeof(uint32_t)); // 2 = nb entries + crc
+  int record_size = nb_entries * sizeof(uint32_t);
+
+  char * ptr = (char*)malloc(sizeof(struct meta_record) + record_size + sizeof(uint32_t));
 
   if (!ptr) {
     return -1;
   }
   
-  int record_size = (1+nb_entries) * sizeof(uint32_t);
-  
   int header_len = exafs_record_header(ctx, EXAFS_OP_DEL_OBJ, now, record_size, (struct meta_record *)ptr);
 
   uint32_t * m = (uint32_t *)(ptr+header_len);
-
-  *m++ = nb_entries;
 
   if (!(inode->mode & S_IFDIR)) {
   
