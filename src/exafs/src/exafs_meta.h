@@ -43,7 +43,6 @@ enum meta_op {
 
 struct meta_record {
   
-  uint64_t seq;
   time_t timestamp;
   uint32_t  op;
   uint32_t len;
@@ -51,12 +50,20 @@ struct meta_record {
   //uint32_t crc;
 };
 
+uint32_t exafs_plus_head(struct exafs_ctx * ctx);
+uint32_t exafs_inc_head2(struct exafs_ctx * ctx, uint32_t from);
+uint32_t exafs_inc_head(struct exafs_ctx * ctx);
+uint32_t exafs_dec_head(struct exafs_ctx * ctx);
+uint32_t exafs_minus_head(struct exafs_ctx * ctx);
+uint32_t exafs_minus_tail(struct exafs_ctx * ctx);
+
+
 int exafs_record_header(struct exafs_ctx * ctx, enum meta_op op, time_t now, int len, struct meta_record * record);
 int exafs_record_crc(struct meta_record * record);
 
 int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len);
 
-uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len);
+int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len);
 int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record);
 
 #endif

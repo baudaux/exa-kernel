@@ -29,11 +29,72 @@
 #define emscripten_log(...)
 #endif
 
+uint32_t exafs_plus_head(struct exafs_ctx * ctx) {
+
+  uint32_t h = ctx->meta_log_head+1;
+
+  if (h >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
+
+    h = EXAFS_NB_SUPERBLOCKS;
+  }
+
+  return h;
+}
+
+uint32_t exafs_inc_head2(struct exafs_ctx * ctx, uint32_t from) {
+
+  uint32_t h = from+1;
+
+  if (h >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
+
+    h = EXAFS_NB_SUPERBLOCKS;
+  }
+
+  ctx->meta_log_head = h;
+  
+  return h;
+}
+
+uint32_t exafs_inc_head(struct exafs_ctx * ctx) {
+
+  return exafs_inc_head2(ctx, ctx->meta_log_head);
+}
+
+uint32_t exafs_minus_head(struct exafs_ctx * ctx) {
+
+  uint32_t h = ctx->meta_log_head-1;
+
+  if (h < EXAFS_NB_SUPERBLOCKS) {
+
+    h = ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS - 1;
+  }
+  
+  return h;
+}
+
+uint32_t exafs_minus_tail(struct exafs_ctx * ctx) {
+
+  uint32_t t = ctx->meta_log_tail-1;
+
+  if (t < EXAFS_NB_SUPERBLOCKS) {
+
+    t = ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS - 1;
+  }
+
+  return t;
+}
+
+uint32_t exafs_dec_head(struct exafs_ctx * ctx) {
+
+  ctx->meta_log_head = exafs_minus_head(ctx);
+
+  return ctx->meta_log_head;
+}
+
 int exafs_record_header(struct exafs_ctx * ctx, enum meta_op op, time_t now, int len, struct meta_record * record) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_record_header: op=%d len=%d", op, len);
   
-  record->seq = ctx->meta_log_seq;
   record->timestamp = now;
   record->op = op;
   record->len = len;
@@ -66,19 +127,14 @@ int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
     return -1;
   }
   
-  ctx->meta_log_head++;
-
-  if (ctx->meta_log_head == (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
-
-    ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
-  }
+  exafs_inc_head(ctx);
   
   return 0;
 }
 
 int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record) {
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay_record: seq=%d t=%lld op=%d len=%d", record->seq, record->timestamp, record->op, record->len);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay_record: timestamp=%lld op=%d len=%d", record->timestamp, record->op, record->len);
   
   int len = sizeof(struct meta_record)+record->len;
   
@@ -193,8 +249,15 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 	if (ctx->finalize_snapshot) {
 
 	  struct exafs_snap_finalize_meta * snap_finalize_meta = (struct exafs_snap_finalize_meta *)data;
+
+	  if (snap_finalize_meta->erase_start <= snap_finalize_meta->erase_end) {
 	  
-	  ctx->delete_range(ctx, snap_finalize_meta->erase_start, snap_finalize_meta->erase_end);
+	    ctx->delete_range(ctx, snap_finalize_meta->erase_start, snap_finalize_meta->erase_end);
+	  }
+	  else {
+	    ctx->delete_range(ctx, snap_finalize_meta->erase_start, EXAFS_NB_SUPERBLOCKS + ctx->meta_log_size - 1);
+	    ctx->delete_range(ctx, EXAFS_NB_SUPERBLOCKS, snap_finalize_meta->erase_end);
+	  }
 	}
 	
 	break;
@@ -279,7 +342,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
   return 0;
 }
 
-uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
+int exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay: len=%d", len);
 
@@ -287,41 +350,35 @@ uint64_t exafs_meta_replay(struct exafs_ctx * ctx, void * obj, int len) {
   
   int offset = 0;
 
-  uint64_t last_seq = 0;
-
   while (offset < len) {
 
     struct meta_record * record = (struct meta_record *)(data+offset);
 
-    if (record->seq >= ctx->meta_log_seq) {
+    int ret = exafs_meta_replay_record(ctx, record);
 
-      int ret = exafs_meta_replay_record(ctx, record);
+    if (ret < 0) {
 
-      /*if (ret == -2) { // Snapshot has been aborted ?
+      return ret;
+    }
 
-	ctx->snapshot_aborted = 1;
+    /*if (ret == -2) { // Snapshot has been aborted ?
+
+      ctx->snapshot_aborted = 1;
       }
       else if (ret == -3) {
 	
-	ctx->snapshot_aborted = 0;
+      ctx->snapshot_aborted = 0;
 
-	if (ctx->delete_obj) {
+      if (ctx->delete_obj) {
 
-	  return 0;
-	}
-	}*/
-
-      last_seq = record->seq;
-    }
-    else {
-
-      emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_replay -> record in the past  %lld < %lld", record->seq, ctx->meta_log_seq);
-    }
+      return 0;
+      }
+      }*/
 
     offset += sizeof(struct meta_record)+record->len+sizeof(uint32_t);
     
     emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_meta_replay: offset=%d", offset);
   }
 
-  return last_seq;
+  return 0;
 }

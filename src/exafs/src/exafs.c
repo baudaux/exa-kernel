@@ -46,7 +46,6 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->active_superblock = -1;
   ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
   ctx->meta_log_tail = EXAFS_NB_SUPERBLOCKS;
-  ctx->meta_log_seq = 0;
   ctx->next_ino = 0;
   
   ctx->inode_table = NULL;
@@ -68,7 +67,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   else {
     ctx->meta_log_size = META_LOG_SIZE;
   }
-
+  
   if (cfg->grp_size > 0) {
     ctx->grp_size = cfg->grp_size;
   }
@@ -150,7 +149,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   int active_superblock_generation = 0;
 
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
-
+    
     if (ctx->superblocks[i].generation > active_superblock_generation) {
       
       active_superblock_generation = ctx->superblocks[i].generation;
@@ -168,18 +167,17 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->meta_log_size = ctx->superblocks[ctx->active_superblock].meta_log_size;
   ctx->meta_log_head = ctx->superblocks[ctx->active_superblock].meta_log_head;
   ctx->meta_log_tail = ctx->superblocks[ctx->active_superblock].meta_log_tail;
-  ctx->meta_log_seq = ctx->superblocks[ctx->active_superblock].meta_log_seq;
   ctx->snapshot_size = ctx->superblocks[ctx->active_superblock].snapshot_size;
   ctx->grp_size = ctx->superblocks[ctx->active_superblock].grp_size;
   ctx->next_ino = ctx->superblocks[ctx->active_superblock].next_ino;
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: active_superblock=%d generation %lld log_size=%d log_head=%d log_tail=%d log_seq=%lld snapshot_size=%d grp_size=%d next_ino=%d", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation, ctx->meta_log_size, ctx->meta_log_head, ctx->meta_log_tail, ctx->meta_log_seq, ctx->snapshot_size, ctx->grp_size, ctx->next_ino);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_mount: active_superblock=%d generation %lld log_size=%d log_head=%d log_tail=%d snapshot_size=%d grp_size=%d next_ino=%d", ctx->active_superblock, ctx->superblocks[ctx->active_superblock].generation, ctx->meta_log_size, ctx->meta_log_head, ctx->meta_log_tail, ctx->snapshot_size, ctx->grp_size, ctx->next_ino);
 
   ctx->finalize_snapshot = 0;
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: ctx->meta_log_tail=%d ctx->meta_log_head=%d", ctx->meta_log_tail, ctx->meta_log_head);
 
-  if (ctx->meta_log_tail < ctx->meta_log_head) {
+  if (ctx->meta_log_tail != ctx->meta_log_head) {
 
     if (exafs_finalize_snapshot(ctx, 0) < 0) {
 
@@ -187,60 +185,68 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     }
   }
   else {
-  
+    
     // Read metadata logs by group of (ctx->meta_log_size/10)
 
     int step = ctx->meta_log_size/10;
 
-    int buf_len = 0;
-    char * buf = NULL;
+    int buf_len = step*100;
+    char * buf = malloc(buf_len);
     
-    for (int i=ctx->meta_log_head; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= step) {
-
+    for (int i=ctx->meta_log_head; i != exafs_minus_tail(ctx); ) {
+      
       uint32_t last_obj;
 
       // Read at maximum 'step' objects
+      
+      uint32_t max = i+step-1;
 
-      int size = -1;
+      if (max >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
 
-      while (size < 0) {
-
-	if (buf) {
-
-	  free(buf);
-
-	  buf_len = -size;
-	}
-	else {
-
-	  buf_len = step*100;
-	}
-
-	buf = malloc(buf_len);
-  
-	size = ctx->read_range(ctx, i, i+step-1, buf, buf_len, &last_obj);
-    
-	if (size == 0) {
-	  break;
-	}
+	max = ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS -1;
       }
 
+      if ( (max > exafs_minus_tail(ctx)) && (i < ctx->meta_log_head) ) {
+
+	max = exafs_minus_tail(ctx);
+      }
+
+      int size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+    
       if (size == 0) {
 	break;
+      }
+      else if (size < 0) {
+
+	free(buf);
+	buf_len = -size;
+
+	buf = malloc(buf_len);
+
+	size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
       }
 
       emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
 
       // Replay them
 
-      ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
-    
-      ctx->meta_log_seq++;
-    
-      ctx->meta_log_head = last_obj+1;
+      exafs_meta_replay(ctx, buf, size);
 
-      if (last_obj < (i+step-1)) { // we read less objects so there is no more object to read
+      exafs_inc_head2(ctx, last_obj);
+
+      if (last_obj != max) { // we read less objects so there is no more object to read
 	break;
+      }
+      
+      if (max == exafs_minus_tail(ctx)) { // We did a loop
+	break;
+      }
+
+      i = max+1;
+
+      if (i >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) { // Need to loop
+
+	i = EXAFS_NB_SUPERBLOCKS; // Restart from first object of logs
       }
     }
     
@@ -280,7 +286,6 @@ int exafs_write_superblock(struct exafs_ctx * ctx, int index, uint64_t now) {
   ctx->superblocks[index].meta_log_size = ctx->meta_log_size;
   ctx->superblocks[index].meta_log_head = ctx->meta_log_head;
   ctx->superblocks[index].meta_log_tail = ctx->meta_log_tail;
-  ctx->superblocks[index].meta_log_seq = ctx->meta_log_seq;
   ctx->superblocks[index].snapshot_size = ctx->snapshot_size;
   ctx->superblocks[index].grp_size = ctx->grp_size;
   ctx->superblocks[index].next_ino = ctx->next_ino;
@@ -343,9 +348,6 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     return -1;
   }
   
-  // Metadata log seq is reset
-  ctx->meta_log_seq = 1;
-  
   // Inode seq is reset
   ctx->next_ino = EXAFS_START_INO;
 
@@ -374,6 +376,8 @@ uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t c
     return 0;
   }
 
+  //TODO: check if root is already existing
+
   time_t now = time(NULL);
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: time=%lld (%d)", now, sizeof(time_t));
@@ -382,12 +386,9 @@ uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t c
 
   int recordset_length = exafs_inode_record(ctx, child_ino, mode, now, recordset); // inode for subdir
 
-  if (parent_ino) { // root has no parent
+  if (parent_ino >= EXAFS_ROOT_INO) { // root has no parent
     
     recordset_length += exafs_inode_link_record(ctx, parent_ino, child_ino, path, now, recordset+recordset_length);
-  }
-
-  if (parent_ino) {
 
     struct stat stat;
     uint32_t parent_nlink;
@@ -432,15 +433,7 @@ uint32_t exafs_mknod_at2(struct exafs_ctx * ctx, uint32_t parent_ino, uint32_t c
   
   if (!err) {
 
-    uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-
-    if (seq == 0) {
-
-      err = -1;
-    }
-    else {
-      ctx->meta_log_seq = seq+1;
-    }
+    exafs_meta_replay(ctx, recordset, recordset_length);
   }
 
   free(recordset);
@@ -565,15 +558,7 @@ int exafs_unlink(struct exafs_ctx * ctx, const char * path) {
   
   if (!err) {
 
-    uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-
-    if (seq == 0) {
-
-      err = ENOMEM;
-    }
-    else {
-      ctx->meta_log_seq = seq+1;
-    }
+    exafs_meta_replay(ctx, recordset, recordset_length);
   }
   else {
 
@@ -687,15 +672,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
   
 	    if (!err) {
 
-	      uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-
-	      if (seq == 0) {
-
-		err = -1;
-	      }
-	      else {
-		ctx->meta_log_seq = seq+1;
-	      }
+	      exafs_meta_replay(ctx, recordset, recordset_length);
 	    }
 	    
 	    free(recordset);
@@ -743,16 +720,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
   
 	  if (!err) {
 
-	    uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-
-	    if (seq == 0) {
-
-	      err = -1;
-	    }
-	    else {
-	      ctx->meta_log_seq = seq+1;
-	    }
-	    
+	    exafs_meta_replay(ctx, recordset, recordset_length);
 	  }
 	    
 	  free(recordset);
@@ -793,15 +761,7 @@ int exafs_rename(struct exafs_ctx * ctx, const char * oldpath, const char * newp
   
     if (!err) {
 
-      uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-
-      if (seq == 0) {
-
-	err = -1;
-      }
-      else {
-	ctx->meta_log_seq = seq+1;
-      }
+      exafs_meta_replay(ctx, recordset, recordset_length);
     }
 	    
     free(recordset);
@@ -877,15 +837,7 @@ int exafs_rmdir(struct exafs_ctx * ctx, const char * path) {
   
   if (!err) {
 
-    uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-    
-    if (seq == 0) {
-
-      err = ENOMEM;
-    }
-    else {
-      ctx->meta_log_seq = seq+1;
-    }
+    exafs_meta_replay(ctx, recordset, recordset_length);
   }
   else {
 
@@ -912,15 +864,7 @@ int exafs_ftruncate(struct exafs_ctx * ctx, uint32_t ino, uint64_t length) {
   
   if (!err) {
 
-    uint64_t seq = exafs_meta_replay(ctx, recordset, recordset_length);
-    
-    if (seq == 0) {
-
-      err = ENOMEM;
-    }
-    else {
-      ctx->meta_log_seq = seq+1;
-    }
+    exafs_meta_replay(ctx, recordset, recordset_length);
   }
   else {
 
@@ -1102,33 +1046,65 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
   
   // Read metadata logs by group of (ctx->meta_log_size/10)
 
-  buf_len = ctx->meta_log_size*10;
+  int step = ctx->meta_log_size/10;
+
+  buf_len = step*100;
   buf = malloc(buf_len);
 
-  for (int i=ctx->meta_log_head+1; i < EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size; i+= (ctx->meta_log_size/10)) {
-
+  for (int i=exafs_plus_head(ctx); i != exafs_minus_tail(ctx); ) {
+    
     uint32_t last_obj;
 
     // Read at maximum (ctx->meta_log_size/10) objects
-  
-    int size = ctx->read_range(ctx, i, i+(ctx->meta_log_size/10)-1, buf, buf_len, &last_obj);
+
+    uint32_t max = i+step-1;
     
-    if (size <= 0) {
+    if (max >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) {
+
+      max = ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS -1;
+    }
+
+    if ( (max > exafs_minus_tail(ctx)) && (i < ctx->meta_log_head) ) {
+
+      max = exafs_minus_tail(ctx);
+    }
+
+    int size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+    
+    if (size == 0) {
       break;
+    }
+    else if (size < 0) {
+
+      free(buf);
+      buf_len = -size;
+
+      buf = malloc(buf_len);
+
+      size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
     }
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
 
     // Replay them
 
-    ctx->meta_log_seq = exafs_meta_replay(ctx, buf, size);
-    
-    ctx->meta_log_seq++;
-    
-    ctx->meta_log_head = last_obj+1;
+    exafs_meta_replay(ctx, buf, size);
 
-    if (last_obj < (i+(ctx->meta_log_size/10)-1)) { // we read less objects so there is no more object to read
+    exafs_inc_head2(ctx, last_obj);
+
+    if (last_obj != max) { // we read less objects so there is no more object to read
       break;
+    }
+
+    if (max == exafs_minus_tail(ctx)) { // We did a loop
+      break;
+    }
+
+    i = max+1;
+
+    if (i >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) { // Need to loop
+
+      i = EXAFS_NB_SUPERBLOCKS; // Restart from first object of logs
     }
   }
   
@@ -1145,7 +1121,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 
   // Objects between ctx->meta_log_tail and (ctx->meta_log_head-1) will be deleted at once
   
-  int recordset_length = exafs_snapshot_finalize_record(ctx, ctx->meta_log_tail, ctx->meta_log_head-1, now, recordset);
+  int recordset_length = exafs_snapshot_finalize_record(ctx, ctx->meta_log_tail, exafs_minus_head(ctx), now, recordset);
   
   int err = exafs_meta_store(ctx, recordset, recordset_length);
 
@@ -1156,7 +1132,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
     return -1;
   }
 
-  ctx->meta_log_head--; // Points to the finalize record
+  exafs_dec_head(ctx); // Head shall point to the finalize record
 
   int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;
   int next2 = (next+1)%EXAFS_NB_SUPERBLOCKS;
@@ -1205,7 +1181,8 @@ int exafs_finalize_snapshot_2(struct exafs_ctx * ctx, time_t now) {
     return -1;
   }
 
-  ctx->meta_log_head++;
+  exafs_inc_head(ctx);
+  
   ctx->meta_log_tail = ctx->meta_log_head;
 
   int next = (ctx->active_superblock+1)%EXAFS_NB_SUPERBLOCKS;

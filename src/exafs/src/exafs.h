@@ -42,7 +42,6 @@ struct superblock {
   uint64_t generation;
   uint32_t fs_uuid;
   uint32_t meta_log_size;
-  uint64_t meta_log_seq;
   uint32_t meta_log_head;
   uint32_t meta_log_tail;
   uint32_t snapshot_size;
@@ -62,7 +61,6 @@ struct exafs_ctx {
   uint32_t meta_log_size;
   uint32_t meta_log_head;
   uint32_t meta_log_tail;
-  uint64_t meta_log_seq;
   uint32_t snapshot_size;
   uint32_t grp_size;
   

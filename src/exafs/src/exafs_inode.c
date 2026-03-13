@@ -45,6 +45,11 @@ static inline unsigned fold64_to_32(uint64_t h) {
 struct exafs_dir_entry * exafs_inode_get_entry(struct exafs_ctx * ctx, uint32_t parent_ino, const char * path) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_get_entry: ino=%d", parent_ino);
+
+  if (parent_ino < EXAFS_ROOT_INO) {
+
+    return NULL;
+  }
   
   struct exafs_inode * parent_inode = exafs_inode_find_by_id(ctx, parent_ino);
 

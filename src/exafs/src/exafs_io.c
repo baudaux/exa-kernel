@@ -127,7 +127,7 @@ int exafs_extent_record(struct exafs_ctx * ctx, uint32_t ino, uint64_t size, uin
 
 ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t size, uint64_t offset) {
 
-  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_write: ino=%d size=%lld, offset=%lld", ino, size, offset);
+  emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_write: ino=%d size=%lld offset=%lld", ino, size, offset);
 
   uint32_t id = 0;
   
@@ -166,13 +166,15 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
 
   if (!err) {
 
-    if (exafs_meta_replay(ctx, recordset, recordset_length) == 0) {
+    if (exafs_meta_replay(ctx, recordset, recordset_length) < 0) {
 
       err = -1;
     }
   }
   
   free(recordset);
+
+  emscripten_log(EM_LOG_CONSOLE, "exafs: <-- exafs_write: err=%d", err);
   
   return (err == 0)?size:err;
 }

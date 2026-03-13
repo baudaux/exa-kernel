@@ -254,12 +254,16 @@ static ssize_t exafs_driver_write(struct exafs_dev * dev, int fd, const void * b
 
   ssize_t ret = exafs_write(&(dev->exafs_ctx), fds[i].ino, buf, count, fds[i].offset);
   
-  if (ret < 0)
-    ret = -exafs_errno(ret); // Negative value if error
-
-  // Increment offset
+  if (ret < 0) {
+    
+    //ret = -exafs_errno(ret); // Negative value if error
+  }
+  else {
+    
+    // Increment offset
   
-  fds[i].offset += ret;
+    fds[i].offset += ret;
+  }
 
   return ret;
 }
@@ -992,7 +996,7 @@ int register_home() {
   if (res < 0) {
 
     //TOTEST
-    return -1;
+    //return -1;
     
     res = exafs_format(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
 
@@ -1282,6 +1286,8 @@ int main() {
       if (dev) {
 	
 	msg->_u.io_msg.len = dev->ops->write(dev, msg->_u.io_msg.fd, buf2, msg->_u.io_msg.len);
+
+	emscripten_log(EM_LOG_CONSOLE, "exafs_driver: WRITE -> %d bytes", msg->_u.io_msg.len);
 	
 	if (msg->_u.io_msg.len >= 0) {
 	  msg->_errno = 0;
