@@ -340,7 +340,7 @@ int exafs_inode_set_ctime(struct exafs_ctx * ctx, struct exafs_set_time_meta * m
 }
 
 int exafs_inode_set_atime_record(struct exafs_ctx * ctx, uint32_t ino, time_t now, char * ptr) {
-
+  
   int record_size = sizeof(struct exafs_set_time_meta);
 
   int header_len = exafs_record_header(ctx, EXAFS_OP_INODE_SET_ATIME, now, record_size, (struct meta_record *)ptr);
@@ -417,7 +417,10 @@ struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino
     int group_size = sizeof(uint64_t) + ctx->grp_size * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
   
     // buf stores one group A and B
-    char * buf = (char *)malloc(2 * group_size);
+
+    // read_range add object id and size before each object -> 2 * sizeof(uint32_t)
+    
+    char * buf = (char *)malloc(2 * ((2 * sizeof(uint32_t)) + group_size));
 
     int group = ino / ctx->grp_size;
 
@@ -431,8 +434,8 @@ struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino
     }
     else {
 
-      char * ptr = buf;
-
+      char * ptr = buf+ (2 * sizeof(uint32_t));
+      
       if (updating_slot > 0) {
 
 	ptr += group_size;
@@ -504,6 +507,8 @@ struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino
 	}
       }
     }
+
+    free(buf);
   }
 
   return inode;
@@ -717,7 +722,7 @@ char * exafs_inode_snap_file(struct exafs_ctx * ctx, struct exafs_inode * inode,
     chunk_entry = chunk_entry->next;
   }
 
-  char * buf = (char*)malloc(nb_entries * (2 * sizeof(uint64_t) + sizeof(uint32_t)));
+  char * buf = (char *)malloc(nb_entries * (2 * sizeof(uint64_t) + sizeof(uint32_t)));
 
   chunk_entry = inode->e.chunk_entry_list;
 
@@ -828,7 +833,7 @@ int exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode,
   if (inode->obj) {
 
     // Delete old entry obj before it is replaced by an up-to-date one
-
+    
     exafs_del_obj(ctx, inode->obj, now);
   }
 
@@ -852,8 +857,8 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
   int group_size = sizeof(uint64_t) + ctx->grp_size * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
   
   // buf stores one group A and B
-  char * buf = (char *)malloc(2 * group_size);
-
+  char * buf = (char *)malloc(2 * ((2 * sizeof(uint32_t)) + group_size));
+  
   HASH_ITER(hh, ctx->inode_table, current_inode, tmp) {
 
     if ( (current_inode->mtime > ctx->superblocks[ctx->active_superblock].generation) && (current_inode->nlink > 0) ) {
@@ -862,7 +867,7 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
     }
 
     if ( (current_inode->mtime > ctx->superblocks[ctx->active_superblock].generation) || (current_inode->ctime > ctx->superblocks[ctx->active_superblock].generation) ) {
-
+      
       emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_inode_snap: store ino=%d", current_inode->ino);
       
       if ( (updating_group >= 0) && ((current_inode->ino / ctx->grp_size) != updating_group) ) {
@@ -883,8 +888,10 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
 	updating_slot = exafs_io_read_group(ctx, updating_group, buf, now);
       }
 
-      int offset = (updating_slot == 0)?0:group_size;
+      int offset = 2 * sizeof(uint32_t);
 
+      offset += (updating_slot == 0)?0:(group_size + (2 * sizeof(uint32_t)));
+      
       char * ptr = buf+offset;
 
       ptr += sizeof(uint64_t);
@@ -933,7 +940,9 @@ void exafs_inode_snap(struct exafs_ctx * ctx, uint64_t now) {
     // Store updating group
 
     exafs_io_write_group(ctx, updating_group, buf, updating_slot);
-  }  
+  }
+  
+  free(buf);
 }
 
 int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
@@ -974,6 +983,8 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
       struct exafs_dir_entry * dir_entry = (struct exafs_dir_entry *)malloc(sizeof(struct exafs_dir_entry));
 
       if (!dir_entry) {
+
+	free(buf);
 	
 	return -1;
       }
@@ -1004,6 +1015,8 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
     }
   }
   
+  free(buf);
+  
   return 0;
 }
 
@@ -1033,14 +1046,14 @@ int exafs_inode_del_obj(struct exafs_ctx * ctx, struct exafs_inode * inode, uint
 
     nb_entries++;
   }
-
+  
   if (nb_entries == 0) {
     return 0;
   }
 
   int record_size = nb_entries * sizeof(uint32_t);
 
-  char * ptr = (char*)malloc(sizeof(struct meta_record) + record_size + sizeof(uint32_t));
+  char * ptr = (char *)malloc(sizeof(struct meta_record) + record_size + sizeof(uint32_t));
 
   if (!ptr) {
     return -1;

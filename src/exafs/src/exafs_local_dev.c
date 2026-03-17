@@ -203,12 +203,24 @@ EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uin
 		
 	    if (cursor) {
 
-	      if (offset+cursor.value.data.length <= len) {
-		      
-		Module.HEAPU8.set(cursor.value.data, buffer+offset);
+	      if ((offset+cursor.value.data.length+8) <= len) {
+		
+		Module.HEAPU8[buffer+offset] = cursor.key & 0xff;
+		Module.HEAPU8[buffer+offset+1] = (cursor.key >> 8) & 0xff;
+		Module.HEAPU8[buffer+offset+2] = (cursor.key >> 16) & 0xff;
+		Module.HEAPU8[buffer+offset+3] = (cursor.key >> 24) & 0xff;
+		
+		const obj_length = cursor.value.data.length;
+		
+		Module.HEAPU8[buffer+offset+4] = obj_length & 0xff;
+		Module.HEAPU8[buffer+offset+5] = (obj_length >> 8) & 0xff;
+		Module.HEAPU8[buffer+offset+6] = (obj_length >> 16) & 0xff;
+		Module.HEAPU8[buffer+offset+7] = (obj_length >> 24) & 0xff;
+		
+		Module.HEAPU8.set(cursor.value.data, buffer+offset+8);
 
-		offset += cursor.value.data.length;
-
+		offset += obj_length+8;
+		
 		last = cursor.key;
 		  
 		cursor.continue();
@@ -219,7 +231,7 @@ EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uin
 		Module.HEAPU8[last_obj+1] = (last >> 8) & 0xff;
 		Module.HEAPU8[last_obj+2] = (last >> 16) & 0xff;
 		Module.HEAPU8[last_obj+3] = (last >> 24) & 0xff;
-
+		
 		wakeUp(-offset);
 	      }
 	    }
@@ -284,7 +296,7 @@ EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, uint32_t id, void * buffe
 	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
 
 	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
-
+	
 	    let do_write = (db) => {
 
 	      let store = db.transaction(["objects"], "readwrite").objectStore("objects");

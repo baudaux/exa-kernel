@@ -121,8 +121,6 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   // Read superblocks
 
-  //TODO use read_range
-
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
 
     int len = ctx->read(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock), 0);
@@ -195,7 +193,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     
     for (int i=ctx->meta_log_head; i != exafs_minus_tail(ctx); ) {
       
-      uint32_t last_obj;
+      uint32_t last_obj = 0;
 
       // Read at maximum 'step' objects
       
@@ -211,38 +209,57 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 	max = exafs_minus_tail(ctx);
       }
 
-      int size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+      int size = 0;
+
+      while (last_obj == 0) {
+
+	size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
     
+	if (size == 0) {
+	  break;
+	}
+	else if (last_obj == 0) {
+	  
+	  free(buf);
+	  
+	  buf_len *= 4;
+	  buf = malloc(buf_len);
+	}
+      }
+      
       if (size == 0) {
 	break;
       }
       else if (size < 0) {
 
-	free(buf);
-	buf_len = -size;
-
-	buf = malloc(buf_len);
-
-	size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
-      }
-
-      emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
-
-      // Replay them
-
-      exafs_meta_replay(ctx, buf, size);
-
-      exafs_inc_head2(ctx, last_obj);
-
-      if (last_obj != max) { // we read less objects so there is no more object to read
-	break;
+	size = -size;
       }
       
-      if (max == exafs_minus_tail(ctx)) { // We did a loop
+      emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
+
+      uint32_t offset = 0;
+
+      while (offset < size) {
+
+	char * ptr = buf + offset;
+      
+	// Replay them
+
+	uint32_t obj_id = *((uint32_t *)ptr);
+	uint32_t obj_length = *(((uint32_t *)ptr)+1);
+
+	exafs_meta_replay(ctx, ptr+(2*sizeof(uint32_t)), obj_length);
+
+	offset += obj_length + 2*sizeof(uint32_t);
+      }
+
+      exafs_inc_head2(ctx, last_obj);
+      
+      if (last_obj == exafs_minus_tail(ctx)) { // We did a loop
 	break;
       }
 
-      i = max+1;
+      i = last_obj+1;
 
       if (i >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) { // Need to loop
 
@@ -1053,7 +1070,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 
   for (int i=exafs_plus_head(ctx); i != exafs_minus_tail(ctx); ) {
     
-    uint32_t last_obj;
+    uint32_t last_obj = 0;
 
     // Read at maximum (ctx->meta_log_size/10) objects
 
@@ -1068,40 +1085,59 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 
       max = exafs_minus_tail(ctx);
     }
-
-    int size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
     
+    int size = 0;
+
+    while (last_obj == 0) {
+
+      size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+    
+      if (size == 0) {
+	break;
+      }
+      else if (last_obj == 0) {
+	  
+	free(buf);
+	
+	buf_len *= 4;
+	buf = malloc(buf_len);
+      }
+    }
+      
     if (size == 0) {
       break;
     }
     else if (size < 0) {
 
-      free(buf);
-      buf_len = -size;
-
-      buf = malloc(buf_len);
-
-      size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+      size = -size;
     }
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
 
-    // Replay them
+    uint32_t offset = 0;
 
-    exafs_meta_replay(ctx, buf, size);
+    while (offset < size) {
+
+      char * ptr = buf + offset;
+      
+      // Replay them
+
+      uint32_t obj_id = *((uint32_t *)ptr);
+      uint32_t obj_length = *(((uint32_t *)ptr)+1);
+
+      exafs_meta_replay(ctx, ptr+(2*sizeof(uint32_t)), obj_length);
+
+      offset += obj_length + 2*sizeof(uint32_t);
+    }
 
     exafs_inc_head2(ctx, last_obj);
 
-    if (last_obj != max) { // we read less objects so there is no more object to read
+    if (last_obj == exafs_minus_tail(ctx)) { // We did a loop
       break;
     }
 
-    if (max == exafs_minus_tail(ctx)) { // We did a loop
-      break;
-    }
-
-    i = max+1;
-
+    i = last_obj+1;
+    
     if (i >= (ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS)) { // Need to loop
 
       i = EXAFS_NB_SUPERBLOCKS; // Restart from first object of logs
