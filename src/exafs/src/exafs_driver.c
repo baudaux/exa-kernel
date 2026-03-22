@@ -332,7 +332,19 @@ static int exafs_driver_open(struct exafs_dev * dev, const char * pathname, int 
 	return -ENOTDIR;
     }
 
+    if (flags & O_TRUNC) {
+
+      exafs_ftruncate(&(dev->exafs_ctx), ino, 0);
+    }
+
     int fd = add_fd_entry(pid, dev->minor, pathname, flags, mode, ino);
+
+    if (flags & O_APPEND) {
+
+      int i = find_fd_entry(fd);
+      
+      fds[i].offset = stat.st_size;
+    }
 
     if (fd >= 0) {
 

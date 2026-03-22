@@ -253,7 +253,7 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
     return -1;
   }
-
+  
   memset(buf, 0, size);
 
   struct exafs_chunk_entry * entry = inode->e.chunk_entry_list;
@@ -267,17 +267,13 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
   
   char * data = (char*)buf;
 
-  uint64_t max_size = 0;
-
+  uint64_t max_offset = ((offset+size) <= inode->size)?offset+size:inode->size;
+  
   while (entry) {
 
-    if ( (entry->offset+entry->size) > max_size) {
-      max_size = entry->offset+entry->size;
-    }
-
-    if ( ( (entry->offset >= offset) && (entry->offset <= (offset+size)) ) ||
-	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= (offset+size)) ) ||
-	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= (offset+size)) ) ) {
+    if ( ( (entry->offset >= offset) && (entry->offset <= max_offset) ) ||
+	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= max_offset) ) ||
+	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= max_offset) ) ) {
 
       emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_read: entry is needed: off=%lld size=%lld", entry->offset, entry->size);
 
@@ -289,9 +285,9 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
       len = entry->size-src_off;
 
-      if (len > (size-dst_off)) {
+      if (len > ((max_offset-offset)-dst_off)) {
 
-	len = size-dst_off;
+	len = max_offset-offset-dst_off;
       }
       
       int res = ctx->read(ctx, entry->id, data+dst_off, len, src_off);
@@ -305,15 +301,7 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
   // TODO: update atime
 
-  if (max_size <= offset) {
-    return 0;
-  }
-  else if (max_size <= (offset+size)) {
-    return max_size-offset;
-  }
-  else {
-    return size;
-  }
+  return max_offset-offset;
 }
 
 void exafs_io_reset_slot_a(char * buf, uint64_t now) {
