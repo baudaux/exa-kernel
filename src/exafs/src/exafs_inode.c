@@ -438,7 +438,7 @@ struct exafs_inode * exafs_inode_find_by_id(struct exafs_ctx * ctx, uint32_t ino
       
       if (updating_slot > 0) {
 
-	ptr += group_size;
+	ptr += group_size + (2 * sizeof(uint32_t));
       }
 
       ptr += sizeof(uint64_t);

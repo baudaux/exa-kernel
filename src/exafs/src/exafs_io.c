@@ -306,7 +306,7 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 
 void exafs_io_reset_slot_a(char * buf, uint64_t now) {
 
-  char * ptr = buf;
+  char * ptr = buf + (2 * sizeof(uint32_t));
 
   // Slot a is initialized
 
@@ -324,8 +324,8 @@ void exafs_io_copy_slot(char * buf, int dst_slot, uint64_t now) {
 
   int group_size = sizeof(uint64_t) + GRP_SIZE * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
   
-  char * src = buf;
-  char * dst = buf;
+  char * src = buf + (2 * sizeof(uint32_t));
+  char * dst = buf + (2 * sizeof(uint32_t));
 
   if (dst_slot == 0) {
 
@@ -343,7 +343,7 @@ void exafs_io_copy_slot(char * buf, int dst_slot, uint64_t now) {
 }
 
 int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t now) {
-
+  
   int updating_slot = -1; // if now is null, it is the valid slot
   
   int group_size = sizeof(uint64_t) + GRP_SIZE * (sizeof(struct exafs_inode_meta) + sizeof(uint32_t));
@@ -360,7 +360,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
     if (now) {
 
-      exafs_io_reset_slot_a(buf+ (2 * sizeof(uint32_t)), now);
+      exafs_io_reset_slot_a(buf, now);
 
       updating_slot = 0;
     }
@@ -379,7 +379,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
       
 	// Slot b is initialized with content of slot a
 
-	exafs_io_copy_slot(buf+ (2 * sizeof(uint32_t)), updating_slot, now);
+	exafs_io_copy_slot(buf, updating_slot, now);
       }
       else {
 	updating_slot = 0;
@@ -389,7 +389,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
       if (now) {
 
-	exafs_io_reset_slot_a(buf+ (2 * sizeof(uint32_t)), now);
+	exafs_io_reset_slot_a(buf, now);
 
 	updating_slot = 0;
       }
@@ -415,7 +415,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
 	  // Slot b is initialized with content of slot a
 
-	  exafs_io_copy_slot(buf+ (2 * sizeof(uint32_t)), updating_slot, now);
+	  exafs_io_copy_slot(buf, updating_slot, now);
 	}
 	else {
 
@@ -429,7 +429,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
 	  // Slot a is initialized with content of slot b
 
-	  exafs_io_copy_slot(buf+ (2 * sizeof(uint32_t)), updating_slot, now);
+	  exafs_io_copy_slot(buf, updating_slot, now);
 	}
 	else {
 
@@ -447,7 +447,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
 	  // Slot a is initialized with content of slot b
 
-	  exafs_io_copy_slot(buf+ (2 * sizeof(uint32_t)), updating_slot, now);
+	  exafs_io_copy_slot(buf, updating_slot, now);
 	}
 	else {
 
@@ -462,7 +462,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
 	  // Slot b is initialized with content of slot a
 
-	  exafs_io_copy_slot(buf+ (2 * sizeof(uint32_t)), updating_slot, now);
+	  exafs_io_copy_slot(buf, updating_slot, now);
 	}
 	else {
 
@@ -474,7 +474,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 
       if (now) {
 
-	exafs_io_reset_slot_a(buf+ (2 * sizeof(uint32_t)), now);
+	exafs_io_reset_slot_a(buf, now);
 
 	updating_slot = 0;
       }
