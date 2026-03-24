@@ -159,7 +159,7 @@ ssize_t exafs_write(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t s
 
     uint64_t chunk_size = ((size - chunk_offset) > CHUNK_SIZE)?CHUNK_SIZE:size-chunk_offset;
 
-    ctx->write_rand(ctx, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, ptr+chunk_offset, chunk_size, &id);
+    ctx->write_rand(ctx->id, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, ptr+chunk_offset, chunk_size, &id);
     
     emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_write: id=%d", id);
   
@@ -328,7 +328,7 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
     return -1;
   }
 
-  int res = ctx->read_set(ctx, obj_set, nb_obj, obj_set_data, obj_set_size);
+  int res = ctx->read_set(ctx->id, obj_set, nb_obj, obj_set_data, obj_set_size);
 
   free(obj_set);
 
@@ -437,7 +437,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
   
   uint32_t last_obj;
 	  
-  int size = ctx->read_range(ctx, idx, idx+1, buf, 2 * ( (2 * sizeof(uint32_t)) + group_size), &last_obj);
+  int size = ctx->read_range(ctx->id, idx, idx+1, buf, 2 * ( (2 * sizeof(uint32_t)) + group_size), &last_obj);
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_io_read_group: group=%d idx=%d size=%d last_obj=%d", group, idx, size, last_obj);
 
@@ -579,7 +579,7 @@ int exafs_io_write_group(struct exafs_ctx * ctx, int group, char * buf, int slot
   
   int idx = EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+2*group;
 	
-  int size = ctx->write(ctx, idx+slot, buf+offset, group_size);
+  int size = ctx->write(ctx->id, idx+slot, buf+offset, group_size);
   
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_io_write_group: group=%d idx=%d size=%d", group, idx, size);
 

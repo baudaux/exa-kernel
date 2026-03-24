@@ -15,6 +15,8 @@
 
 #include <time.h>
 
+#define EXAFS_NAME_LEN_MAX 128
+
 #define EXAFS_NB_SUPERBLOCKS 4
 
 #define META_LOG_SIZE 100000
@@ -26,16 +28,17 @@
 
 struct exafs_ctx;
 
-typedef int (*clean_func)(struct exafs_ctx * ctx, const char * repo_name);
-typedef int (*r_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int offset);
-typedef int (*w_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
-typedef int (*r_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
-typedef int (*r_set_func)(struct exafs_ctx * ctx, uint32_t * obj_set, int nb_obj, char * data, int size);
-typedef int (*w_range_func)(struct exafs_ctx * ctx, void * buffer, int len);
-typedef int (*w_rand_func)(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
-typedef int (*del_func)(struct exafs_ctx * ctx, uint32_t id);
-typedef int (*del_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
-typedef int (*del_set_func)(struct exafs_ctx * ctx, uint32_t * buffer, int len);
+typedef int (*init_func)(const char * repo_name);
+typedef int (*clean_func)(uint32_t ctx_id);
+typedef int (*r_func)(uint32_t ctx_id, uint32_t id, void * buffer, int len, int offset);
+typedef int (*w_func)(uint32_t ctx_id, uint32_t id, void * buffer, int len);
+typedef int (*r_range_func)(uint32_t ctx_id, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
+typedef int (*r_set_func)(uint32_t ctx_id, uint32_t * obj_set, int nb_obj, char * data, int size);
+typedef int (*w_range_func)(uint32_t ctx_id, void * buffer, int len);
+typedef int (*w_rand_func)(uint32_t ctx_id, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
+typedef int (*del_func)(uint32_t ctx_id, uint32_t id);
+typedef int (*del_range_func)(uint32_t ctx_id, uint32_t id_min, uint32_t id_max);
+typedef int (*del_set_func)(uint32_t ctx_id, uint32_t * buffer, int len);
 
 struct superblock {
   
@@ -54,7 +57,10 @@ struct superblock {
 };
 
 struct exafs_ctx {
-
+  
+  char name[EXAFS_NAME_LEN_MAX];
+  uint32_t id;
+  
   struct superblock superblocks[EXAFS_NB_SUPERBLOCKS];
   
   int active_superblock;
@@ -69,6 +75,7 @@ struct exafs_ctx {
   
   struct exafs_inode * inode_table;
 
+  init_func init_repo;
   clean_func clean_repo;
   r_func read;
   r_range_func read_range;
@@ -90,7 +97,8 @@ struct exafs_ctx {
 };
 
 struct exafs_cfg {
-
+  
+  init_func init_repo;
   clean_func clean_repo;
   r_func read;
   r_range_func read_range;

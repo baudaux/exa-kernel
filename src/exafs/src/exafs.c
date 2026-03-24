@@ -42,7 +42,7 @@
 #endif
 
 int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
-
+  
   ctx->active_superblock = -1;
   ctx->meta_log_head = EXAFS_NB_SUPERBLOCKS;
   ctx->meta_log_tail = EXAFS_NB_SUPERBLOCKS;
@@ -50,6 +50,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
   ctx->inode_table = NULL;
 
+  ctx->init_repo = cfg->init_repo;
   ctx->clean_repo = cfg->clean_repo;
   ctx->read = cfg->read;
   ctx->read_range = cfg->read_range;
@@ -83,7 +84,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     ctx->snapshot_size = SNAPSHOT_SIZE;
   }
 
-  if ( (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->read_set == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
+  if ( (ctx->init_repo == NULL) || (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->read_set == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
     return -1;
   }
 
@@ -93,6 +94,8 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->delete_buf = NULL;
   ctx->delete_buf_size = 0;
   ctx->delete_offset = 0;
+  
+  ctx->id = ctx->init_repo(ctx->name);
   
   return 0;
 }
@@ -124,7 +127,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   for (int i=0; i < EXAFS_NB_SUPERBLOCKS; i++) {
 
-    int len = ctx->read(ctx, i, &(ctx->superblocks[i]), sizeof(struct superblock), 0);
+    int len = ctx->read(ctx->id, i, &(ctx->superblocks[i]), sizeof(struct superblock), 0);
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: read block %d -> %d bytes", i, len);
 
@@ -214,7 +217,7 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
       while (last_obj == 0) {
 
-	size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+	size = ctx->read_range(ctx->id, i, max, buf, buf_len, &last_obj);
     
 	if (size == 0) {
 	  break;
@@ -309,7 +312,7 @@ int exafs_write_superblock(struct exafs_ctx * ctx, int index, uint64_t now) {
   ctx->superblocks[index].next_ino = ctx->next_ino;
   ctx->superblocks[index].crc = exafs_crc(&(ctx->superblocks[index]), sizeof(struct superblock) - sizeof(uint32_t), 0);
   
-  int len = ctx->write(ctx, index, &(ctx->superblocks[index]), sizeof(struct superblock));
+  int len = ctx->write(ctx->id, index, &(ctx->superblocks[index]), sizeof(struct superblock));
   
   return len;
 }
@@ -329,7 +332,7 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
   // Delete all objects of the repo
   
-  ctx->clean_repo(ctx, "home"); // TODO: configure repo name
+  ctx->clean_repo(ctx->id);
 
   time_t now = time(NULL);
   
@@ -357,7 +360,7 @@ int exafs_format(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   
   uint32_t tmp;
   
-  int len = ctx->read(ctx, EXAFS_NB_SUPERBLOCKS, &tmp, sizeof(tmp), 0);
+  int len = ctx->read(ctx->id, EXAFS_NB_SUPERBLOCKS, &tmp, sizeof(tmp), 0);
   
   emscripten_log(EM_LOG_CONSOLE, "exafs: reading deleted object -> len=%d", len);
 
@@ -1031,7 +1034,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 
   // Read only one record as there can be only one
 
-  int size = ctx->read(ctx, ctx->meta_log_head, buf, buf_len, 0);
+  int size = ctx->read(ctx->id, ctx->meta_log_head, buf, buf_len, 0);
   
   if (size <= 0) {
     
@@ -1091,7 +1094,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 
     while (last_obj == 0) {
 
-      size = ctx->read_range(ctx, i, max, buf, buf_len, &last_obj);
+      size = ctx->read_range(ctx->id, i, max, buf, buf_len, &last_obj);
     
       if (size == 0) {
 	break;
@@ -1193,7 +1196,7 @@ int exafs_finalize_snapshot_2(struct exafs_ctx * ctx, time_t now) {
 
   // Read only one record as there can be only one
 
-  int size = ctx->read(ctx, ctx->meta_log_head, buf, buf_len, 0);
+  int size = ctx->read(ctx->id, ctx->meta_log_head, buf, buf_len, 0);
   
   if (size <= 0) {
 

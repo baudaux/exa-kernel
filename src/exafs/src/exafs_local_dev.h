@@ -17,24 +17,26 @@
 
 struct exafs_ctx;
 
-int exafs_local_clean_repo(struct exafs_ctx * ctx, const char * repo_name);
+int exafs_local_init_repo(const char * repo_name);
 
-int exafs_local_read(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int off);
+int exafs_local_clean_repo(uint32_t ctx_id);
 
-int exafs_local_read_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
+int exafs_local_read(uint32_t ctx_id, uint32_t id, void * buffer, int len, int off);
 
-int exafs_local_read_set(struct exafs_ctx * ctx, uint32_t * obj_set, int nb_obj, char * data, int size);
+int exafs_local_read_range(uint32_t ctx_id, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
 
-int exafs_local_write(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
+int exafs_local_read_set(uint32_t ctx_id, uint32_t * obj_set, int nb_obj, char * data, int size);
 
-int exafs_local_write_range(struct exafs_ctx * ctx, void * buffer, int len);
+int exafs_local_write(uint32_t ctx_id, uint32_t id, void * buffer, int len);
 
-int exafs_local_write_rand(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
+int exafs_local_write_range(uint32_t ctx_id, void * buffer, int len);
 
-int exafs_local_delete(struct exafs_ctx * ctx, uint32_t id);
+int exafs_local_write_rand(uint32_t ctx_id, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
 
-int exafs_local_delete_range(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max);
+int exafs_local_delete(uint32_t ctx_id, uint32_t id);
 
-int exafs_local_delete_set(struct exafs_ctx * ctx, uint32_t * buffer, int len);
+int exafs_local_delete_range(uint32_t ctx_id, uint32_t id_min, uint32_t id_max);
+
+int exafs_local_delete_set(uint32_t ctx_id, uint32_t * buffer, int len);
 
 #endif // _EXAFS_LOCAL_DEV_H

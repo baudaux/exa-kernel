@@ -118,7 +118,7 @@ int exafs_record_crc(struct meta_record * record) {
 
 int exafs_meta_store(struct exafs_ctx * ctx, void * obj, int len) {
 
-  int res = ctx->write(ctx, ctx->meta_log_head, obj, len);
+  int res = ctx->write(ctx->id, ctx->meta_log_head, obj, len);
 
   emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_meta_store at object %d (len=%d) -> res=%d", ctx->meta_log_head, len, res);
 
@@ -230,7 +230,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
 	  if (ctx->delete_offset > 0) {
 
-	    ctx->delete_set(ctx, ctx->delete_buf, ctx->delete_offset);
+	    ctx->delete_set(ctx->id, ctx->delete_buf, ctx->delete_offset);
 
 	    ctx->delete_offset = 0;
 	  }
@@ -252,11 +252,11 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
 	  if (snap_finalize_meta->erase_start <= snap_finalize_meta->erase_end) {
 	  
-	    ctx->delete_range(ctx, snap_finalize_meta->erase_start, snap_finalize_meta->erase_end);
+	    ctx->delete_range(ctx->id, snap_finalize_meta->erase_start, snap_finalize_meta->erase_end);
 	  }
 	  else {
-	    ctx->delete_range(ctx, snap_finalize_meta->erase_start, EXAFS_NB_SUPERBLOCKS + ctx->meta_log_size - 1);
-	    ctx->delete_range(ctx, EXAFS_NB_SUPERBLOCKS, snap_finalize_meta->erase_end);
+	    ctx->delete_range(ctx->id, snap_finalize_meta->erase_start, EXAFS_NB_SUPERBLOCKS + ctx->meta_log_size - 1);
+	    ctx->delete_range(ctx->id, EXAFS_NB_SUPERBLOCKS, snap_finalize_meta->erase_end);
 	  }
 	}
 	
@@ -322,7 +322,7 @@ int exafs_meta_replay_record(struct exafs_ctx * ctx, struct meta_record * record
 
 	if ((ctx->delete_buf_size - ctx->delete_offset) > record->len) {
 
-	  ctx->delete_set(ctx, ctx->delete_buf, ctx->delete_offset);
+	  ctx->delete_set(ctx->id, ctx->delete_buf, ctx->delete_offset);
 
 	  ctx->delete_offset = 0;
 	}

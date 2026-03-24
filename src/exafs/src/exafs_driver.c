@@ -97,7 +97,8 @@ struct fd_entry {
 static struct exafs_cfg local_exafs_config = {
 
   .meta_log_size = META_LOG_SIZE,
-
+  
+  .init_repo = &exafs_local_init_repo,
   .clean_repo = &exafs_local_clean_repo,
   .read = &exafs_local_read,
   .read_range = &exafs_local_read_range,
@@ -108,6 +109,22 @@ static struct exafs_cfg local_exafs_config = {
   .delete = &exafs_local_delete,
   .delete_range = &exafs_local_delete_range,
   .delete_set = &exafs_local_delete_set,
+};
+
+static struct exafs_cfg remote_exafs_config = {
+
+  .meta_log_size = META_LOG_SIZE,
+
+  .clean_repo = NULL,
+  .read = NULL,
+  .read_range = NULL,
+  .read_set = NULL,
+  .write = NULL,
+  .write_range = NULL,
+  .write_rand = NULL,
+  .delete = NULL,
+  .delete_range = NULL,
+  .delete_set = NULL,
 };
 
 static char current_fs[128];
@@ -130,7 +147,7 @@ int add_fd_entry(pid_t pid, unsigned short minor, const char * pathname, int fla
   for (int i = 0; i < NB_FD_MAX; ++i) {
 
     if (fds[i].fd < 0) {
-
+      
       ++last_fd;
 
       fds[i].fd = last_fd;
@@ -672,10 +689,8 @@ static int retrieve_master_key(char * view, char * password, char * key) {
 #endif // SECURE
 
 static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf, size_t count) {
-
-  emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_write: (%d) %s", count, buf);
   
-#if 0
+  emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_write: (%d) %s", count, buf);
   
   if (strncmp(buf, "mkfs", 4) == 0) {
 
@@ -711,54 +726,32 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       }
 
 #endif // SECURE
+
+      struct exafs_ctx context;
       
-      lfs_t lfs;
-      struct lfs_config lfs_config;
+      strcpy(context.name, current_fs);
+    
+      int res = exafs_format(&context, &local_exafs_config);
 
-      memcpy(&lfs_config, &common_lfs_config, sizeof(struct lfs_config));
-
-      struct cluster_ops * ops = (strncmp(view, "__local__", 9) == 0)?&local_ops:&remote_ops;
-
-      struct blk_cache * cache = alloc_cache(view, key, ops);
-	
-      lfs_config.context = cache;
-      
-      int res = lfs_format(&lfs, &lfs_config);
-
-      emscripten_log(EM_LOG_CONSOLE, "lfs_format: res=%d", res);
+      emscripten_log(EM_LOG_CONSOLE, "exafs_format: res=%d", res);
 
       if (res == 0) {
+
+	uint32_t ino = exafs_mkdir_at(&context, EXAFS_ROOT_INO, S_IRWXU, "mnt");
 	
-	res = lfs_mount(&lfs, &lfs_config);
+	if (ino > 0) {
 
-	emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
+	  if (exafs_mkdir_at(&context, ino, S_IRWXU, current_fs) == 0) {
 
-	if (res == 0) {
-
-	  res = lfs_mkdir(&lfs, "/mnt");
-	  emscripten_log(EM_LOG_CONSOLE, "lfs_mkdir /mnt: res=%d", res);
-
-	  char mnt_path[256];
-
-	  sprintf(mnt_path, "/mnt/%s", current_fs);
-	
-	  res = lfs_mkdir(&lfs, mnt_path);
-	  
-	  emscripten_log(EM_LOG_CONSOLE, "lfs_mkdir %s: res=%d", mnt_path, res);
-	  
-	  lfs_unmount(&lfs);
-	}
-
-	free_cache(cache);
-
-	if (key) {
-	  free(key);
-	}
-
-	return count;
+	    res = -1;
+	  }
+	}	  
       }
-
-      free_cache(cache);
+#ifdef SECURE
+      if (key) {
+	free(key);
+      }
+#endif // SECURE
     }
   }
   else if (strncmp(buf, "mount", 5) == 0) {
@@ -782,7 +775,8 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       view++;
 
       minor++;
-      
+ 
+#ifdef SECURE  
       char * key = NULL;
 
       if (strlen(password) > 0) {
@@ -790,41 +784,45 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
 	key = malloc(crypto_kdf_KEYBYTES);
 	retrieve_master_key(view, password, key);
       }
+#endif // SECURE
 
+      memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
+  
+      strcpy(devices[minor].name, current_fs);
+
+      strcpy(devices[minor].exafs_ctx.name, current_fs);
+  
+      int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
+  
+  /*
       memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
 
       struct cluster_ops * ops = (strncmp(view, "__local__", 9) == 0)?&local_ops:&remote_ops;
       
-      struct blk_cache * cache = alloc_cache(view, key, ops);
-      
-      devices[minor].lfs_config.context = cache;
+  */
 
-      int res = lfs_mount(&(devices[minor].lfs), &(devices[minor].lfs_config));
-
-      emscripten_log(EM_LOG_CONSOLE, "lfs_mount: res=%d", res);
+      emscripten_log(EM_LOG_CONSOLE, "exafs_mount: res=%d", res);
 
       if (res == 0) {
 
-	register_device(minor, &localfs_ops);
+	register_device(minor, &exafs_ops);
 
 	return count;
       }
       else {
 
-	free_cache(cache);
+#ifdef SECURE	
 
 	if (key)
 	  free(key);
+#endif // SECURE
 
 	minor--;
       }
       
     }
-    
   }
-#endif // 0
-
-  if (strncmp(buf, "unmount", 7) == 0) {
+  else if (strncmp(buf, "unmount", 7) == 0) {
 
     char * fs = strchr(buf, ':');
 
@@ -926,7 +924,7 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
     if (res == 0) {
 
       char mnt_path[1024];
-
+      
       if (strcmp(devices[min].name, "home") == 0) {
 
 	if (exafs_mkdir_at(&(devices[min].exafs_ctx), EXAFS_ROOT_INO, S_IRWXU, "home") == 0) {
@@ -962,12 +960,12 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
   return count;
 }
 
-static int exafs_ctl_ioctl(struct lfs_dev * dev, int fildes, int request, ... /* arg */) {
+static int exafs_ctl_ioctl(struct exafs_dev * dev, int fildes, int request, ... /* arg */) {
 
   return EINVAL;
 }
 
-static int exafs_ctl_close(struct lfs_dev * dev, int fd) {
+static int exafs_ctl_close(struct exafs_dev * dev, int fd) {
 
   emscripten_log(EM_LOG_CONSOLE, "exafs_ctl_close: %d", fd);
   
@@ -998,8 +996,11 @@ int register_home() {
   minor++;
   
   memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
+  
   strcpy(devices[minor].name, "home");
 
+  strcpy(devices[minor].exafs_ctx.name, "__local__home");
+  
   //TOTEST: format each time
   int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
   //int res = -1;
@@ -1135,10 +1136,9 @@ int main() {
 	}
 	else {
 	  sprintf(mnt_path, "/mnt/%s", current_fs);
-	}
 
-	// ????
-	//mkdirat(AT_FDCWD, mnt_path, 0777);
+	  mkdirat(AT_FDCWD, mnt_path, 0777);
+	}
 
 	msg->msg_id = MOUNT;
 	msg->_u.mount_msg.dev_type = FS_DEV;

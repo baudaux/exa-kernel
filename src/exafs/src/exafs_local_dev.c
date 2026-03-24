@@ -24,7 +24,51 @@
 #define emscripten_log(...)
 #endif
 
-EM_JS(int, exafs_local_clean_repo, (struct exafs_ctx * ctx, const char * repo_name), {
+EM_JS(int, exafs_local_init_repo, (const char * repo_name), {
+
+    return Asyncify.handleSleep(function (wakeUp) {
+
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	if (typeof window.repo_table === 'undefined') {
+
+	  window.repo_table = new Array();
+	}
+	
+	const name = UTF8ToString(repo_name);
+
+	console.log("init_repo: "+name);
+	
+	let request = window.indexedDB.open(name, 1);
+
+	request.onerror = function(event) {
+
+	  wakeUp(-1);
+	};
+
+	request.onupgradeneeded = function(event) {
+
+	  let db = event.target.result;
+
+	  let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+	};
+	      
+	request.onsuccess = function(event) {
+
+	  window.repo_table.push({name: name, db:event.target.result});
+
+	  console.log(window.repo_table);
+		
+	  wakeUp(window.repo_table.length-1);	
+	};
+
+      });
+  });
+
+EM_JS(int, exafs_local_clean_repo, (uint32_t ctx_id), {
 
   return Asyncify.handleSleep(function (wakeUp) {
 
@@ -55,39 +99,13 @@ EM_JS(int, exafs_local_clean_repo, (struct exafs_ctx * ctx, const char * repo_na
 	};
       };
 
-      if (typeof window.exafs_local === 'undefined') {
-
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_clean_repo(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_clean_repo(window.exafs_local);
-	    }
-	
+      do_clean_repo(window.repo_table[ctx_id].db);
+      
     });
+  
   });
 
-EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int off), {
+EM_JS(int, exafs_local_read, (uint32_t ctx_id, uint32_t id, void * buffer, int len, int off), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -136,42 +154,12 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer
 	      };
 	    };
 
-	    if (typeof window.exafs_local === 'undefined') {
-
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-		//TODO
-		//objectStore.createIndex("cluster", "cluster", { unique: true });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_read(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_read(window.exafs_local);
-	    }
+	    do_read(window.repo_table[ctx_id].db);
 
 	  });
 });
 
-EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj), {
+EM_JS(int, exafs_local_read_range, (uint32_t ctx_id, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -247,42 +235,12 @@ EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uin
 	  };
 	};
 
-	if (typeof window.exafs_local === 'undefined') {
-	      
-	  let request = window.indexedDB.open("exafs_local", 1);
-
-	  request.onerror = function(event) {
-
-	    wakeUp(-1);
-	  };
-
-	  request.onupgradeneeded = function(event) {
-
-	    let db = event.target.result;
-
-	    let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-	    //TODO
-	    //objectStore.createIndex("cluster", "cluster", { unique: true });
-	  };
-	      
-	  request.onsuccess = function(event) {
-
-	    window.exafs_local = event.target.result;
-		
-	    do_read_range(window.exafs_local);
-		
-	  };
-	}
-	else {
-
-	  do_read_range(window.exafs_local);
-	}
+	do_read_range(window.repo_table[ctx_id].db);
 
       });
 });
 
-EM_JS(int, exafs_local_read_set, (struct exafs_ctx * ctx, uint32_t * obj_set, int nb_obj, char * data, int size), {
+EM_JS(int, exafs_local_read_set, (uint32_t ctx_id, uint32_t * obj_set, int nb_obj, char * data, int size), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -357,42 +315,12 @@ EM_JS(int, exafs_local_read_set, (struct exafs_ctx * ctx, uint32_t * obj_set, in
 	  do_read_obj(0);
 	};
 
-	if (typeof window.exafs_local === 'undefined') {
-	      
-	  let request = window.indexedDB.open("exafs_local", 1);
-
-	  request.onerror = function(event) {
-
-	    wakeUp(-1);
-	  };
-
-	  request.onupgradeneeded = function(event) {
-
-	    let db = event.target.result;
-
-	    let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-	    //TODO
-	    //objectStore.createIndex("cluster", "cluster", { unique: true });
-	  };
-	      
-	  request.onsuccess = function(event) {
-
-	    window.exafs_local = event.target.result;
-		
-	    do_read_set(window.exafs_local);
-		
-	  };
-	}
-	else {
-
-	  do_read_set(window.exafs_local);
-	}
+	do_read_set(window.repo_table[ctx_id].db);
 
       });
   });
 
-EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len), {
+EM_JS(int, exafs_local_write, (uint32_t ctx_id, uint32_t id, void * buffer, int len), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -425,46 +353,16 @@ EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, uint32_t id, void * buffe
 	      };
 	    };
 
-	    if (typeof window.exafs_local === 'undefined') {
-	      
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-		//TODO
-		//objectStore.createIndex("cluster", "cluster", { unique: true });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_write(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_write(window.exafs_local);
-	    }
+	    do_write(window.repo_table[ctx_id].db);
 
       });
 });
 
-EM_JS(int, exafs_local_write_range, (struct exafs_ctx * ctx, void * buffer, int len), {
+EM_JS(int, exafs_local_write_range, (uint32_t ctx_id, void * buffer, int len), {
 
 });
 
-EM_JS(int, exafs_local_write_rand, (struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id), {
+EM_JS(int, exafs_local_write_rand, (uint32_t ctx_id, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 
@@ -540,40 +438,12 @@ EM_JS(int, exafs_local_write_rand, (struct exafs_ctx * ctx, uint32_t max_reserve
 	      
 	};
 
-	if (typeof window.exafs_local === 'undefined') {
-
-	  let request = window.indexedDB.open("exafs_local", 1);
-
-	  request.onerror = function(event) {
-
-	    wakeUp(-1);
-	  };
-
-	  request.onupgradeneeded = function(event) {
-
-	    let db = event.target.result;
-
-	    let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-	  };
-	      
-	  request.onsuccess = function(event) {
-
-	    window.exafs_local = event.target.result;
-		
-	    do_find_free_obj(window.exafs_local);
-		
-	  };
-	}
-	else {
-
-	  do_find_free_obj(window.exafs_local);
-	}
-
+	do_find_free_obj(window.repo_table[ctx_id].db);
 	
       });
 });
 
-EM_JS(int, exafs_local_delete, (struct exafs_ctx * ctx, uint32_t id), {
+EM_JS(int, exafs_local_delete, (uint32_t ctx_id, uint32_t id), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -607,42 +477,12 @@ EM_JS(int, exafs_local_delete, (struct exafs_ctx * ctx, uint32_t id), {
 	      };
 	    };
 
-	    if (typeof window.exafs_local === 'undefined') {
-	      
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-		//TODO
-		//objectStore.createIndex("cluster", "cluster", { unique: true });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_delete(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_delete(window.exafs_local);
-	    }
+	    do_delete(window.repo_table[ctx_id].db);
 
       });
 });
 
-EM_JS(int, exafs_local_delete_range, (struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max), {
+EM_JS(int, exafs_local_delete_range, (uint32_t ctx_id, uint32_t id_min, uint32_t id_max), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -678,42 +518,12 @@ EM_JS(int, exafs_local_delete_range, (struct exafs_ctx * ctx, uint32_t id_min, u
 	      };
 	    };
 
-	    if (typeof window.exafs_local === 'undefined') {
-	      
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-		//TODO
-		//objectStore.createIndex("cluster", "cluster", { unique: true });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_delete_range(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_delete_range(window.exafs_local);
-	    }
+	    do_delete_range(window.repo_table[ctx_id].db);
 
       });
 });
 
-EM_JS(int, exafs_local_delete_set, (struct exafs_ctx * ctx, uint32_t * buffer, int len), {
+EM_JS(int, exafs_local_delete_set, (uint32_t ctx_id, uint32_t * buffer, int len), {
     
     return Asyncify.handleSleep(function (wakeUp) {
 	
@@ -762,37 +572,7 @@ EM_JS(int, exafs_local_delete_set, (struct exafs_ctx * ctx, uint32_t * buffer, i
 	  do_delete_obj(0);
 	};
 
-	if (typeof window.exafs_local === 'undefined') {
-	      
-	      let request = window.indexedDB.open("exafs_local", 1);
-
-	      request.onerror = function(event) {
-
-		wakeUp(-1);
-	      };
-
-	      request.onupgradeneeded = function(event) {
-
-		let db = event.target.result;
-
-		let objectStore = db.createObjectStore("objects", { keyPath: "object" });
-
-		//TODO
-		//objectStore.createIndex("cluster", "cluster", { unique: true });
-	      };
-	      
-	      request.onsuccess = function(event) {
-
-		window.exafs_local = event.target.result;
-		
-		do_delete_set(window.exafs_local);
-		
-	      };
-	    }
-	    else {
-
-	      do_delete_set(window.exafs_local);
-	    }
+	do_delete_set(window.repo_table[ctx_id].db);
 
       });
   });

@@ -797,7 +797,7 @@ int exafs_inode_snap_content(struct exafs_ctx * ctx, struct exafs_inode * inode,
     return -1;
   }
   
-  ctx->write_rand(ctx, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, buf, size, &id);
+  ctx->write_rand(ctx->id, EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+ctx->snapshot_size, buf, size, &id);
 
   if (!id) {
 
@@ -958,7 +958,7 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
   
   char * buf = (char *)malloc(size);
 
-  int len = ctx->read(ctx, inode->obj, buf, size, 0);
+  int len = ctx->read(ctx->id, inode->obj, buf, size, 0);
 
   if (len < -1) {
 
@@ -968,7 +968,7 @@ int exafs_inode_read_entry(struct exafs_ctx * ctx, struct exafs_inode * inode) {
 
     buf = (char *)malloc(size);
 
-    if (ctx->read(ctx, inode->obj, buf, size, 0) != size) {
+    if (ctx->read(ctx->id, inode->obj, buf, size, 0) != size) {
       
       return -1;
     }
