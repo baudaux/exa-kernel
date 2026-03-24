@@ -120,7 +120,7 @@ EM_JS(int, exafs_local_read, (struct exafs_ctx * ctx, uint32_t id, void * buffer
 		  Module.HEAPU8.set(request.result.data.subarray(off, off+len), buffer);
 
 		  if ((request.result.data.length-off) <= len) {
-
+		    
 		    wakeUp(request.result.data.length-off);
 		  }
 		  else {
@@ -191,7 +191,7 @@ EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uin
 
 	let do_read_range = (db) => {
 
-	  let store = db.transaction(["objects"], "readwrite").objectStore("objects");
+	  let store = db.transaction(["objects"]).objectStore("objects");
 	      
 	  const range = IDBKeyRange.bound(id_min, id_max); // inclusive
 
@@ -281,6 +281,116 @@ EM_JS(int, exafs_local_read_range, (struct exafs_ctx * ctx, uint32_t id_min, uin
 
       });
 });
+
+EM_JS(int, exafs_local_read_set, (struct exafs_ctx * ctx, uint32_t * obj_set, int nb_obj, char * data, int size), {
+
+    return Asyncify.handleSleep(function (wakeUp) {
+	
+	console.log("exafs: exafs_local_read_set: nb_obj="+nb_obj+" size="+size);
+
+	window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+
+	if (!window.indexedDB)
+	  return -1;
+
+	window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+
+	window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+	let obj_index = 0;
+
+	let offset = 0;
+
+	let do_read_set = (db) => {
+
+	  let store = db.transaction(["objects"]).objectStore("objects");
+
+	  let do_read_obj = (idx) => {
+
+	    if (idx >= nb_obj) {
+	      
+	      wakeUp(offset);
+	      return;
+	    }
+
+	    let obj_id = Module.HEAPU8[obj_set+4*idx] | (Module.HEAPU8[obj_set+4*idx+1] << 8) | (Module.HEAPU8[obj_set+4*idx+2] << 16) | (Module.HEAPU8[obj_set+4*idx+3] << 24);
+
+	    let request = store.get(obj_id);
+	      
+	    request.onerror = function(event) {
+
+	      wakeUp(-1);
+	    };
+	      
+	    request.onsuccess = function(event) {
+
+	      if (request.result) {
+
+		Module.HEAPU8[data+offset] = obj_id & 0xff;
+		Module.HEAPU8[data+offset+1] = (obj_id >> 8) & 0xff;
+		Module.HEAPU8[data+offset+2] = (obj_id >> 16) & 0xff;
+		Module.HEAPU8[data+offset+3] = (obj_id >> 24) & 0xff;
+
+		let obj_size = request.result.data.length;
+
+		Module.HEAPU8[data+offset+4] = obj_size & 0xff;
+		Module.HEAPU8[data+offset+5] = (obj_size >> 8) & 0xff;
+		Module.HEAPU8[data+offset+6] = (obj_size >> 16) & 0xff;
+		Module.HEAPU8[data+offset+7] = (obj_size >> 24) & 0xff;
+		
+		offset += 8;
+
+		Module.HEAPU8.set(request.result.data, data+offset);
+
+		offset += obj_size;
+
+		do_read_obj(idx+1);
+	      }
+	      else {
+
+		wakeUp(-1);
+	      }
+		
+	    };
+	  };
+	  
+	  do_read_obj(0);
+	};
+
+	if (typeof window.exafs_local === 'undefined') {
+	      
+	  let request = window.indexedDB.open("exafs_local", 1);
+
+	  request.onerror = function(event) {
+
+	    wakeUp(-1);
+	  };
+
+	  request.onupgradeneeded = function(event) {
+
+	    let db = event.target.result;
+
+	    let objectStore = db.createObjectStore("objects", { keyPath: "object" });
+
+	    //TODO
+	    //objectStore.createIndex("cluster", "cluster", { unique: true });
+	  };
+	      
+	  request.onsuccess = function(event) {
+
+	    window.exafs_local = event.target.result;
+		
+	    do_read_set(window.exafs_local);
+		
+	  };
+	}
+	else {
+
+	  do_read_set(window.exafs_local);
+	}
+
+      });
+  });
 
 EM_JS(int, exafs_local_write, (struct exafs_ctx * ctx, uint32_t id, void * buffer, int len), {
 

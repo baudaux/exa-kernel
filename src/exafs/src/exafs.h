@@ -30,6 +30,7 @@ typedef int (*clean_func)(struct exafs_ctx * ctx, const char * repo_name);
 typedef int (*r_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len, int offset);
 typedef int (*w_func)(struct exafs_ctx * ctx, uint32_t id, void * buffer, int len);
 typedef int (*r_range_func)(struct exafs_ctx * ctx, uint32_t id_min, uint32_t id_max, void * buffer, int len, uint32_t * last_obj);
+typedef int (*r_set_func)(struct exafs_ctx * ctx, uint32_t * obj_set, int nb_obj, char * data, int size);
 typedef int (*w_range_func)(struct exafs_ctx * ctx, void * buffer, int len);
 typedef int (*w_rand_func)(struct exafs_ctx * ctx, uint32_t max_reserved_id, void * buffer, uint32_t len, uint32_t * id);
 typedef int (*del_func)(struct exafs_ctx * ctx, uint32_t id);
@@ -71,6 +72,7 @@ struct exafs_ctx {
   clean_func clean_repo;
   r_func read;
   r_range_func read_range;
+  r_set_func read_set;
   w_func write;
   w_range_func write_range;
   w_rand_func write_rand;
@@ -92,6 +94,7 @@ struct exafs_cfg {
   clean_func clean_repo;
   r_func read;
   r_range_func read_range;
+  r_set_func read_set;
   w_func write;
   w_range_func write_range;
   w_rand_func write_rand;

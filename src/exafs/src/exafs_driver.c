@@ -101,6 +101,7 @@ static struct exafs_cfg local_exafs_config = {
   .clean_repo = &exafs_local_clean_repo,
   .read = &exafs_local_read,
   .read_range = &exafs_local_read_range,
+  .read_set = &exafs_local_read_set,
   .write = &exafs_local_write,
   .write_range = &exafs_local_write_range,
   .write_rand = &exafs_local_write_rand,

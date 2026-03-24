@@ -264,10 +264,86 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
     
     entry = inode->e.chunk_entry_list;
   }
-  
-  char * data = (char*)buf;
 
   uint64_t max_offset = ((offset+size) <= inode->size)?offset+size:inode->size;
+
+  int nb_obj = 0;
+
+  // Compute nb_nodes
+
+  while (entry) {
+
+    if ( ( (entry->offset >= offset) && (entry->offset <= max_offset) ) ||
+	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= max_offset) ) ||
+	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= max_offset) ) ) {
+
+      nb_obj++;
+    }
+	
+    entry = entry->next;
+  }
+
+  if (nb_obj == 0) {
+    
+    return max_offset-offset;
+  }
+
+  // Compute obj_set
+  
+  uint32_t * obj_set = (uint32_t *)malloc(nb_obj * sizeof(uint32_t));
+
+  if (!obj_set) {
+    
+    return -1;
+  }
+
+  entry = inode->e.chunk_entry_list;
+
+  uint32_t obj_set_size = 0;
+
+  int i = 0;
+
+  while (entry) {
+
+    if ( ( (entry->offset >= offset) && (entry->offset <= max_offset) ) ||
+	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= max_offset) ) ||
+	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= max_offset) ) ) {
+
+      obj_set[i] = entry->id;
+
+      obj_set_size += 2 * sizeof(uint32_t) + entry->size; // obj id + obj length + obj data
+      
+      i++;
+    }
+	
+    entry = entry->next;
+  }
+
+  char * obj_set_data = (char *)malloc(obj_set_size);
+
+  if (!obj_set_data) {
+
+    free(obj_set);
+    
+    return -1;
+  }
+
+  int res = ctx->read_set(ctx, obj_set, nb_obj, obj_set_data, obj_set_size);
+
+  free(obj_set);
+
+  if (res != obj_set_size) {
+    
+    free(obj_set_data);
+    
+    return -1;
+  }
+
+  entry = inode->e.chunk_entry_list;
+
+  char * ptr = obj_set_data;
+
+  char * data = (char*)buf;
   
   while (entry) {
 
@@ -275,7 +351,17 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 	 ( ((entry->offset+entry->size) >= offset) && ((entry->offset+entry->size) <= max_offset) ) ||
 	 ( (entry->offset <= offset) && ((entry->offset+entry->size) >= max_offset) ) ) {
 
-      emscripten_log(EM_LOG_CONSOLE, "exafs: exafs_read: entry is needed: off=%lld size=%lld", entry->offset, entry->size);
+      uint32_t obj_id = *((uint32_t *)ptr);
+      uint32_t obj_size = *(((uint32_t *)ptr)+1);
+
+      if (obj_id != entry->id) {
+	
+	free(obj_set_data);
+	
+	return -1;
+      }
+
+      ptr += 2 * sizeof(uint32_t);
 
       uint32_t src_off, dst_off, len;
 
@@ -290,17 +376,16 @@ ssize_t exafs_read(struct exafs_ctx * ctx, uint32_t ino, void * buf, uint64_t si
 	len = max_offset-offset-dst_off;
       }
       
-      int res = ctx->read(ctx, entry->id, data+dst_off, len, src_off);
-
-      if (res == -1)
-	return -1;
+      memcpy(data+dst_off, ptr+src_off, len);
+      
+      ptr += obj_size;
     }
-	
+    
     entry = entry->next;
   }
 
   // TODO: update atime
-
+  
   return max_offset-offset;
 }
 

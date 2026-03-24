@@ -53,6 +53,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->clean_repo = cfg->clean_repo;
   ctx->read = cfg->read;
   ctx->read_range = cfg->read_range;
+  ctx->read_set = cfg->read_set;
   ctx->write = cfg->write;
   ctx->write_range = cfg->write_range;
   ctx->write_rand = cfg->write_rand;
@@ -82,7 +83,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
     ctx->snapshot_size = SNAPSHOT_SIZE;
   }
 
-  if ( (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
+  if ( (ctx->clean_repo == NULL) || (ctx->read == NULL) || (ctx->read_range == NULL) || (ctx->read_set == NULL) || (ctx->write == NULL) || (ctx->write_range == NULL) || (ctx->write_rand == NULL) || (ctx->delete == NULL) || (ctx->delete_range == NULL) ) {
     return -1;
   }
 
