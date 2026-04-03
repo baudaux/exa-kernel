@@ -95,7 +95,7 @@ int exafs_init(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
   ctx->delete_buf_size = 0;
   ctx->delete_offset = 0;
   
-  ctx->id = ctx->init_repo(ctx->name);
+  ctx->id = ctx->init_repo(ctx->name, ctx->view);
   
   return 0;
 }
@@ -207,22 +207,27 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
 
 	max = ctx->meta_log_size + EXAFS_NB_SUPERBLOCKS -1;
       }
-
+      
       if ( (max > exafs_minus_tail(ctx)) && (i < ctx->meta_log_head) ) {
 
 	max = exafs_minus_tail(ctx);
       }
 
-      int size = 0;
+      int size = -1;
 
-      while (last_obj == 0) {
+      while (size < 0) {
 
 	size = ctx->read_range(ctx->id, i, max, buf, buf_len, &last_obj);
     
 	if (size == 0) {
 	  break;
 	}
-	else if (last_obj == 0) {
+	else if (size == -1) {
+	  
+	  free(buf);
+	  return -1;
+	}
+	else if (size < 0) {
 	  
 	  free(buf);
 	  
@@ -234,22 +239,20 @@ int exafs_mount(struct exafs_ctx * ctx, struct exafs_cfg * cfg) {
       if (size == 0) {
 	break;
       }
-      else if (size < 0) {
-
-	size = -size;
-      }
       
       emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
 
       uint32_t offset = 0;
+      uint32_t obj_id = 0;
 
-      while (offset < size) {
+      while (obj_id != last_obj) {
 
 	char * ptr = buf + offset;
       
 	// Replay them
-
-	uint32_t obj_id = *((uint32_t *)ptr);
+	
+	obj_id = *((uint32_t *)ptr);
+	
 	uint32_t obj_length = *(((uint32_t *)ptr)+1);
 
 	exafs_meta_replay(ctx, ptr+(2*sizeof(uint32_t)), obj_length);
@@ -1090,16 +1093,21 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
       max = exafs_minus_tail(ctx);
     }
     
-    int size = 0;
+    int size = -1;
 
-    while (last_obj == 0) {
+    while (size < 0) {
 
       size = ctx->read_range(ctx->id, i, max, buf, buf_len, &last_obj);
     
       if (size == 0) {
 	break;
       }
-      else if (last_obj == 0) {
+      else if (size == -1) {
+
+	free(buf);
+	return -1;
+      }
+      else if (size < 0) {
 	  
 	free(buf);
 	
@@ -1107,26 +1115,24 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
 	buf = malloc(buf_len);
       }
     }
-      
+    
     if (size == 0) {
       break;
-    }
-    else if (size < 0) {
-
-      size = -size;
     }
 
     emscripten_log(EM_LOG_CONSOLE, "exafs: read_range: %d -> %d: size=%d", i, last_obj, size);
 
     uint32_t offset = 0;
+    uint32_t obj_id = 0;
 
-    while (offset < size) {
+    while (obj_id != last_obj) {
 
       char * ptr = buf + offset;
       
       // Replay them
 
-      uint32_t obj_id = *((uint32_t *)ptr);
+      obj_id = *((uint32_t *)ptr);
+      
       uint32_t obj_length = *(((uint32_t *)ptr)+1);
 
       exafs_meta_replay(ctx, ptr+(2*sizeof(uint32_t)), obj_length);
@@ -1155,7 +1161,7 @@ int exafs_finalize_snapshot(struct exafs_ctx * ctx, time_t now) {
   char * recordset = (char *)malloc(1024);
 
   if (!recordset) {
-
+    
     return -1;
   }
 

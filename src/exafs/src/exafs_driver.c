@@ -33,6 +33,7 @@
 #include "exafs_io.h"
 
 #include "exafs_local_dev.h"
+#include "exafs_remote_dev.h"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -114,17 +115,18 @@ static struct exafs_cfg local_exafs_config = {
 static struct exafs_cfg remote_exafs_config = {
 
   .meta_log_size = META_LOG_SIZE,
-
-  .clean_repo = NULL,
-  .read = NULL,
-  .read_range = NULL,
-  .read_set = NULL,
-  .write = NULL,
-  .write_range = NULL,
-  .write_rand = NULL,
-  .delete = NULL,
-  .delete_range = NULL,
-  .delete_set = NULL,
+  
+  .init_repo = &exafs_remote_init_repo,
+  .clean_repo = &exafs_remote_clean_repo,
+  .read = &exafs_remote_read,
+  .read_range = &exafs_remote_read_range,
+  .read_set = &exafs_remote_read_set,
+  .write = &exafs_remote_write,
+  .write_range = &exafs_remote_write_range,
+  .write_rand = &exafs_remote_write_rand,
+  .delete = &exafs_remote_delete,
+  .delete_range = &exafs_remote_delete_range,
+  .delete_set = &exafs_remote_delete_set,
 };
 
 static char current_fs[128];
@@ -730,11 +732,12 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       struct exafs_ctx context;
       
       strcpy(context.name, current_fs);
+      strcpy(context.view, view);
     
-      int res = exafs_format(&context, &local_exafs_config);
+      int res = exafs_format(&context, (strncmp(view, "__local__", 9) == 0)?&local_exafs_config:&remote_exafs_config);
 
       emscripten_log(EM_LOG_CONSOLE, "exafs_format: res=%d", res);
-
+      
       if (res == 0) {
 
 	uint32_t ino = exafs_mkdir_at(&context, EXAFS_ROOT_INO, S_IRWXU, "mnt");
@@ -786,20 +789,14 @@ static ssize_t exafs_ctl_write(struct exafs_dev * dev, int fd, const void * buf,
       }
 #endif // SECURE
 
-      memcpy(&(devices[minor].exafs_config), &local_exafs_config, sizeof(struct exafs_cfg));
+      memcpy(&(devices[minor].exafs_config), (strncmp(view, "__local__", 9) == 0)?&local_exafs_config:&remote_exafs_config, sizeof(struct exafs_cfg));
   
       strcpy(devices[minor].name, current_fs);
 
       strcpy(devices[minor].exafs_ctx.name, current_fs);
+      strcpy(devices[minor].exafs_ctx.view, view);
   
       int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));
-  
-  /*
-      memcpy(&(devices[minor].lfs_config), &common_lfs_config, sizeof(struct lfs_config));
-
-      struct cluster_ops * ops = (strncmp(view, "__local__", 9) == 0)?&local_ops:&remote_ops;
-      
-  */
 
       emscripten_log(EM_LOG_CONSOLE, "exafs_mount: res=%d", res);
 
@@ -1000,6 +997,7 @@ int register_home() {
   strcpy(devices[minor].name, "home");
 
   strcpy(devices[minor].exafs_ctx.name, "__local__home");
+  strcpy(devices[minor].exafs_ctx.view, "__local__home");
   
   //TOTEST: format each time
   int res = exafs_mount(&(devices[minor].exafs_ctx), &(devices[minor].exafs_config));

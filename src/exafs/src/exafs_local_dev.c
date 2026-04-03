@@ -24,7 +24,7 @@
 #define emscripten_log(...)
 #endif
 
-EM_JS(int, exafs_local_init_repo, (const char * repo_name), {
+EM_JS(int, exafs_local_init_repo, (const char * repo_name, const char * view), {
 
     return Asyncify.handleSleep(function (wakeUp) {
 
@@ -220,7 +220,7 @@ EM_JS(int, exafs_local_read_range, (uint32_t ctx_id, uint32_t id_min, uint32_t i
 		Module.HEAPU8[last_obj+2] = (last >> 16) & 0xff;
 		Module.HEAPU8[last_obj+3] = (last >> 24) & 0xff;
 		
-		wakeUp(-offset);
+		wakeUp(-cursor.value.data.length);
 	      }
 	    }
 	    else {

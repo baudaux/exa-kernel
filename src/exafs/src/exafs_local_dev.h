@@ -17,7 +17,7 @@
 
 struct exafs_ctx;
 
-int exafs_local_init_repo(const char * repo_name);
+int exafs_local_init_repo(const char * repo_name, const char * view);
 
 int exafs_local_clean_repo(uint32_t ctx_id);
 

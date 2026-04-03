@@ -435,10 +435,10 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 	
   int idx = EXAFS_NB_SUPERBLOCKS+ctx->meta_log_size+2*group;
   
-  uint32_t last_obj;
+  uint32_t last_obj = 0;
 	  
   int size = ctx->read_range(ctx->id, idx, idx+1, buf, 2 * ( (2 * sizeof(uint32_t)) + group_size), &last_obj);
-
+  
   emscripten_log(EM_LOG_CONSOLE, "exafs: --> exafs_io_read_group: group=%d idx=%d size=%d last_obj=%d", group, idx, size, last_obj);
 
   if (last_obj == 0) { // No object is read
@@ -540,7 +540,7 @@ int exafs_io_read_group(struct exafs_ctx * ctx, int group, char * buf, uint64_t 
 	}
       }
       else { // Slot a is valid
-
+	
 	if (now) {
 
 	  updating_slot = 1;

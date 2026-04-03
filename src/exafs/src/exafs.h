@@ -16,6 +16,7 @@
 #include <time.h>
 
 #define EXAFS_NAME_LEN_MAX 128
+#define EXAFS_VIEW_LEN_MAX 256
 
 #define EXAFS_NB_SUPERBLOCKS 4
 
@@ -28,7 +29,7 @@
 
 struct exafs_ctx;
 
-typedef int (*init_func)(const char * repo_name);
+typedef int (*init_func)(const char * repo_name, const char * view);
 typedef int (*clean_func)(uint32_t ctx_id);
 typedef int (*r_func)(uint32_t ctx_id, uint32_t id, void * buffer, int len, int offset);
 typedef int (*w_func)(uint32_t ctx_id, uint32_t id, void * buffer, int len);
@@ -59,6 +60,8 @@ struct superblock {
 struct exafs_ctx {
   
   char name[EXAFS_NAME_LEN_MAX];
+  char view[EXAFS_VIEW_LEN_MAX];
+  
   uint32_t id;
   
   struct superblock superblocks[EXAFS_NB_SUPERBLOCKS];
