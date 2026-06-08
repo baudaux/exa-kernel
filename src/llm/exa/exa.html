@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Emscripten-Generated Code</title>
+    
+  </head>
+
+  <body>
+
+    <script type="module">
+
+      import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+      // Check model list in github/web-llm/src/config.ts
+
+      const selectedModel = "Qwen3.5-2B-q4f16_1-MLC"; //"Qwen3.5-2B-q4f16_1-MLC";  "Qwen3.5-4B-q4f16_1-MLC"; "Qwen3.5-2B-q4f16_1-MLC"; "Qwen3.5-0.8B-q4f16_1-MLC";
+      
+      const appConfig = { ...webllm.prebuiltAppConfig, cacheBackend: "opfs" };
+
+      function initProgressCallback (p) {
+
+	  console.log(p);
+      }
+      
+      async function main() {
+
+	  console.log("Starting LLM engine ...");
+
+	  const engine = await webllm.CreateWebWorkerMLCEngine(
+	      
+	      new Worker(new URL("./llm_worker.js", import.meta.url), {
+		  type: "module",
+	      }),
+	      
+	      selectedModel,
+	      
+	      { appConfig,
+		initProgressCallback }
+	  );
+
+	  console.log("LLM engine created");
+	  
+	  const bc = new BroadcastChannel("/var/llm.peer");
+	  
+	  const read_buf = new Uint8Array(256);
+	  
+	  read_buf[0] = 5; // MOUNT
+
+	  let msg = {
+
+	      from: "webllm",
+	      buf: read_buf,
+	      len: read_buf.length
+	  };
+
+	  bc.postMessage(msg);
+
+	  window.chat = async function(msg) {
+
+	      console.log(msg);
+
+	      window.llm_closed = 0;
+	      
+	      const obj = JSON.parse(msg);
+
+	      const chunks = await engine.chat.completions.create({
+		  
+		  messages: obj.messages,
+		  temperature: 1,
+		  stream: true, // <-- Enable streaming
+		  stream_options: { include_usage: true },
+	      });
+	      
+	      for await (const chunk of chunks) {
+		  
+		  if (window.llm_closed) {
+
+		      engine.interruptGenerate();
+		      continue;
+		  }
+		  
+		  //console.log(chunk.choices[0]?.delta.content);
+
+		  // Send msg to BroadcastChannel /var/llm.peer
+
+		  let uint8Array = [];
+
+		  const content = chunk.choices[0]?.delta.content || "";
+
+		  for (let c of content) {
+
+		      if (c.charCodeAt(0) < 128)
+			  uint8Array.push(c.charCodeAt(0));
+		  }
+
+		  if (uint8Array.length > 0) {
+
+		      read_buf[0] = 24; // READ_TTY
+		      
+		      read_buf.set(uint8Array, 20);
+
+		      read_buf[16] = uint8Array.length & 0xff;
+		      read_buf[17] = (uint8Array.length >> 8) & 0xff;
+		      read_buf[18] = (uint8Array.length >> 16) & 0xff;
+		      read_buf[19] = (uint8Array.length >> 24) & 0xff;
+
+		      msg = {
+
+			  from: "webllm",
+			  buf: read_buf,
+			  len: read_buf.length
+		      };
+
+		      bc.postMessage(msg);
+		  }
+		  
+		  /*if (chunk.usage) {
+		      console.log(chunk.usage); // only last chunk has usage
+		  }*/
+	      }
+
+	      if (!window.llm_closed) {
+
+		  // Enf of chunks: send a message with length = 0
+		  
+		  read_buf[0] = 24; // READ_TTY
+		  
+		  read_buf[16] = 0;
+		  read_buf[17] = 0;
+		  read_buf[18] = 0;
+		  read_buf[19] = 0;
+		  
+		  msg = {
+
+		      from: "webllm",
+		      buf: read_buf,
+		      len: read_buf.length
+		  };
+
+		  bc.postMessage(msg);
+	      }
+	      else {
+
+		  console.log("llm chat aborted");
+	      }
+	  }
+      }
+      
+      main();
+      
+    </script>
+
+    <script async type="text/javascript" src="llm.js"></script>
+      
+  </body>
+</html>

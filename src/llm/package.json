@@ -1,0 +1,14 @@
+{
+  "name": "llm",
+  "version": "1.0.0",
+  "description": "llm driver for exa",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.84"
+  }
+}
