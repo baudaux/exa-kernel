@@ -1,9 +1,11 @@
 /doc
 /src/littlefs
 /external
+node_modules/
 *.o
 *.a
 *.wasm
 *.js
+!llm_worker.js
 *.DS_Store
 *~
